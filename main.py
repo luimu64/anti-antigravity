@@ -164,14 +164,16 @@ def main():
         show_status()
         return
 
-    if args.key:
-        os.environ["API_KEY"] = args.key
+    display_host = args.host
+    if display_host == "0.0.0.0":
+        env_host = os.getenv("HOST")
+        display_host = env_host if (env_host and env_host != "0.0.0.0") else "localhost"
 
     print("\n" + "="*60)
-    print(f"🚀 Starting Antigravity OpenAI API Bridge on http://{args.host}:{args.port}")
-    print(f"📊 Web Dashboard: http://localhost:{args.port}/")
-    print(f"🤖 OpenAI Endpoint: http://localhost:{args.port}/v1/chat/completions")
-    print(f"🔐 OAuth Login: http://localhost:{args.port}/auth/login")
+    print(f"🚀 Starting Antigravity OpenAI API Bridge on http://{display_host}:{args.port}")
+    print(f"📊 Web Dashboard: http://{display_host}:{args.port}/")
+    print(f"🤖 OpenAI Endpoint: http://{display_host}:{args.port}/v1/chat/completions")
+    print(f"🔐 OAuth Login: http://{display_host}:{args.port}/auth/login")
     print("="*60 + "\n")
 
     uvicorn.run(

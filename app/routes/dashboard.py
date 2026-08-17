@@ -31,9 +31,22 @@ async def get_dashboard(request: Request):
     """
     status = auth_manager.get_status()
     template = jinja_env.get_template("dashboard.html")
+
+    # Determine base URL dynamically using HOST env or request host header
+    env_host = os.getenv("HOST")
+    if env_host and env_host != "0.0.0.0":
+        base_url = f"http://{env_host}:{SERVER_PORT}/v1"
+    else:
+        req_host = request.headers.get("host")
+        if req_host:
+            base_url = f"{request.url.scheme}://{req_host}/v1"
+        else:
+            base_url = f"http://localhost:{SERVER_PORT}/v1"
+
     html_content = template.render(
         auth_status=status,
         port=SERVER_PORT,
+        base_url=base_url,
         enforce_keys=api_key_manager.enforce_keys,
         initial_key=api_key_manager.get_first_active_key() or ""
     )
