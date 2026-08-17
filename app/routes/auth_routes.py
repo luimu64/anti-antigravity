@@ -16,6 +16,56 @@ class SetTokenRequest(BaseModel):
     refresh_token: Optional[str] = None
     project_id: Optional[str] = None
 
+class ExchangeCodeRequest(BaseModel):
+    code_or_url: str
+    state: Optional[str] = None
+    redirect_uri: Optional[str] = None
+
+@router.post("/exchange")
+async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request):
+    """
+    Manually exchange an authorization code or full callback URL.
+    Useful for remote/LAN/headless setups.
+    """
+    input_str = payload.code_or_url.strip()
+    code = input_str
+    state = payload.state
+    redirect_uri = payload.redirect_uri
+
+    # If full URL was pasted
+    if "code=" in input_str:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(input_str)
+        qs = urllib.parse.parse_qs(parsed.query)
+        if "code" in qs:
+            code = qs["code"][0]
+        if "state" in qs and not state:
+            state = qs["state"][0]
+        if not redirect_uri:
+            redirect_uri = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+    if not redirect_uri:
+        redirect_uri = str(request.url_for("auth_callback"))
+
+    try:
+        tokens = await auth_manager.exchange_code(code=code, redirect_uri=redirect_uri, state=state)
+        try:
+            await client.load_code_assist()
+        except Exception as e:
+            logger.warning(f"Could not load code assist: {e}")
+        
+        return {
+            "status": "ok",
+            "message": "Authenticated successfully!",
+            "auth": auth_manager.get_status()
+        }
+    except Exception as e:
+        logger.error(f"Manual exchange failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Authorization code exchange failed: {str(e)}"
+        )
+
 @router.get("/login")
 async def auth_login(
     request: Request,

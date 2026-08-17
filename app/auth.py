@@ -54,9 +54,16 @@ class OAuthManager:
         challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
         return verifier, challenge
 
-    def get_authorization_url(self, redirect_uri: str = REDIRECT_URI, state: Optional[str] = None) -> Tuple[str, str, str]:
+    def get_authorization_url(
+        self,
+        redirect_uri: str = REDIRECT_URI,
+        state: Optional[str] = None,
+        device_id: Optional[str] = None,
+        device_name: Optional[str] = None
+    ) -> Tuple[str, str, str]:
         """
         Generate the Google OAuth2 authorization URL.
+        Includes device_id and device_name to support private IP and remote deployments.
         Returns: (auth_url, state, code_verifier)
         """
         if not state:
@@ -64,6 +71,10 @@ class OAuthManager:
         
         verifier, challenge = self.generate_pkce()
         self._pkce_verifier_cache[state] = verifier
+
+        # Generate stable/friendly device_id and device_name
+        dev_id = device_id or f"agy-bridge-{hashlib.sha256((self.client_id + redirect_uri).encode()).hexdigest()[:12]}"
+        dev_name = device_name or "Antigravity Bridge"
 
         params = {
             "client_id": self.client_id,
@@ -74,7 +85,9 @@ class OAuthManager:
             "prompt": "consent",
             "state": state,
             "code_challenge": challenge,
-            "code_challenge_method": "S256"
+            "code_challenge_method": "S256",
+            "device_id": dev_id,
+            "device_name": dev_name
         }
         
         req = httpx.Request("GET", OAUTH_AUTH_URL, params=params)
