@@ -1,4 +1,4 @@
-# Antigravity to OpenAI API Bridge (`agy-to-api`)
+# Antigravity to OpenAI API Bridge
 
 A lightweight, high-performance bridge that translates **Google Antigravity CLI (`agy`)** internal backend APIs into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
 
