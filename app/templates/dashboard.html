@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity OpenAI Bridge Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="header-content">
+      <div class="brand">
+        <div class="brand-icon">Δ</div>
+        <div>
+          <span class="brand-title">Antigravity API</span>
+          <span class="brand-badge">OpenAI v1 Bridge</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span class="status-pill {{ 'status-online' if auth_status.authenticated else 'status-offline' }}">
+          <span class="status-dot"></span>
+          {{ 'Google Connected' if auth_status.authenticated else 'Not Logged In' }}
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+    <div class="grid-layout">
+
+      <!-- Left Sidebar: Auth & Quotas -->
+      <aside style="display: flex; flex-direction: column; gap: 20px;">
+        <!-- Auth Status Card -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Antigravity Backend</h2>
+            <span style="font-size: 12px; color: var(--text-muted);">OAuth 2.0</span>
+          </div>
+
+          <div class="meta-list">
+            <div class="meta-item">
+              <span class="meta-label">Account</span>
+              <span class="meta-val" title="{{ auth_status.user_email or 'Not logged in' }}">{{ auth_status.user_email or 'None' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Project ID</span>
+              <span class="meta-val" title="{{ auth_status.project_id or 'Auto-discovered' }}">{{ auth_status.project_id or 'Auto' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Tier</span>
+              <span class="meta-val">{{ auth_status.tier_name or 'Antigravity' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Token Expires</span>
+              <span class="meta-val" id="token-timer">{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 18px; display: flex; flex-direction: column; gap: 8px;">
+            {% if auth_status.authenticated %}
+              <div style="display: flex; gap: 8px;">
+                <button onclick="refreshToken()" class="btn btn-secondary" style="flex: 1;">Refresh Token</button>
+                <button onclick="logout()" class="btn btn-danger">Logout</button>
+              </div>
+            {% else %}
+              <a href="/auth/login" class="btn btn-primary btn-full">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/></svg>
+                Sign in with Google
+              </a>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Quota Summary Card -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Usage & Quotas</h2>
+            <button onclick="loadQuotas()" class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px;">Refresh</button>
+          </div>
+
+          <div id="quotas-container">
+            <div style="font-size: 12px; color: var(--text-muted);">Loading quotas...</div>
+          </div>
+        </div>
+
+        <!-- Endpoint URL Card -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">OpenAI Base URL</h2>
+          </div>
+          <div class="code-box" style="margin-top: 0;">
+            <button class="copy-btn" onclick="copyText('http://localhost:{{ port }}/v1')">Copy</button>
+            <pre><code>http://localhost:{{ port }}/v1</code></pre>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Main Panel: Playground & API Key Management -->
+      <section style="display: flex; flex-direction: column; gap: 20px;">
+        
+        <!-- Live Chat Playground -->
+        <div class="card chat-container">
+          <div class="card-header">
+            <h2 class="card-title">Live Chat Playground</h2>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <select id="model-select" class="select-control">
+                <option value="gemini-3.7-flash-high">Gemini 3.7 Flash (High)</option>
+                <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Thinking)</option>
+                <option value="claude-opus-4-6-thinking">Claude Opus 4.6 (Thinking)</option>
+                <option value="gemini-3.1-pro-high">Gemini 3.1 Pro (High)</option>
+                <option value="gemini-3.6-flash-high">Gemini 3.6 Flash (High)</option>
+                <option value="gpt-oss-120b-medium">GPT-OSS 120B</option>
+                <option value="gpt-4o">gpt-4o (Alias)</option>
+                <option value="claude-3-7-sonnet">claude-3-7-sonnet (Alias)</option>
+              </select>
+              <button onclick="clearChat()" class="btn btn-secondary" style="font-size: 12px;">Clear</button>
+            </div>
+          </div>
+
+          <!-- Chat messages area -->
+          <div id="chat-history" class="chat-history">
+            <div class="message msg-assistant">
+              <div class="msg-bubble">Hello! I am your Antigravity AI bridge. Ask me any question, test reasoning tokens, or run tool calling!</div>
+            </div>
+          </div>
+
+          <!-- Chat Input row -->
+          <div class="chat-input-row">
+            <input type="text" id="chat-input" class="chat-input" placeholder="Type your message..." onkeydown="if(event.key==='Enter') sendMessage()">
+            <button id="send-btn" onclick="sendMessage()" class="btn btn-primary">Send</button>
+          </div>
+        </div>
+
+        <!-- API Key Management Card -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              Bridge API Key Management
+            </h2>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <label style="font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                <input type="checkbox" id="enforce-toggle" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
+                Enforce Authentication
+              </label>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+              Protect incoming requests to this bridge. Clients (e.g. Cursor, Continue, Python OpenAI SDK) must supply one of these keys in <code>Authorization: Bearer &lt;key&gt;</code>.
+            </p>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+              <input type="text" id="new-key-name" class="select-control" style="flex: 1;" placeholder="Key description (e.g. Cursor IDE, Dev Server, Production)">
+              <button onclick="createNewKey()" class="btn btn-primary">+ Generate New Key</button>
+            </div>
+
+            <!-- Newly created key display alert -->
+            <div id="new-key-alert" style="display: none; background: rgba(37, 99, 235, 0.15); border: 1px solid var(--accent-primary); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 16px;">
+              <div style="font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 4px;">Save your key now! It won't be displayed in full again:</div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="raw-key-value" readonly class="select-control" style="flex: 1; font-family: var(--font-mono); font-size: 12px; background: rgba(0,0,0,0.4);">
+                <button onclick="copyText(document.getElementById('raw-key-value').value)" class="btn btn-secondary">Copy Key</button>
+              </div>
+            </div>
+
+            <!-- Keys list table -->
+            <div id="keys-table-container">
+              <div style="font-size: 12px; color: var(--text-muted);">Loading API keys...</div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+    </div>
+  </main>
+
+  <script>
+    let activeClientKey = "{{ initial_key }}";
+
+    // Copy helper
+    function copyText(text) {
+      navigator.clipboard.writeText(text);
+      alert('Copied to clipboard!');
+    }
+
+    // Refresh token
+    async function refreshToken() {
+      try {
+        const res = await fetch('/auth/refresh', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          alert('Token refreshed successfully!');
+          window.location.reload();
+        } else {
+          alert('Failed to refresh token: ' + (data.detail || JSON.stringify(data)));
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    // Logout
+    async function logout() {
+      if (confirm('Are you sure you want to log out of Google Antigravity?')) {
+        await fetch('/auth/logout', { method: 'POST' });
+        window.location.reload();
+      }
+    }
+
+    // Load API Keys
+    async function loadKeys() {
+      const container = document.getElementById('keys-table-container');
+      try {
+        const res = await fetch('/api/keys');
+        const data = await res.json();
+        const keys = data.keys || [];
+
+        if (!keys.length) {
+          container.innerHTML = '<div style="font-size: 12px; color: var(--text-muted);">No API keys generated yet. Click "Generate New Key" above.</div>';
+          return;
+        }
+
+        let html = `
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 11px; text-transform: uppercase;">
+                <th style="padding: 8px 10px;">Name</th>
+                <th style="padding: 8px 10px;">Key Preview</th>
+                <th style="padding: 8px 10px;">Created</th>
+                <th style="padding: 8px 10px;">Last Used</th>
+                <th style="padding: 8px 10px; text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        keys.forEach(k => {
+          const createdDate = new Date(k.created_at * 1000).toLocaleDateString();
+          const lastUsed = k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleTimeString() : 'Never';
+          html += `
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+              <td style="padding: 10px; font-weight: 500;">${escapeHtml(k.name)}</td>
+              <td style="padding: 10px; font-family: var(--font-mono); color: var(--text-secondary); font-size: 12px;">${k.key_preview}</td>
+              <td style="padding: 10px; color: var(--text-muted); font-size: 12px;">${createdDate}</td>
+              <td style="padding: 10px; color: var(--text-muted); font-size: 12px;">${lastUsed}</td>
+              <td style="padding: 10px; text-align: right;">
+                <button onclick="revokeKey('${k.id}')" class="btn btn-danger" style="padding: 2px 8px; font-size: 11px;">Revoke</button>
+              </td>
+            </tr>
+          `;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+      } catch (err) {
+        container.innerHTML = '<div style="font-size: 12px; color: var(--danger);">Failed to load keys</div>';
+      }
+    }
+
+    // Create New Key
+    async function createNewKey() {
+      const nameInput = document.getElementById('new-key-name');
+      const name = nameInput.value.trim() || 'New Key';
+
+      try {
+        const res = await fetch('/api/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          nameInput.value = '';
+          const rawKey = data.key.key;
+          activeClientKey = rawKey;
+          
+          document.getElementById('raw-key-value').value = rawKey;
+          document.getElementById('new-key-alert').style.display = 'block';
+          loadKeys();
+        } else {
+          alert('Failed to create key: ' + JSON.stringify(data));
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    // Revoke Key
+    async function revokeKey(keyId) {
+      if (confirm('Are you sure you want to revoke this API key? Any client using it will immediately be denied.')) {
+        try {
+          const res = await fetch('/api/keys/' + keyId, { method: 'DELETE' });
+          if (res.ok) {
+            loadKeys();
+          } else {
+            alert('Failed to revoke key');
+          }
+        } catch (err) {
+          alert('Error: ' + err.message);
+        }
+      }
+    }
+
+    // Toggle Enforcement
+    async function toggleEnforcement(enforce) {
+      try {
+        await fetch('/api/keys/enforcement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enforce: enforce })
+        });
+      } catch (err) {
+        alert('Error updating enforcement: ' + err.message);
+      }
+    }
+
+    // Quotas Loader
+    async function loadQuotas() {
+      const container = document.getElementById('quotas-container');
+      try {
+        const res = await fetch('/api/quotas');
+        const data = await res.json();
+        const groups = data.groups || [];
+        if (!groups.length) {
+          container.innerHTML = '<div style="font-size: 12px; color: var(--text-muted);">No quota data available.</div>';
+          return;
+        }
+        let html = '';
+        groups.forEach(g => {
+          (g.buckets || []).forEach(b => {
+            const pct = Math.round((b.remainingFraction || 0) * 100);
+            html += `
+              <div class="quota-item">
+                <div class="quota-header">
+                  <span style="color: var(--text-primary); font-weight: 500;">${b.displayName || b.bucketId}</span>
+                  <span style="color: var(--text-secondary);">${pct}%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" style="width: ${pct}%;"></div>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${b.description || ''}</div>
+              </div>
+            `;
+          });
+        });
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = '<div style="font-size: 12px; color: var(--danger);">Failed to load quotas</div>';
+      }
+    }
+
+    // Chat Playground Logic
+    const chatHistory = document.getElementById('chat-history');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
+    const modelSelect = document.getElementById('model-select');
+
+    let messages = [];
+
+    function clearChat() {
+      chatHistory.innerHTML = `
+        <div class="message msg-assistant">
+          <div class="msg-bubble">Chat cleared! Select a model and send a message.</div>
+        </div>
+      `;
+      messages = [];
+    }
+
+    async function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+
+      chatInput.value = '';
+      chatInput.disabled = true;
+      sendBtn.disabled = true;
+
+      // Add user message to UI
+      messages.push({ role: 'user', content: text });
+      
+      const userMsgDiv = document.createElement('div');
+      userMsgDiv.className = 'message msg-user';
+      userMsgDiv.innerHTML = `<div class="msg-bubble">${escapeHtml(text)}</div>`;
+      chatHistory.appendChild(userMsgDiv);
+
+      // Create assistant placeholder
+      const asstMsgDiv = document.createElement('div');
+      asstMsgDiv.className = 'message msg-assistant';
+      
+      const bubbleDiv = document.createElement('div');
+      bubbleDiv.className = 'msg-bubble';
+      bubbleDiv.textContent = '...';
+      asstMsgDiv.appendChild(bubbleDiv);
+      chatHistory.appendChild(asstMsgDiv);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+
+      const model = modelSelect.value;
+
+      try {
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + (activeClientKey || 'sk-agy-default')
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: messages,
+            stream: true
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          const errMsg = err.error?.message || err.detail?.error?.message || err.detail || response.statusText;
+          bubbleDiv.innerHTML = `<span style="color: var(--danger);">Error: ${escapeHtml(String(errMsg))}</span>`;
+          return;
+        }
+
+        bubbleDiv.textContent = '';
+        let thoughtContent = '';
+        let textContent = '';
+        let thoughtEl = null;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.substring(6).trim();
+              if (dataStr === '[DONE]') break;
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.choices?.[0]?.delta || {};
+                
+                if (delta.reasoning_content) {
+                  if (!thoughtEl) {
+                    thoughtEl = document.createElement('div');
+                    thoughtEl.className = 'thought-box';
+                    asstMsgDiv.insertBefore(thoughtEl, bubbleDiv);
+                  }
+                  thoughtContent += delta.reasoning_content;
+                  thoughtEl.textContent = 'Thinking: ' + thoughtContent;
+                }
+
+                if (delta.content) {
+                  textContent += delta.content;
+                  bubbleDiv.textContent = textContent;
+                }
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+              } catch (e) {}
+            }
+          }
+        }
+
+        messages.push({ role: 'assistant', content: textContent });
+
+      } catch (err) {
+        bubbleDiv.innerHTML = `<span style="color: var(--danger);">Error: ${escapeHtml(err.message)}</span>`;
+      } finally {
+        chatInput.disabled = false;
+        sendBtn.disabled = false;
+        chatInput.focus();
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Auto-load on start
+    window.addEventListener('DOMContentLoaded', () => {
+      loadQuotas();
+      loadKeys();
+    });
+  </script>
+</body>
+</html>
