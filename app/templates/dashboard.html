@@ -93,47 +93,107 @@
       color: var(--pico-primary, #2ecc71);
     }
 
-    /* Token Timer Row & Stable Refresh Button */
-    .token-timer-cell {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 0.75rem;
-      min-height: 2rem;
-    }
-    #token-timer {
-      min-width: 5rem;
-      display: inline-block;
-      font-variant-numeric: tabular-nums;
-    }
-    .refresh-token-btn {
-      margin: 0 !important;
-      padding: 0.25rem 0.75rem !important;
-      font-size: 0.8rem !important;
-      min-width: 5.5rem;
-      height: 2rem;
-      display: inline-flex !important;
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
     /* Red Logout Button */
     .btn-logout {
       background-color: #dc2626 !important;
       border-color: #dc2626 !important;
       color: #ffffff !important;
-      width: 100%;
       margin: 0;
       cursor: pointer;
       transition: background-color 0.15s ease, border-color 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 500;
     }
     .btn-logout:hover, .btn-logout:focus {
       background-color: #b91c1c !important;
       border-color: #b91c1c !important;
       color: #ffffff !important;
+    }
+
+    /* Auth Action Button Row */
+    .auth-action-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      width: 100%;
+    }
+    .auth-action-row button {
+      flex: 1 1 0;
+      margin: 0;
+      height: 2.75rem;
+    }
+
+    /* Dense Keys Table Styling with space-between flex & right-aligned sticky action */
+    .keys-table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      margin: 0;
+    }
+    .keys-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0.5rem;
+    }
+    .keys-table tr {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid var(--pico-border-color, #1e293b);
+      gap: 0.75rem;
+    }
+    .keys-table thead tr {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      opacity: 0.75;
+      padding: 0.25rem 0.5rem;
+    }
+    .keys-table th,
+    .keys-table td {
+      padding: 0;
+      border: none;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
+    }
+    .keys-col-name {
+      flex: 2 1 140px;
+      min-width: 120px;
+    }
+    .keys-col-preview {
+      flex: 2 1 140px;
+      min-width: 130px;
+    }
+    .keys-col-created {
+      flex: 1.5 1 100px;
+      min-width: 90px;
+    }
+    .keys-col-lastused {
+      flex: 1.5 1 100px;
+      min-width: 90px;
+    }
+    .keys-col-action {
+      flex: 0 0 auto;
+      margin-left: auto;
+      justify-content: flex-end;
+      position: sticky;
+      right: 0;
+      background: var(--pico-card-background-color, #1b232c);
+      padding-left: 0.5rem;
+    }
+    .btn-revoke {
+      margin: 0 !important;
+      padding: 0.2rem 0.65rem !important;
+      font-size: 0.75rem !important;
+      height: 1.75rem !important;
+      line-height: 1 !important;
+      white-space: nowrap;
+      min-width: auto;
+      width: auto !important;
     }
 
     /* Unified Height for Form Groups (Input + Button) */
@@ -201,62 +261,7 @@
   <!-- Main Container -->
   <main class="container">
 
-    <!-- 1. Auth Status Widget (Full Width) -->
-    <article id="auth-card">
-      <header>
-        <nav>
-          <ul><li><strong>Antigravity Backend</strong></li></ul>
-          <ul><li><small>OAuth 2.0</small></li></ul>
-        </nav>
-      </header>
-
-      <figure>
-        <table>
-          <tbody>
-            <tr>
-              <th scope="row" style="width: 220px;">Account</th>
-              <td><small>{{ auth_status.user_email or 'None' }}</small></td>
-            </tr>
-            <tr>
-              <th scope="row">Project ID</th>
-              <td><small>{{ auth_status.project_id or 'Auto' }}</small></td>
-            </tr>
-            <tr>
-              <th scope="row">Tier</th>
-              <td><small>{{ auth_status.tier_name or 'Antigravity' }}</small></td>
-            </tr>
-            <tr>
-              <th scope="row">Token Expires</th>
-              <td>
-                <div class="token-timer-cell">
-                  <span id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></span>
-                  {% if auth_status.authenticated %}
-                    <button type="button" onclick="refreshToken(this)" class="secondary outline refresh-token-btn">Refresh</button>
-                  {% endif %}
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </figure>
-
-      <footer>
-        {% if auth_status.authenticated %}
-          <button type="button" onclick="logout()" class="btn-logout">Logout</button>
-        {% else %}
-          <a href="/auth/login" role="button" style="width: 100%; text-align: center; margin: 0;">Sign in with Google</a>
-          <details style="margin-top: 0.75rem; margin-bottom: 0;">
-            <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
-            <form onsubmit="event.preventDefault(); submitManualCode();" role="group" style="margin-top: 0.5rem; margin-bottom: 0;">
-              <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
-              <button type="submit">Submit</button>
-            </form>
-          </details>
-        {% endif %}
-      </footer>
-    </article>
-
-    <!-- 2. Usage & Quotas Widget (Full Width) -->
+    <!-- 1. Usage & Quotas Widget (Full Width) -->
     <article id="quotas-card">
       <header>
         <nav>
@@ -270,7 +275,7 @@
       </div>
     </article>
 
-    <!-- 3. Bridge API Keys Widget (Full Width) -->
+    <!-- 2. Bridge API Keys Widget (Full Width) -->
     <article id="keys-card">
       <header>
         <nav>
@@ -332,6 +337,57 @@
       <div id="keys-table-container">
         <p><small aria-busy="true">Loading API keys...</small></p>
       </div>
+    </article>
+
+    <!-- 3. Auth Status Widget (Full Width at Bottom) -->
+    <article id="auth-card">
+      <header>
+        <nav>
+          <ul><li><strong>Antigravity Backend</strong></li></ul>
+          <ul><li><small>OAuth 2.0</small></li></ul>
+        </nav>
+      </header>
+
+      <figure>
+        <table>
+          <tbody>
+            <tr>
+              <th scope="row" style="width: 220px;">Account</th>
+              <td><small>{{ auth_status.user_email or 'None' }}</small></td>
+            </tr>
+            <tr>
+              <th scope="row">Project ID</th>
+              <td><small>{{ auth_status.project_id or 'Auto' }}</small></td>
+            </tr>
+            <tr>
+              <th scope="row">Tier</th>
+              <td><small>{{ auth_status.tier_name or 'Antigravity' }}</small></td>
+            </tr>
+            <tr>
+              <th scope="row">Token Expires</th>
+              <td id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></td>
+            </tr>
+          </tbody>
+        </table>
+      </figure>
+
+      <footer>
+        {% if auth_status.authenticated %}
+          <div class="auth-action-row">
+            <button type="button" onclick="refreshToken(this)" class="secondary outline refresh-token-btn">Refresh Token</button>
+            <button type="button" onclick="logout()" class="btn-logout">Logout</button>
+          </div>
+        {% else %}
+          <a href="/auth/login" role="button" style="width: 100%; text-align: center; margin: 0;">Sign in with Google</a>
+          <details style="margin-top: 0.75rem; margin-bottom: 0;">
+            <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
+            <form onsubmit="event.preventDefault(); submitManualCode();" role="group" style="margin-top: 0.5rem; margin-bottom: 0;">
+              <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
+              <button type="submit">Submit</button>
+            </form>
+          </details>
+        {% endif %}
+      </footer>
     </article>
 
   </main>
@@ -486,20 +542,20 @@
         const keys = data.keys || [];
 
         if (!keys.length) {
-          container.innerHTML = '<p><small>No API keys generated yet. Click "+ Generate Key" above.</small></p>';
+          container.innerHTML = '<p><small>No API keys generated yet. Click "Generate" above.</small></p>';
           return;
         }
 
         let html = `
-          <figure>
-            <table>
+          <div class="keys-table-wrapper">
+            <table class="keys-table">
               <thead>
                 <tr>
-                  <th scope="col">Name</th>
-                  <th scope="col">Key Preview</th>
-                  <th scope="col">Created</th>
-                  <th scope="col">Last Used</th>
-                  <th scope="col">Action</th>
+                  <th class="keys-col-name">Name</th>
+                  <th class="keys-col-preview">Key Preview</th>
+                  <th class="keys-col-created">Created</th>
+                  <th class="keys-col-lastused">Last Used</th>
+                  <th class="keys-col-action">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -507,21 +563,21 @@
 
         keys.forEach(k => {
           const createdDate = new Date(k.created_at * 1000).toLocaleDateString();
-          const lastUsed = k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleTimeString() : 'Never';
+          const lastUsed = k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Never';
           html += `
             <tr>
-              <td><strong>${escapeHtml(k.name)}</strong></td>
-              <td><code>${escapeHtml(k.key_preview)}</code></td>
-              <td><small>${createdDate}</small></td>
-              <td><small>${lastUsed}</small></td>
-              <td>
-                <button type="button" onclick="revokeKey('${k.id}')" class="contrast outline">Revoke</button>
+              <td class="keys-col-name"><strong>${escapeHtml(k.name)}</strong></td>
+              <td class="keys-col-preview"><code>${escapeHtml(k.key_preview)}</code></td>
+              <td class="keys-col-created"><small>${createdDate}</small></td>
+              <td class="keys-col-lastused"><small>${lastUsed}</small></td>
+              <td class="keys-col-action">
+                <button type="button" onclick="revokeKey('${k.id}')" class="contrast outline btn-revoke">Revoke</button>
               </td>
             </tr>
           `;
         });
 
-        html += '</tbody></table></figure>';
+        html += '</tbody></table></div>';
         container.innerHTML = html;
 
       } catch (err) {
