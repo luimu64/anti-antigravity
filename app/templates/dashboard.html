@@ -313,6 +313,21 @@
         </article>
       </dialog>
 
+      <!-- Confirmation Modal Dialog -->
+      <dialog id="confirm-dialog">
+        <article>
+          <header>
+            <button aria-label="Close" rel="prev" onclick="closeConfirmDialog()"></button>
+            <strong id="confirm-dialog-title">Confirm Action</strong>
+          </header>
+          <p id="confirm-dialog-message">Are you sure you want to proceed?</p>
+          <footer style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+            <button type="button" class="secondary outline" onclick="closeConfirmDialog()" style="width: auto; margin: 0; padding: 0.5rem 1.25rem;">Cancel</button>
+            <button type="button" id="confirm-dialog-btn" class="contrast" style="width: auto; margin: 0; padding: 0.5rem 1.25rem;">Confirm</button>
+          </footer>
+        </article>
+      </dialog>
+
       <!-- Keys table container -->
       <div id="keys-table-container">
         <p><small aria-busy="true">Loading API keys...</small></p>
@@ -421,12 +436,44 @@
       }
     }
 
+    // Custom Confirmation Dialog Helper
+    let pendingConfirmAction = null;
+
+    function openConfirmDialog({ title, message, confirmText, confirmClass, onConfirm }) {
+      document.getElementById('confirm-dialog-title').textContent = title || 'Confirm Action';
+      document.getElementById('confirm-dialog-message').textContent = message || 'Are you sure?';
+      const btn = document.getElementById('confirm-dialog-btn');
+      btn.textContent = confirmText || 'Confirm';
+      btn.className = confirmClass || 'contrast';
+      pendingConfirmAction = onConfirm;
+
+      btn.onclick = async () => {
+        closeConfirmDialog();
+        if (pendingConfirmAction) {
+          await pendingConfirmAction();
+        }
+      };
+
+      document.getElementById('confirm-dialog').setAttribute('open', 'true');
+    }
+
+    function closeConfirmDialog() {
+      document.getElementById('confirm-dialog').removeAttribute('open');
+      pendingConfirmAction = null;
+    }
+
     // Logout
-    async function logout() {
-      if (confirm('Are you sure you want to log out of Google Antigravity?')) {
-        await fetch('/auth/logout', { method: 'POST' });
-        window.location.reload();
-      }
+    function logout() {
+      openConfirmDialog({
+        title: 'Confirm Logout',
+        message: 'Are you sure you want to log out of Google Antigravity? Your local credentials will be cleared.',
+        confirmText: 'Logout',
+        confirmClass: 'btn-logout',
+        onConfirm: async () => {
+          await fetch('/auth/logout', { method: 'POST' });
+          window.location.reload();
+        }
+      });
     }
 
     // Load API Keys
@@ -510,20 +557,26 @@
     }
 
     // Revoke Key
-    async function revokeKey(keyId) {
-      if (confirm('Are you sure you want to revoke this API key? Any client using it will immediately be denied.')) {
-        try {
-          const res = await fetch('/api/keys/' + keyId, { method: 'DELETE' });
-          if (res.ok) {
-            showToast('API key revoked.');
-            loadKeys();
-          } else {
-            showToast('Failed to revoke key', 'error');
+    function revokeKey(keyId) {
+      openConfirmDialog({
+        title: 'Revoke API Key',
+        message: 'Are you sure you want to revoke this API key? Any client using it will immediately be denied.',
+        confirmText: 'Revoke',
+        confirmClass: 'btn-logout',
+        onConfirm: async () => {
+          try {
+            const res = await fetch('/api/keys/' + keyId, { method: 'DELETE' });
+            if (res.ok) {
+              showToast('API key revoked.');
+              loadKeys();
+            } else {
+              showToast('Failed to revoke key', 'error');
+            }
+          } catch (err) {
+            showToast('Error: ' + err.message, 'error');
           }
-        } catch (err) {
-          showToast('Error: ' + err.message, 'error');
         }
-      }
+      });
     }
 
     // Toggle Enforcement
