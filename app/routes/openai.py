@@ -142,6 +142,14 @@ async def chat_completions(request: ChatCompletionRequest):
             detail=f"Invalid request parameters: {str(e)}"
         )
 
+    # Determine if include_usage is requested for streaming
+    include_usage = False
+    if request.stream_options:
+        if isinstance(request.stream_options, dict):
+            include_usage = bool(request.stream_options.get("include_usage", False))
+        elif hasattr(request.stream_options, "include_usage"):
+            include_usage = bool(request.stream_options.include_usage)
+
     # 1. Streaming response
     if request.stream:
         try:
@@ -154,7 +162,8 @@ async def chat_completions(request: ChatCompletionRequest):
             )
             openai_chunks = OpenAITranslator.internal_stream_to_openai_chunks(
                 event_stream=event_stream,
-                requested_model=request.model
+                requested_model=request.model,
+                include_usage=include_usage
             )
             return StreamingResponse(
                 openai_chunks,
@@ -211,7 +220,8 @@ async def legacy_completions(request: Request):
         temperature=body.get("temperature"),
         top_p=body.get("top_p"),
         max_completion_tokens=body.get("max_tokens"),
-        stream=body.get("stream", False)
+        stream=body.get("stream", False),
+        stream_options=body.get("stream_options")
     )
     return await chat_completions(chat_req)
 

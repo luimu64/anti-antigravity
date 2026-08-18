@@ -20,6 +20,9 @@ class ChatMessage(BaseModel):
     tool_call_id: Optional[str] = None
     reasoning_content: Optional[str] = None
 
+class StreamOptions(BaseModel):
+    include_usage: Optional[bool] = None
+
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -29,6 +32,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = None
     max_tokens: Optional[int] = Field(default=None, alias="max_completion_tokens")
     stream: Optional[bool] = False
+    stream_options: Optional[StreamOptions | Dict[str, Any]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Any] = None
     reasoning_effort: Optional[str] = None
@@ -250,7 +254,39 @@ class OpenAITranslator:
         return internal_model, contents, system_instruction, generation_config, tools
 
     @staticmethod
+    def format_usage(usage_meta: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Format upstream usage metadata into OpenAI standard usage dict.
+        Accurately reports prompt tokens, completion tokens, total tokens,
+        prompt cached tokens (prompt_tokens_details.cached_tokens),
+        and reasoning tokens (completion_tokens_details.reasoning_tokens).
+        """
+        prompt_tokens = usage_meta.get("promptTokenCount", 0)
+        completion_tokens = usage_meta.get("candidatesTokenCount", 0)
+        thoughts_tokens = usage_meta.get("thoughtsTokenCount", 0)
+        cached_tokens = (
+            usage_meta.get("cachedContentTokenCount")
+            or usage_meta.get("cachedTokens")
+            or usage_meta.get("cached_content_token_count")
+            or 0
+        )
+        total_tokens = usage_meta.get("totalTokenCount", prompt_tokens + completion_tokens)
+
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "prompt_tokens_details": {
+                "cached_tokens": cached_tokens
+            },
+            "completion_tokens_details": {
+                "reasoning_tokens": thoughts_tokens
+            }
+        }
+
+    @classmethod
     def internal_to_openai_response(
+        cls,
         result: Dict[str, Any],
         requested_model: str
     ) -> Dict[str, Any]:
@@ -300,10 +336,6 @@ class OpenAITranslator:
             finish_reason = "length"
 
         usage_meta = result.get("usageMetadata", {})
-        prompt_tokens = usage_meta.get("promptTokenCount", 0)
-        completion_tokens = usage_meta.get("candidatesTokenCount", 0)
-        thoughts_tokens = usage_meta.get("thoughtsTokenCount", 0)
-        total_tokens = usage_meta.get("totalTokenCount", prompt_tokens + completion_tokens)
 
         return {
             "id": completion_id,
@@ -317,21 +349,15 @@ class OpenAITranslator:
                     "finish_reason": finish_reason
                 }
             ],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "completion_tokens_details": {
-                    "reasoning_tokens": thoughts_tokens
-                }
-            }
+            "usage": cls.format_usage(usage_meta)
         }
 
     @classmethod
     async def internal_stream_to_openai_chunks(
         cls,
         event_stream: AsyncGenerator[Dict[str, Any], None],
-        requested_model: str
+        requested_model: str,
+        include_usage: bool = False
     ) -> AsyncGenerator[str, None]:
         """
         Convert SSE stream from Antigravity internal API to standard OpenAI SSE chunk format.
@@ -341,11 +367,17 @@ class OpenAITranslator:
         created_time = int(time.time())
         is_first_chunk = True
         last_thought_signature = None
+        latest_usage_metadata: Dict[str, Any] = {}
 
         async for event in event_stream:
-            resp_obj = event.get("response", {})
+            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
             if "responseId" in resp_obj and not completion_id.startswith("chatcmpl"):
                 completion_id = resp_obj["responseId"]
+
+            if "usageMetadata" in resp_obj:
+                latest_usage_metadata.update(resp_obj["usageMetadata"])
+            elif "usageMetadata" in event:
+                latest_usage_metadata.update(event["usageMetadata"])
 
             candidates = resp_obj.get("candidates", [])
             for cand in candidates:
@@ -468,6 +500,18 @@ class OpenAITranslator:
                         ]
                     }
                     yield f"data: {json.dumps(final_chunk)}\n\n"
+
+        # If include_usage was requested, emit final usage chunk
+        if include_usage:
+            usage_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_time,
+                "model": requested_model,
+                "choices": [],
+                "usage": cls.format_usage(latest_usage_metadata)
+            }
+            yield f"data: {json.dumps(usage_chunk)}\n\n"
 
         # End of stream
         yield "data: [DONE]\n\n"

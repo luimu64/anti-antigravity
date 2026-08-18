@@ -228,13 +228,15 @@ class AntigravityClient:
             generation_config=generation_config,
             tools=tools
         ):
-            resp_obj = event.get("response", {})
+            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
             if "responseId" in resp_obj:
                 response_id = resp_obj["responseId"]
             if "modelVersion" in resp_obj:
                 model_version = resp_obj["modelVersion"]
             if "usageMetadata" in resp_obj:
-                usage_metadata = resp_obj["usageMetadata"]
+                usage_metadata.update(resp_obj["usageMetadata"])
+            elif "usageMetadata" in event:
+                usage_metadata.update(event["usageMetadata"])
 
             candidates = resp_obj.get("candidates", [])
             for cand in candidates:
