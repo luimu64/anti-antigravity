@@ -437,20 +437,22 @@
     }
 
     // Custom Confirmation Dialog Helper
-    let pendingConfirmAction = null;
-
     function openConfirmDialog({ title, message, confirmText, confirmClass, onConfirm }) {
       document.getElementById('confirm-dialog-title').textContent = title || 'Confirm Action';
       document.getElementById('confirm-dialog-message').textContent = message || 'Are you sure?';
       const btn = document.getElementById('confirm-dialog-btn');
       btn.textContent = confirmText || 'Confirm';
       btn.className = confirmClass || 'contrast';
-      pendingConfirmAction = onConfirm;
-
+      
+      const actionToRun = onConfirm;
       btn.onclick = async () => {
         closeConfirmDialog();
-        if (pendingConfirmAction) {
-          await pendingConfirmAction();
+        if (actionToRun) {
+          try {
+            await actionToRun();
+          } catch (e) {
+            console.error('Confirmation action error:', e);
+          }
         }
       };
 
@@ -459,7 +461,6 @@
 
     function closeConfirmDialog() {
       document.getElementById('confirm-dialog').removeAttribute('open');
-      pendingConfirmAction = null;
     }
 
     // Logout
