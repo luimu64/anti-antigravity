@@ -60,7 +60,6 @@ agy-to-api/
 │   │   ├── openai.py         # /v1/chat/completions, /v1/models, /v1/completions, /v1/embeddings
 │   │   ├── auth_routes.py    # /auth/login, /auth/callback, /auth/status, /auth/refresh, /auth/logout
 │   │   └── dashboard.py      # Web dashboard, /api/keys, /api/quotas, /health
-│   ├── static/style.css      # Dashboard CSS stylesheet
 │   └── templates/
 │       └── dashboard.html    # Interactive dashboard & live streaming chat playground
 ├── data/                     # Local persistence directory (credentials.json, api_keys.json)

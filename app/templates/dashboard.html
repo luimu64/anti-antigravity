@@ -4,189 +4,208 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Antigravity OpenAI Bridge Dashboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
 </head>
 <body>
 
-  <!-- Header -->
-  <header>
-    <div class="header-content">
-      <div class="brand">
-        <div class="brand-icon">Δ</div>
-        <div>
-          <span class="brand-title">Antigravity API</span>
-          <span class="brand-badge">OpenAI v1 Bridge</span>
-        </div>
-      </div>
-
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <span class="status-pill {{ 'status-online' if auth_status.authenticated else 'status-offline' }}">
-          <span class="status-dot"></span>
-          {{ 'Google Connected' if auth_status.authenticated else 'Not Logged In' }}
-        </span>
-      </div>
-    </div>
+  <!-- Navigation Header -->
+  <header class="container">
+    <nav>
+      <ul>
+        <li><strong>Antigravity API</strong></li>
+        <li><small>OpenAI v1 Bridge</small></li>
+      </ul>
+      <ul>
+        <li>
+          {% if auth_status.authenticated %}
+            <ins>● Google Connected</ins>
+          {% else %}
+            <del>● Not Logged In</del>
+          {% endif %}
+        </li>
+      </ul>
+    </nav>
   </header>
 
   <!-- Main Container -->
   <main class="container">
-    <div class="grid-layout">
+    <div class="grid">
 
-      <!-- Left Sidebar: Auth & Quotas -->
-      <aside style="display: flex; flex-direction: column; gap: 20px;">
+      <!-- Left Column: Auth, Quotas, and Endpoint -->
+      <div>
         <!-- Auth Status Card -->
-        <div class="card">
-          <div class="card-header">
-            <h2 class="card-title">Antigravity Backend</h2>
-            <span style="font-size: 12px; color: var(--text-muted);">OAuth 2.0</span>
-          </div>
+        <article>
+          <header>
+            <nav>
+              <ul><li><strong>Antigravity Backend</strong></li></ul>
+              <ul><li><small>OAuth 2.0</small></li></ul>
+            </nav>
+          </header>
 
-          <div class="meta-list">
-            <div class="meta-item">
-              <span class="meta-label">Account</span>
-              <span class="meta-val" title="{{ auth_status.user_email or 'Not logged in' }}">{{ auth_status.user_email or 'None' }}</span>
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">Project ID</span>
-              <span class="meta-val" title="{{ auth_status.project_id or 'Auto-discovered' }}">{{ auth_status.project_id or 'Auto' }}</span>
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">Tier</span>
-              <span class="meta-val">{{ auth_status.tier_name or 'Antigravity' }}</span>
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">Token Expires</span>
-              <span class="meta-val" id="token-timer">{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</span>
-            </div>
-          </div>
+          <figure>
+            <table>
+              <tbody>
+                <tr>
+                  <th scope="row">Account</th>
+                  <td><small>{{ auth_status.user_email or 'None' }}</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Project ID</th>
+                  <td><small>{{ auth_status.project_id or 'Auto' }}</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Tier</th>
+                  <td><small>{{ auth_status.tier_name or 'Antigravity' }}</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Token Expires</th>
+                  <td id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></td>
+                </tr>
+              </tbody>
+            </table>
+          </figure>
 
-          <div style="margin-top: 18px; display: flex; flex-direction: column; gap: 8px;">
+          <footer>
             {% if auth_status.authenticated %}
-              <div style="display: flex; gap: 8px;">
-                <button onclick="refreshToken()" class="btn btn-secondary" style="flex: 1;">Refresh Token</button>
-                <button onclick="logout()" class="btn btn-danger">Logout</button>
-              </div>
+              <fieldset role="group">
+                <button type="button" onclick="refreshToken()" class="secondary">Refresh Token</button>
+                <button type="button" onclick="logout()" class="contrast">Logout</button>
+              </fieldset>
             {% else %}
-              <a href="/auth/login" class="btn btn-primary btn-full">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/></svg>
-                Sign in with Google
-              </a>
-              <button onclick="toggleManualAuth()" class="btn btn-secondary" style="font-size: 11px;">
-                Manual / Remote Token Auth
-              </button>
-              <div id="manual-auth-box" style="display: none; margin-top: 8px; flex-direction: column; gap: 8px;">
-                <input type="text" id="manual-code-input" class="select-control" style="font-size: 11px;" placeholder="Paste OAuth Callback URL, Code (4/0A...) or Refresh Token">
-                <button onclick="submitManualCode()" class="btn btn-primary" style="font-size: 11px;">Submit Token / Code</button>
-              </div>
+              <a href="/auth/login" role="button">Sign in with Google</a>
+              <details>
+                <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
+                <form onsubmit="event.preventDefault(); submitManualCode();" role="group">
+                  <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
+                  <button type="submit">Submit</button>
+                </form>
+              </details>
             {% endif %}
-          </div>
-        </div>
+          </footer>
+        </article>
 
         <!-- Quota Summary Card -->
-        <div class="card">
-          <div class="card-header">
-            <h2 class="card-title">Usage & Quotas</h2>
-            <button onclick="loadQuotas()" class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px;">Refresh</button>
-          </div>
+        <article>
+          <header>
+            <nav>
+              <ul><li><strong>Usage &amp; Quotas</strong></li></ul>
+              <ul><li><button type="button" onclick="loadQuotas()" class="secondary outline">Refresh</button></li></ul>
+            </nav>
+          </header>
 
           <div id="quotas-container">
-            <div style="font-size: 12px; color: var(--text-muted);">Loading quotas...</div>
+            <p><small aria-busy="true">Loading quotas...</small></p>
           </div>
-        </div>
+        </article>
 
         <!-- Endpoint URL Card -->
-        <div class="card">
-          <div class="card-header">
-            <h2 class="card-title">OpenAI Base URL</h2>
-          </div>
-          <div class="code-box" style="margin-top: 0;">
-            <button class="copy-btn" onclick="copyText('{{ base_url }}')">Copy</button>
-            <pre><code>{{ base_url }}</code></pre>
-          </div>
-        </div>
-      </aside>
+        <article>
+          <header>
+            <strong>OpenAI Base URL</strong>
+          </header>
+          <form onsubmit="event.preventDefault(); copyText('{{ base_url }}');" role="group">
+            <input type="text" readonly value="{{ base_url }}" id="base-url-input">
+            <button type="submit" class="secondary">Copy</button>
+          </form>
+          <small>Use this endpoint in Cursor, Continue, LangChain, or OpenAI SDK.</small>
+        </article>
+      </div>
 
-      <!-- Right Main Panel: Playground & API Key Management -->
-      <section style="display: flex; flex-direction: column; gap: 20px;">
+      <!-- Right Column: Playground & API Key Management -->
+      <div>
         
         <!-- Live Chat Playground -->
-        <div class="card chat-container">
-          <div class="card-header">
-            <h2 class="card-title">Live Chat Playground</h2>
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <select id="model-select" class="select-control">
-                <option value="gemini-3.7-flash-high">Gemini 3.7 Flash (High)</option>
-                <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Thinking)</option>
-                <option value="claude-opus-4-6-thinking">Claude Opus 4.6 (Thinking)</option>
-                <option value="gemini-3.1-pro-high">Gemini 3.1 Pro (High)</option>
-                <option value="gemini-3.6-flash-high">Gemini 3.6 Flash (High)</option>
-                <option value="gpt-oss-120b-medium">GPT-OSS 120B</option>
-                <option value="gpt-4o">gpt-4o (Alias)</option>
-                <option value="claude-3-7-sonnet">claude-3-7-sonnet (Alias)</option>
-              </select>
-              <button onclick="clearChat()" class="btn btn-secondary" style="font-size: 12px;">Clear</button>
-            </div>
-          </div>
+        <article>
+          <header>
+            <nav>
+              <ul><li><strong>Live Chat Playground</strong></li></ul>
+              <ul>
+                <li>
+                  <select id="model-select">
+                    <option value="gemini-3.7-flash-high">Gemini 3.7 Flash (High)</option>
+                    <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Thinking)</option>
+                    <option value="claude-opus-4-6-thinking">Claude Opus 4.6 (Thinking)</option>
+                    <option value="gemini-3.1-pro-high">Gemini 3.1 Pro (High)</option>
+                    <option value="gemini-3.6-flash-high">Gemini 3.6 Flash (High)</option>
+                    <option value="gpt-oss-120b-medium">GPT-OSS 120B</option>
+                    <option value="gpt-4o">gpt-4o (Alias)</option>
+                    <option value="claude-3-7-sonnet">claude-3-7-sonnet (Alias)</option>
+                  </select>
+                </li>
+                <li>
+                  <button type="button" onclick="clearChat()" class="secondary outline">Clear</button>
+                </li>
+              </ul>
+            </nav>
+          </header>
 
           <!-- Chat messages area -->
-          <div id="chat-history" class="chat-history">
-            <div class="message msg-assistant">
-              <div class="msg-bubble">Hello! I am your Antigravity AI bridge. Ask me any question, test reasoning tokens, or run tool calling!</div>
-            </div>
+          <div id="chat-history" class="overflow-auto">
+            <article>
+              <header><small><strong>Bridge</strong></small></header>
+              <p>Hello! I am your Antigravity AI bridge. Ask me any question, test reasoning tokens, or run tool calling!</p>
+            </article>
           </div>
 
-          <!-- Chat Input row -->
-          <div class="chat-input-row">
-            <input type="text" id="chat-input" class="chat-input" placeholder="Type your message..." onkeydown="if(event.key==='Enter') sendMessage()">
-            <button id="send-btn" onclick="sendMessage()" class="btn btn-primary">Send</button>
-          </div>
-        </div>
+          <!-- Chat Input -->
+          <footer>
+            <form onsubmit="event.preventDefault(); sendMessage();" role="group">
+              <input type="text" id="chat-input" placeholder="Type your message..." autocomplete="off">
+              <button type="submit" id="send-btn">Send</button>
+            </form>
+          </footer>
+        </article>
 
         <!-- API Key Management Card -->
-        <div class="card">
-          <div class="card-header">
-            <h2 class="card-title">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-              Bridge API Key Management
-            </h2>
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <label style="font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                <input type="checkbox" id="enforce-toggle" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
-                Enforce Authentication
-              </label>
-            </div>
+        <article>
+          <header>
+            <nav>
+              <ul><li><strong>Bridge API Keys</strong></li></ul>
+              <ul>
+                <li>
+                  <label>
+                    <input type="checkbox" id="enforce-toggle" role="switch" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
+                    Enforce Auth
+                  </label>
+                </li>
+              </ul>
+            </nav>
+          </header>
+
+          <p>
+            <small>Protect incoming requests. Clients supply key via <code>Authorization: Bearer &lt;key&gt;</code>.</small>
+          </p>
+          
+          <form onsubmit="event.preventDefault(); createNewKey();" role="group">
+            <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)">
+            <button type="submit">+ Generate Key</button>
+          </form>
+
+          <!-- New Key Modal Dialog -->
+          <dialog id="new-key-dialog">
+            <article>
+              <header>
+                <button aria-label="Close" rel="prev" onclick="document.getElementById('new-key-dialog').removeAttribute('open')"></button>
+                <strong>New API Key Generated</strong>
+              </header>
+              <p>Save your key now! It will not be displayed in full again:</p>
+              <form onsubmit="event.preventDefault(); copyText(document.getElementById('raw-key-value').value);" role="group">
+                <input type="text" id="raw-key-value" readonly>
+                <button type="submit">Copy</button>
+              </form>
+              <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('new-key-dialog').removeAttribute('open')">Done</button>
+              </footer>
+            </article>
+          </dialog>
+
+          <!-- Keys table container -->
+          <div id="keys-table-container">
+            <p><small aria-busy="true">Loading API keys...</small></p>
           </div>
+        </article>
 
-          <div style="margin-bottom: 16px;">
-            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
-              Protect incoming requests to this bridge. Clients (e.g. Cursor, Continue, Python OpenAI SDK) must supply one of these keys in <code>Authorization: Bearer &lt;key&gt;</code>.
-            </p>
-            
-            <div style="display: flex; gap: 10px; margin-bottom: 16px;">
-              <input type="text" id="new-key-name" class="select-control" style="flex: 1;" placeholder="Key description (e.g. Cursor IDE, Dev Server, Production)">
-              <button onclick="createNewKey()" class="btn btn-primary">+ Generate New Key</button>
-            </div>
-
-            <!-- Newly created key display alert -->
-            <div id="new-key-alert" style="display: none; background: rgba(37, 99, 235, 0.15); border: 1px solid var(--accent-primary); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 16px;">
-              <div style="font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 4px;">Save your key now! It won't be displayed in full again:</div>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                <input type="text" id="raw-key-value" readonly class="select-control" style="flex: 1; font-family: var(--font-mono); font-size: 12px; background: rgba(0,0,0,0.4);">
-                <button onclick="copyText(document.getElementById('raw-key-value').value)" class="btn btn-secondary">Copy Key</button>
-              </div>
-            </div>
-
-            <!-- Keys list table -->
-            <div id="keys-table-container">
-              <div style="font-size: 12px; color: var(--text-muted);">Loading API keys...</div>
-            </div>
-          </div>
-        </div>
-
-      </section>
+      </div>
     </div>
   </main>
 
@@ -197,12 +216,6 @@
     function copyText(text) {
       navigator.clipboard.writeText(text);
       alert('Copied to clipboard!');
-    }
-
-    // Toggle manual auth UI
-    function toggleManualAuth() {
-      const box = document.getElementById('manual-auth-box');
-      box.style.display = box.style.display === 'none' ? 'flex' : 'none';
     }
 
     // Submit manual code / token
@@ -277,45 +290,46 @@
         const keys = data.keys || [];
 
         if (!keys.length) {
-          container.innerHTML = '<div style="font-size: 12px; color: var(--text-muted);">No API keys generated yet. Click "Generate New Key" above.</div>';
+          container.innerHTML = '<p><small>No API keys generated yet. Click "+ Generate Key" above.</small></p>';
           return;
         }
 
         let html = `
-          <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
-            <thead>
-              <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 11px; text-transform: uppercase;">
-                <th style="padding: 8px 10px;">Name</th>
-                <th style="padding: 8px 10px;">Key Preview</th>
-                <th style="padding: 8px 10px;">Created</th>
-                <th style="padding: 8px 10px;">Last Used</th>
-                <th style="padding: 8px 10px; text-align: right;">Action</th>
-              </tr>
-            </thead>
-            <tbody>
+          <figure>
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Name</th>
+                  <th scope="col">Key Preview</th>
+                  <th scope="col">Created</th>
+                  <th scope="col">Last Used</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
+              <tbody>
         `;
 
         keys.forEach(k => {
           const createdDate = new Date(k.created_at * 1000).toLocaleDateString();
           const lastUsed = k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleTimeString() : 'Never';
           html += `
-            <tr style="border-bottom: 1px solid var(--border-subtle);">
-              <td style="padding: 10px; font-weight: 500;">${escapeHtml(k.name)}</td>
-              <td style="padding: 10px; font-family: var(--font-mono); color: var(--text-secondary); font-size: 12px;">${k.key_preview}</td>
-              <td style="padding: 10px; color: var(--text-muted); font-size: 12px;">${createdDate}</td>
-              <td style="padding: 10px; color: var(--text-muted); font-size: 12px;">${lastUsed}</td>
-              <td style="padding: 10px; text-align: right;">
-                <button onclick="revokeKey('${k.id}')" class="btn btn-danger" style="padding: 2px 8px; font-size: 11px;">Revoke</button>
+            <tr>
+              <td><strong>${escapeHtml(k.name)}</strong></td>
+              <td><code>${escapeHtml(k.key_preview)}</code></td>
+              <td><small>${createdDate}</small></td>
+              <td><small>${lastUsed}</small></td>
+              <td>
+                <button type="button" onclick="revokeKey('${k.id}')" class="contrast outline">Revoke</button>
               </td>
             </tr>
           `;
         });
 
-        html += '</tbody></table>';
+        html += '</tbody></table></figure>';
         container.innerHTML = html;
 
       } catch (err) {
-        container.innerHTML = '<div style="font-size: 12px; color: var(--danger);">Failed to load keys</div>';
+        container.innerHTML = '<p><del>Failed to load keys</del></p>';
       }
     }
 
@@ -337,7 +351,7 @@
           activeClientKey = rawKey;
           
           document.getElementById('raw-key-value').value = rawKey;
-          document.getElementById('new-key-alert').style.display = 'block';
+          document.getElementById('new-key-dialog').setAttribute('open', 'true');
           loadKeys();
         } else {
           alert('Failed to create key: ' + JSON.stringify(data));
@@ -384,7 +398,7 @@
         const data = await res.json();
         const groups = data.groups || [];
         if (!groups.length) {
-          container.innerHTML = '<div style="font-size: 12px; color: var(--text-muted);">No quota data available.</div>';
+          container.innerHTML = '<p><small>No quota data available.</small></p>';
           return;
         }
         let html = '';
@@ -392,22 +406,20 @@
           (g.buckets || []).forEach(b => {
             const pct = Math.round((b.remainingFraction || 0) * 100);
             html += `
-              <div class="quota-item">
-                <div class="quota-header">
-                  <span style="color: var(--text-primary); font-weight: 500;">${b.displayName || b.bucketId}</span>
-                  <span style="color: var(--text-secondary);">${pct}%</span>
-                </div>
-                <div class="progress-bar-bg">
-                  <div class="progress-bar-fill" style="width: ${pct}%;"></div>
-                </div>
-                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${b.description || ''}</div>
-              </div>
+              <article>
+                <nav>
+                  <ul><li><strong>${escapeHtml(b.displayName || b.bucketId)}</strong></li></ul>
+                  <ul><li><small>${pct}% remaining</small></li></ul>
+                </nav>
+                <progress value="${pct}" max="100"></progress>
+                <small>${escapeHtml(b.description || '')}</small>
+              </article>
             `;
           });
         });
         container.innerHTML = html;
       } catch (err) {
-        container.innerHTML = '<div style="font-size: 12px; color: var(--danger);">Failed to load quotas</div>';
+        container.innerHTML = '<p><del>Failed to load quotas</del></p>';
       }
     }
 
@@ -421,9 +433,10 @@
 
     function clearChat() {
       chatHistory.innerHTML = `
-        <div class="message msg-assistant">
-          <div class="msg-bubble">Chat cleared! Select a model and send a message.</div>
-        </div>
+        <article>
+          <header><small><strong>Bridge</strong></small></header>
+          <p>Chat cleared! Select a model and send a message.</p>
+        </article>
       `;
       messages = [];
     }
@@ -439,22 +452,17 @@
       // Add user message to UI
       messages.push({ role: 'user', content: text });
       
-      const userMsgDiv = document.createElement('div');
-      userMsgDiv.className = 'message msg-user';
-      userMsgDiv.innerHTML = `<div class="msg-bubble">${escapeHtml(text)}</div>`;
-      chatHistory.appendChild(userMsgDiv);
+      const userArticle = document.createElement('article');
+      userArticle.innerHTML = `<header><small><strong>You</strong></small></header><p>${escapeHtml(text)}</p>`;
+      chatHistory.appendChild(userArticle);
 
       // Create assistant placeholder
-      const asstMsgDiv = document.createElement('div');
-      asstMsgDiv.className = 'message msg-assistant';
-      
-      const bubbleDiv = document.createElement('div');
-      bubbleDiv.className = 'msg-bubble';
-      bubbleDiv.textContent = '...';
-      asstMsgDiv.appendChild(bubbleDiv);
-      chatHistory.appendChild(asstMsgDiv);
+      const asstArticle = document.createElement('article');
+      asstArticle.innerHTML = `<header><small><strong>Assistant (${escapeHtml(modelSelect.value)})</strong></small></header><div class="response-body"><small aria-busy="true">Generating...</small></div>`;
+      chatHistory.appendChild(asstArticle);
       chatHistory.scrollTop = chatHistory.scrollHeight;
 
+      const responseBody = asstArticle.querySelector('.response-body');
       const model = modelSelect.value;
 
       try {
@@ -474,14 +482,16 @@
         if (!response.ok) {
           const err = await response.json();
           const errMsg = err.error?.message || err.detail?.error?.message || err.detail || response.statusText;
-          bubbleDiv.innerHTML = `<span style="color: var(--danger);">Error: ${escapeHtml(String(errMsg))}</span>`;
+          responseBody.innerHTML = `<del>Error: ${escapeHtml(String(errMsg))}</del>`;
           return;
         }
 
-        bubbleDiv.textContent = '';
+        responseBody.innerHTML = '';
         let thoughtContent = '';
         let textContent = '';
-        let thoughtEl = null;
+        let thoughtDetails = null;
+        let thoughtCode = null;
+        let textParagraph = null;
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
@@ -505,18 +515,29 @@
                 const delta = parsed.choices?.[0]?.delta || {};
                 
                 if (delta.reasoning_content) {
-                  if (!thoughtEl) {
-                    thoughtEl = document.createElement('div');
-                    thoughtEl.className = 'thought-box';
-                    asstMsgDiv.insertBefore(thoughtEl, bubbleDiv);
+                  if (!thoughtDetails) {
+                    thoughtDetails = document.createElement('details');
+                    thoughtDetails.open = true;
+                    const summary = document.createElement('summary');
+                    summary.innerHTML = '<small>Thinking Process</small>';
+                    thoughtDetails.appendChild(summary);
+                    const pre = document.createElement('pre');
+                    thoughtCode = document.createElement('code');
+                    pre.appendChild(thoughtCode);
+                    thoughtDetails.appendChild(pre);
+                    responseBody.appendChild(thoughtDetails);
                   }
                   thoughtContent += delta.reasoning_content;
-                  thoughtEl.textContent = 'Thinking: ' + thoughtContent;
+                  thoughtCode.textContent = thoughtContent;
                 }
 
                 if (delta.content) {
+                  if (!textParagraph) {
+                    textParagraph = document.createElement('p');
+                    responseBody.appendChild(textParagraph);
+                  }
                   textContent += delta.content;
-                  bubbleDiv.textContent = textContent;
+                  textParagraph.textContent = textContent;
                 }
                 chatHistory.scrollTop = chatHistory.scrollHeight;
               } catch (e) {}
@@ -527,7 +548,7 @@
         messages.push({ role: 'assistant', content: textContent });
 
       } catch (err) {
-        bubbleDiv.innerHTML = `<span style="color: var(--danger);">Error: ${escapeHtml(err.message)}</span>`;
+        responseBody.innerHTML = `<del>Error: ${escapeHtml(err.message)}</del>`;
       } finally {
         chatInput.disabled = false;
         sendBtn.disabled = false;

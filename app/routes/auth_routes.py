@@ -115,45 +115,47 @@ async def auth_login(
     return HTMLResponse(
         content=f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
           <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Google Sign-In - Antigravity API</title>
-          <link rel="stylesheet" href="/static/style.css">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
         </head>
-        <body style="display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px;">
-          <div class="card" style="max-width: 580px; width: 100%;">
-            <div class="card-header">
-              <h2 class="card-title">Connect Google Account</h2>
-              <span style="font-size: 12px; color: var(--accent-primary);">Remote Server Setup</span>
-            </div>
+        <body>
+          <main class="container">
+            <article>
+              <header>
+                <nav>
+                  <ul><li><strong>Connect Google Account</strong></li></ul>
+                  <ul><li><small>Remote Server Setup</small></li></ul>
+                </nav>
+              </header>
 
-            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">
-              Because this bridge is deployed on a remote server/IP (<code>{hostname}</code>), Google requires authenticating via standard loopback.
-            </div>
+              <p>
+                Because this bridge is deployed on a remote server/IP (<code>{hostname}</code>), Google requires authenticating via standard loopback.
+              </p>
 
-            <div style="display: flex; flex-direction: column; gap: 16px;">
-              <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-                <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px;">Step 1: Open Google Sign-In</div>
-                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Click the button below to authorize with your Google Account in a new tab:</div>
-                <a href="{auth_url}" target="_blank" class="btn btn-primary btn-full">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/></svg>
-                  Authorize Google Account (New Tab)
-                </a>
-              </div>
+              <article>
+                <header><strong>Step 1: Open Google Sign-In</strong></header>
+                <p><small>Click below to authorize with your Google Account in a new tab:</small></p>
+                <a href="{auth_url}" target="_blank" role="button">Authorize Google Account (New Tab)</a>
+              </article>
 
-              <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-                <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px;">Step 2: Paste Redirect URL or Code</div>
-                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">After approving, Google redirects your browser to <code>http://localhost:8085/?code=...</code>. Copy that address bar URL (or the code) and paste it here:</div>
-                <input type="text" id="callback-input" class="select-control" style="width: 100%; margin-bottom: 10px;" placeholder="http://localhost:8085/?state=...&code=4/0A...">
-                <button onclick="submitCode()" class="btn btn-primary btn-full">Complete Connection</button>
-              </div>
+              <article>
+                <header><strong>Step 2: Paste Redirect URL or Code</strong></header>
+                <p><small>After approving, Google redirects to <code>http://localhost:8085/?code=...</code>. Copy that address bar URL (or the code) and paste it here:</small></p>
+                <form onsubmit="event.preventDefault(); submitCode();" role="group">
+                  <input type="text" id="callback-input" placeholder="http://localhost:8085/?state=...&code=4/0A...">
+                  <button type="submit">Complete Connection</button>
+                </form>
+              </article>
 
-              <div style="text-align: center;">
-                <a href="/" class="meta-label" style="text-decoration: underline; font-size: 12px;">Back to Dashboard</a>
-              </div>
-            </div>
-          </div>
+              <footer>
+                <a href="/" role="button" class="secondary outline">Back to Dashboard</a>
+              </footer>
+            </article>
+          </main>
 
           <script>
             async function submitCode() {{
@@ -199,14 +201,24 @@ async def auth_callback(
         logger.error(f"OAuth callback returned error: {error}")
         return HTMLResponse(
             content=f"""
-            <html>
-            <head><title>OAuth Error</title><link rel="stylesheet" href="/static/style.css"></head>
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>OAuth Error - Antigravity API</title>
+              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+            </head>
             <body>
-              <div class="card error">
-                <h2>Authentication Failed</h2>
-                <p>Google returned error: <code>{error}</code></p>
-                <a href="/auth/login" class="btn">Try Again</a>
-              </div>
+              <main class="container">
+                <article>
+                  <header><strong>Authentication Failed</strong></header>
+                  <p>Google returned error: <code>{error}</code></p>
+                  <footer>
+                    <a href="/auth/login" role="button">Try Again</a>
+                  </footer>
+                </article>
+              </main>
             </body>
             </html>
             """,
@@ -231,25 +243,30 @@ async def auth_callback(
         return HTMLResponse(
             content=f"""
             <!DOCTYPE html>
-            <html>
+            <html lang="en">
             <head>
               <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Login Successful - Antigravity API</title>
-              <link rel="stylesheet" href="/static/style.css">
+              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
               <meta http-equiv="refresh" content="3;url=/">
             </head>
             <body>
-              <div class="card success">
-                <div class="badge">✓ Connected</div>
-                <h2>Authentication Successful!</h2>
-                <p>Your Google account has been connected to Antigravity API.</p>
-                <p>Project ID: <strong>{auth_manager.project_id or 'Auto-discovered'}</strong></p>
-                <p>Account: <strong>{auth_manager.user_email or 'Authenticated'}</strong></p>
-                <div style="margin-top: 24px;">
-                  <a href="/" class="btn btn-primary">Go to Dashboard</a>
-                </div>
-                <p class="subtext">Redirecting in 3 seconds...</p>
-              </div>
+              <main class="container">
+                <article>
+                  <header>
+                    <ins>● Connected</ins>
+                    <h2>Authentication Successful!</h2>
+                  </header>
+                  <p>Your Google account has been connected to Antigravity API.</p>
+                  <p>Project ID: <strong>{auth_manager.project_id or 'Auto-discovered'}</strong></p>
+                  <p>Account: <strong>{auth_manager.user_email or 'Authenticated'}</strong></p>
+                  <footer>
+                    <a href="/" role="button">Go to Dashboard</a>
+                    <p><small>Redirecting in 3 seconds...</small></p>
+                  </footer>
+                </article>
+              </main>
             </body>
             </html>
             """
@@ -258,14 +275,24 @@ async def auth_callback(
         logger.error(f"Failed to complete OAuth callback: {e}")
         return HTMLResponse(
             content=f"""
-            <html>
-            <head><title>Authentication Error</title><link rel="stylesheet" href="/static/style.css"></head>
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Authentication Error - Antigravity API</title>
+              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+            </head>
             <body>
-              <div class="card error">
-                <h2>Authentication Error</h2>
-                <p>{str(e)}</p>
-                <a href="/auth/login" class="btn">Try Again</a>
-              </div>
+              <main class="container">
+                <article>
+                  <header><strong>Authentication Error</strong></header>
+                  <p><del>{str(e)}</del></p>
+                  <footer>
+                    <a href="/auth/login" role="button">Try Again</a>
+                  </footer>
+                </article>
+              </main>
             </body>
             </html>
             """,
