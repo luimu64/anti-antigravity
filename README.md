@@ -1,5 +1,30 @@
 # Antigravity to OpenAI API Bridge
 
+<p align="center">
+  <img src="https://img.shields.io/badge/OpenAI_API-Drop--in_Compatible-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI Compatible" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python Version" />
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Ready" />
+  <img src="https://img.shields.io/badge/License-MIT-brightgreen?style=for-the-badge" alt="License" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Google_OAuth-PKCE_Auto--Refresh-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Google OAuth" />
+  <img src="https://img.shields.io/badge/Thinking_Tokens-Gemini_3.7_%7C_Claude_Opus-8A2BE2?style=for-the-badge&logo=anthropic&logoColor=white" alt="Reasoning Support" />
+  <img src="https://img.shields.io/badge/Prompt_Caching-Supported-FF6F00?style=for-the-badge&logo=lightning&logoColor=white" alt="Prompt Caching" />
+  <img src="https://img.shields.io/badge/Tests-18%2F18_Passing-2ea44f?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests Passing" />
+  <img src="https://img.shields.io/badge/PRs-Welcome-blueviolet?style=for-the-badge&logo=github" alt="PRs Welcome" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/luimu64/anti-antigravity/stargazers"><img src="https://img.shields.io/github/stars/luimu64/anti-antigravity?style=social" alt="GitHub Stars" /></a>
+  <a href="https://github.com/luimu64/anti-antigravity/network/members"><img src="https://img.shields.io/github/forks/luimu64/anti-antigravity?style=social" alt="GitHub Forks" /></a>
+  <a href="https://github.com/luimu64/anti-antigravity/issues"><img src="https://img.shields.io/github/issues/luimu64/anti-antigravity?color=red" alt="GitHub Issues" /></a>
+  <a href="https://github.com/luimu64/anti-antigravity/commits/main"><img src="https://img.shields.io/github/last-commit/luimu64/anti-antigravity" alt="Last Commit" /></a>
+</p>
+
+---
+
 A lightweight, high-performance bridge that translates **Google Antigravity CLI (`agy`)** internal backend APIs into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
 
 Supports all **Antigravity models** (Gemini 3.7 Flash with reasoning, Claude Sonnet 4.6, Claude Opus 4.6 Thinking, Gemini 3.1 Pro, GPT-OSS 120B), multi-turn conversations, tool/function calling, multimodal input, real-time Server-Sent Events (SSE) streaming, full Google OAuth 2.0 PKCE authentication, and dedicated **Bridge API Key Management & Enforcement**.
@@ -42,6 +67,16 @@ Supports all **Antigravity models** (Gemini 3.7 Flash with reasoning, Claude Son
   - Headless environment support via environment variables (`REFRESH_TOKEN` / `ACCESS_TOKEN`)
 - **Modern Web Dashboard**: View auth state, quota gauges, token expiration, and generate/revoke API keys.
 - **Dockerized**: Multi-stage lightweight container with volume persistence for credentials and API keys.
+
+---
+
+## Web Dashboard
+
+The built-in interactive web dashboard provides real-time connection status, quota monitoring, Google OAuth token management, and Bridge API key generation/enforcement:
+
+| Authenticated Dashboard | Login / Logged Out View |
+| :---: | :---: |
+| ![Authenticated Dashboard](img/logged-in.png) | ![Logged Out Dashboard](img/logged-out.png) |
 
 ---
 
