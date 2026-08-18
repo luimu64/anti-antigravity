@@ -121,6 +121,23 @@ async def auth_login(
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Google Sign-In - Antigravity API</title>
           <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+          <style>
+            form[role="group"], [role="group"] {{
+              display: flex !important;
+              align-items: stretch !important;
+              margin-bottom: 1rem;
+            }}
+            form[role="group"] input, form[role="group"] button, [role="group"] input, [role="group"] button {{
+              height: 2.75rem !important;
+              box-sizing: border-box !important;
+              margin: 0 !important;
+            }}
+            form[role="group"] button, [role="group"] button {{
+              white-space: nowrap !important;
+              flex-shrink: 0 !important;
+              padding: 0 1.25rem !important;
+            }}
+          </style>
         </head>
         <body>
           <main class="container">
@@ -147,7 +164,7 @@ async def auth_login(
                 <p><small>After approving, Google redirects to <code>http://localhost:8085/?code=...</code>. Copy that address bar URL (or the code) and paste it here:</small></p>
                 <form onsubmit="event.preventDefault(); submitCode();" role="group">
                   <input type="text" id="callback-input" placeholder="http://localhost:8085/?state=...&code=4/0A...">
-                  <button type="submit">Complete Connection</button>
+                  <button type="submit">Connect</button>
                 </form>
               </article>
 

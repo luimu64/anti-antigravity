@@ -92,6 +92,75 @@
       opacity: 1;
       color: var(--pico-primary, #2ecc71);
     }
+
+    /* Token Timer Row & Stable Refresh Button */
+    .token-timer-cell {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      min-height: 2rem;
+    }
+    #token-timer {
+      min-width: 5rem;
+      display: inline-block;
+      font-variant-numeric: tabular-nums;
+    }
+    .refresh-token-btn {
+      margin: 0 !important;
+      padding: 0.25rem 0.75rem !important;
+      font-size: 0.8rem !important;
+      min-width: 5.5rem;
+      height: 2rem;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Red Logout Button */
+    .btn-logout {
+      background-color: #dc2626 !important;
+      border-color: #dc2626 !important;
+      color: #ffffff !important;
+      width: 100%;
+      margin: 0;
+      cursor: pointer;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+    .btn-logout:hover, .btn-logout:focus {
+      background-color: #b91c1c !important;
+      border-color: #b91c1c !important;
+      color: #ffffff !important;
+    }
+
+    /* Unified Height for Form Groups (Input + Button) */
+    form[role="group"],
+    [role="group"] {
+      display: flex !important;
+      align-items: stretch !important;
+      margin-bottom: 1rem;
+    }
+    form[role="group"] input,
+    form[role="group"] button,
+    [role="group"] input,
+    [role="group"] button {
+      height: 2.75rem !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      vertical-align: middle;
+    }
+    form[role="group"] button,
+    [role="group"] button {
+      white-space: nowrap !important;
+      flex-shrink: 0 !important;
+      padding: 0 1.25rem !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
   </style>
 </head>
 <body>
@@ -131,132 +200,125 @@
 
   <!-- Main Container -->
   <main class="container">
-    <div class="grid">
 
-      <!-- Left Column: Auth Status & Usage/Quotas -->
-      <div>
-        <!-- Auth Status Card -->
+    <!-- 1. Auth Status Widget (Full Width) -->
+    <article id="auth-card">
+      <header>
+        <nav>
+          <ul><li><strong>Antigravity Backend</strong></li></ul>
+          <ul><li><small>OAuth 2.0</small></li></ul>
+        </nav>
+      </header>
+
+      <figure>
+        <table>
+          <tbody>
+            <tr>
+              <th scope="row" style="width: 220px;">Account</th>
+              <td><small>{{ auth_status.user_email or 'None' }}</small></td>
+            </tr>
+            <tr>
+              <th scope="row">Project ID</th>
+              <td><small>{{ auth_status.project_id or 'Auto' }}</small></td>
+            </tr>
+            <tr>
+              <th scope="row">Tier</th>
+              <td><small>{{ auth_status.tier_name or 'Antigravity' }}</small></td>
+            </tr>
+            <tr>
+              <th scope="row">Token Expires</th>
+              <td>
+                <div class="token-timer-cell">
+                  <span id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></span>
+                  {% if auth_status.authenticated %}
+                    <button type="button" onclick="refreshToken(this)" class="secondary outline refresh-token-btn">Refresh</button>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </figure>
+
+      <footer>
+        {% if auth_status.authenticated %}
+          <button type="button" onclick="logout()" class="btn-logout">Logout</button>
+        {% else %}
+          <a href="/auth/login" role="button" style="width: 100%; text-align: center; margin: 0;">Sign in with Google</a>
+          <details style="margin-top: 0.75rem; margin-bottom: 0;">
+            <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
+            <form onsubmit="event.preventDefault(); submitManualCode();" role="group" style="margin-top: 0.5rem; margin-bottom: 0;">
+              <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
+              <button type="submit">Submit</button>
+            </form>
+          </details>
+        {% endif %}
+      </footer>
+    </article>
+
+    <!-- 2. Usage & Quotas Widget (Full Width) -->
+    <article id="quotas-card">
+      <header>
+        <nav>
+          <ul><li><strong>Usage &amp; Quotas</strong></li></ul>
+          <ul><li><button type="button" onclick="loadQuotas()" class="secondary outline" style="margin: 0; padding: 0.25rem 0.75rem; font-size: 0.8rem;">Refresh</button></li></ul>
+        </nav>
+      </header>
+
+      <div id="quotas-container">
+        <p><small aria-busy="true">Loading quotas...</small></p>
+      </div>
+    </article>
+
+    <!-- 3. Bridge API Keys Widget (Full Width) -->
+    <article id="keys-card">
+      <header>
+        <nav>
+          <ul><li><strong>Bridge API Keys</strong></li></ul>
+          <ul>
+            <li>
+              <label>
+                <input type="checkbox" id="enforce-toggle" role="switch" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
+                Enforce Auth
+              </label>
+            </li>
+          </ul>
+        </nav>
+      </header>
+
+      <p>
+        <small>Protect incoming requests. Clients supply key via <code>Authorization: Bearer &lt;key&gt;</code>.</small>
+      </p>
+      
+      <form onsubmit="event.preventDefault(); createNewKey();" role="group">
+        <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)">
+        <button type="submit">Generate</button>
+      </form>
+
+      <!-- New Key Modal Dialog -->
+      <dialog id="new-key-dialog">
         <article>
           <header>
-            <nav>
-              <ul><li><strong>Antigravity Backend</strong></li></ul>
-              <ul><li><small>OAuth 2.0</small></li></ul>
-            </nav>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('new-key-dialog').removeAttribute('open')"></button>
+            <strong>New API Key Generated</strong>
           </header>
-
-          <figure>
-            <table>
-              <tbody>
-                <tr>
-                  <th scope="row">Account</th>
-                  <td><small>{{ auth_status.user_email or 'None' }}</small></td>
-                </tr>
-                <tr>
-                  <th scope="row">Project ID</th>
-                  <td><small>{{ auth_status.project_id or 'Auto' }}</small></td>
-                </tr>
-                <tr>
-                  <th scope="row">Tier</th>
-                  <td><small>{{ auth_status.tier_name or 'Antigravity' }}</small></td>
-                </tr>
-                <tr>
-                  <th scope="row">Token Expires</th>
-                  <td>
-                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
-                      <span id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></span>
-                      {% if auth_status.authenticated %}
-                        <button type="button" onclick="refreshToken(this)" class="secondary outline" style="margin: 0; padding: 0.2rem 0.6rem; font-size: 0.75rem;">Refresh Token</button>
-                      {% endif %}
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </figure>
-
+          <p>Save your key now! It will not be displayed in full again:</p>
+          <form onsubmit="event.preventDefault(); copyText(document.getElementById('raw-key-value').value, 'API Key copied to clipboard!');" role="group">
+            <input type="text" id="raw-key-value" readonly>
+            <button type="submit">Copy</button>
+          </form>
           <footer>
-            {% if auth_status.authenticated %}
-              <button type="button" onclick="logout()" class="contrast outline" style="width: 100%; margin: 0;">Logout</button>
-            {% else %}
-              <a href="/auth/login" role="button" style="width: 100%; text-align: center;">Sign in with Google</a>
-              <details style="margin-top: 0.75rem; margin-bottom: 0;">
-                <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
-                <form onsubmit="event.preventDefault(); submitManualCode();" role="group" style="margin-top: 0.5rem; margin-bottom: 0;">
-                  <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
-                  <button type="submit">Submit</button>
-                </form>
-              </details>
-            {% endif %}
+            <button type="button" class="secondary" onclick="document.getElementById('new-key-dialog').removeAttribute('open')">Done</button>
           </footer>
         </article>
+      </dialog>
 
-        <!-- Quota Summary Card -->
-        <article>
-          <header>
-            <nav>
-              <ul><li><strong>Usage &amp; Quotas</strong></li></ul>
-              <ul><li><button type="button" onclick="loadQuotas()" class="secondary outline">Refresh</button></li></ul>
-            </nav>
-          </header>
-
-          <div id="quotas-container">
-            <p><small aria-busy="true">Loading quotas...</small></p>
-          </div>
-        </article>
+      <!-- Keys table container -->
+      <div id="keys-table-container">
+        <p><small aria-busy="true">Loading API keys...</small></p>
       </div>
+    </article>
 
-      <!-- Right Column: API Key Management -->
-      <div>
-        <!-- API Key Management Card -->
-        <article>
-          <header>
-            <nav>
-              <ul><li><strong>Bridge API Keys</strong></li></ul>
-              <ul>
-                <li>
-                  <label>
-                    <input type="checkbox" id="enforce-toggle" role="switch" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
-                    Enforce Auth
-                  </label>
-                </li>
-              </ul>
-            </nav>
-          </header>
-
-          <p>
-            <small>Protect incoming requests. Clients supply key via <code>Authorization: Bearer &lt;key&gt;</code>.</small>
-          </p>
-          
-          <form onsubmit="event.preventDefault(); createNewKey();" role="group">
-            <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)">
-            <button type="submit">+ Generate Key</button>
-          </form>
-
-          <!-- New Key Modal Dialog -->
-          <dialog id="new-key-dialog">
-            <article>
-              <header>
-                <button aria-label="Close" rel="prev" onclick="document.getElementById('new-key-dialog').removeAttribute('open')"></button>
-                <strong>New API Key Generated</strong>
-              </header>
-              <p>Save your key now! It will not be displayed in full again:</p>
-              <form onsubmit="event.preventDefault(); copyText(document.getElementById('raw-key-value').value, 'API Key copied to clipboard!');" role="group">
-                <input type="text" id="raw-key-value" readonly>
-                <button type="submit">Copy</button>
-              </form>
-              <footer>
-                <button type="button" class="secondary" onclick="document.getElementById('new-key-dialog').removeAttribute('open')">Done</button>
-              </footer>
-            </article>
-          </dialog>
-
-          <!-- Keys table container -->
-          <div id="keys-table-container">
-            <p><small aria-busy="true">Loading API keys...</small></p>
-          </div>
-        </article>
-      </div>
-    </div>
   </main>
 
   <script>
