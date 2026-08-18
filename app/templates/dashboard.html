@@ -499,12 +499,13 @@
           
           document.getElementById('raw-key-value').value = rawKey;
           document.getElementById('new-key-dialog').setAttribute('open', 'true');
+          showToast('API key generated successfully!');
           loadKeys();
         } else {
-          alert('Failed to create key: ' + JSON.stringify(data));
+          showToast('Failed to create key: ' + (data.detail || JSON.stringify(data)), 'error');
         }
       } catch (err) {
-        alert('Error: ' + err.message);
+        showToast('Error: ' + err.message, 'error');
       }
     }
 
@@ -514,12 +515,13 @@
         try {
           const res = await fetch('/api/keys/' + keyId, { method: 'DELETE' });
           if (res.ok) {
+            showToast('API key revoked.');
             loadKeys();
           } else {
-            alert('Failed to revoke key');
+            showToast('Failed to revoke key', 'error');
           }
         } catch (err) {
-          alert('Error: ' + err.message);
+          showToast('Error: ' + err.message, 'error');
         }
       }
     }
@@ -527,13 +529,18 @@
     // Toggle Enforcement
     async function toggleEnforcement(enforce) {
       try {
-        await fetch('/api/keys/enforcement', {
+        const res = await fetch('/api/keys/enforcement', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enforce: enforce })
         });
+        if (res.ok) {
+          showToast(enforce ? 'API key enforcement enabled' : 'API key enforcement disabled');
+        } else {
+          showToast('Failed to update enforcement', 'error');
+        }
       } catch (err) {
-        alert('Error updating enforcement: ' + err.message);
+        showToast('Error updating enforcement: ' + err.message, 'error');
       }
     }
 

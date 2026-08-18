@@ -122,6 +122,54 @@ async def auth_login(
           <title>Google Sign-In - Antigravity API</title>
           <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
           <style>
+            #toast-container {{
+              position: fixed;
+              top: 1.25rem;
+              left: 50%;
+              transform: translateX(-50%);
+              z-index: 99999;
+              pointer-events: none;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              gap: 0.5rem;
+            }}
+            .toast {{
+              pointer-events: auto;
+              display: inline-flex;
+              align-items: center;
+              gap: 0.6rem;
+              padding: 0.55rem 1.15rem;
+              background: var(--pico-card-background-color, #1b232c);
+              color: var(--pico-color, #e2e8f0);
+              border: 1px solid var(--pico-border-color, #334155);
+              border-radius: 9999px;
+              box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+              font-size: 0.85rem;
+              font-weight: 500;
+              opacity: 0;
+              transform: translateY(-8px) scale(0.95);
+              transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            }}
+            .toast.show {{
+              opacity: 1;
+              transform: translateY(0) scale(1);
+            }}
+            .toast.hide {{
+              opacity: 0;
+              transform: translateY(-10px) scale(0.95);
+            }}
+            .toast.toast-error {{
+              border-color: #ef4444;
+            }}
+            .toast-icon {{
+              display: inline-flex;
+              align-items: center;
+              color: var(--pico-primary, #2ecc71);
+            }}
+            .toast-icon.toast-icon-error {{
+              color: #ef4444;
+            }}
             form[role="group"], [role="group"] {{
               display: flex !important;
               align-items: stretch !important;
@@ -140,6 +188,7 @@ async def auth_login(
           </style>
         </head>
         <body>
+          <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
           <main class="container">
             <article>
               <header>
@@ -175,10 +224,41 @@ async def auth_login(
           </main>
 
           <script>
+            function showToast(message, type = 'success') {{
+              const container = document.getElementById('toast-container');
+              if (!container) return;
+
+              const toast = document.createElement('div');
+              toast.className = `toast ${{type === 'error' ? 'toast-error' : ''}}`;
+              const iconHtml = type === 'error'
+                ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`
+                : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+              toast.innerHTML = `
+                <span class="toast-icon ${{type === 'error' ? 'toast-icon-error' : ''}}">
+                  ${{iconHtml}}
+                </span>
+                <span>${{message}}</span>
+              `;
+              container.appendChild(toast);
+
+              requestAnimationFrame(() => {{
+                toast.classList.add('show');
+              }});
+
+              setTimeout(() => {{
+                toast.classList.remove('show');
+                toast.classList.add('hide');
+                setTimeout(() => {{
+                  toast.remove();
+                }}, 250);
+              }}, 2400);
+            }}
+
             async function submitCode() {{
               const val = document.getElementById('callback-input').value.trim();
               if (!val) {{
-                alert('Please paste the redirect URL or code.');
+                showToast('Please paste the redirect URL or code.', 'error');
                 return;
               }}
               try {{
@@ -189,13 +269,13 @@ async def auth_login(
                 }});
                 const data = await res.json();
                 if (res.ok) {{
-                  alert('Successfully connected to Antigravity!');
-                  window.location.href = '/';
+                  showToast('Connected successfully! Redirecting...');
+                  setTimeout(() => {{ window.location.href = '/'; }}, 1000);
                 }} else {{
-                  alert('Error: ' + (data.detail || JSON.stringify(data)));
+                  showToast('Error: ' + (data.detail || JSON.stringify(data)), 'error');
                 }}
               }} catch (e) {{
-                alert('Network error: ' + e.message);
+                showToast('Network error: ' + e.message, 'error');
               }}
             }}
           </script>
