@@ -101,8 +101,12 @@ agy-to-api/
 
 ### 3.4 Translator (`app/translator.py`)
 - **Model Resolution**: Maps OpenAI model names and aliases (`gpt-4o`, `claude-3-7-sonnet`, `o1`) to Google internal model identifiers.
-- **Content Translation**: Converts OpenAI multi-turn messages, system messages, multimodal image data, and tool definitions into Google's `contents`, `systemInstruction`, and `tools` schema.
+- **Content Translation**: Converts OpenAI multi-turn messages (including `"system"` and `"developer"` roles), multimodal image and audio data (`image_url`, `input_audio`), and tool definitions into Google's `contents`, `systemInstruction`, and `tools` schema.
+- **Structured Outputs & Response Formats**: Translates `response_format: {"type": "json_object"}` and `{"type": "json_schema", ...}` into `responseMimeType: "application/json"` and `responseSchema`.
+- **Advanced Generation Controls**: Handles `stop` sequences, `presence_penalty`, `frequency_penalty`, `seed`, and candidate count `n`.
+- **Tool Choice Mapping**: Maps `tool_choice` (`"auto"`, `"none"`, `"required"`, specific function) to `toolConfig.functionCallingConfig`.
 - **Thinking / Reasoning Tokens**: Extracts thought tokens (`part["thought"] == True`) and maps them to `delta.reasoning_content` in OpenAI chunks.
+- **Token Usage & Caching Reporting**: Formats Google `usageMetadata` into OpenAI `usage` (including `prompt_tokens_details.cached_tokens` and `completion_tokens_details.reasoning_tokens`) and handles `stream_options.include_usage`.
 - **Tool Calling & Thought Signatures**: Caches and restores `thoughtSignature` across multi-turn function calls to satisfy Gemini's strict signature requirement.
 
 ### 3.5 Web Dashboard & UI (`app/templates/dashboard.html`, `app/routes/dashboard.py`)

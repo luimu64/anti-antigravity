@@ -155,7 +155,7 @@ Fetches user quota usage percentages and reset intervals.
 
 ### 3.4 Generation & Streaming: `streamGenerateContent`
 
-Executes multi-turn conversation generation, tool calling, and streaming with thinking/reasoning tokens.
+Executes multi-turn conversation generation, tool calling, structured outputs, audio inputs, and streaming with thinking/reasoning tokens.
 
 - **Method**: `POST`
 - **Path**: `/v1internal:streamGenerateContent?alt=sse`
@@ -186,6 +186,10 @@ Executes multi-turn conversation generation, tool calling, and streaming with th
         "maxOutputTokens": 64000,
         "temperature": 0.7,
         "topP": 0.95,
+        "presencePenalty": 0.0,
+        "frequencyPenalty": 0.0,
+        "stopSequences": ["User:"],
+        "responseMimeType": "application/json",
         "thinkingConfig": {
           "includeThoughts": true,
           "thinkingBudget": -1
@@ -206,6 +210,11 @@ Executes multi-turn conversation generation, tool calling, and streaming with th
               }
             }
           ]
+        },
+        {
+          "functionCallingConfig": {
+            "mode": "AUTO"
+          }
         }
       ]
     }

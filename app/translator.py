@@ -2,7 +2,7 @@ import time
 import uuid
 import json
 import logging
-from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator
+from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 from app.config import MODEL_ALIASES
@@ -23,6 +23,10 @@ class ChatMessage(BaseModel):
 class StreamOptions(BaseModel):
     include_usage: Optional[bool] = None
 
+class ResponseFormat(BaseModel):
+    type: Optional[str] = "text"
+    json_schema: Optional[Dict[str, Any]] = None
+
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -30,11 +34,17 @@ class ChatCompletionRequest(BaseModel):
     messages: List[Dict[str, Any]]
     temperature: Optional[float] = None
     top_p: Optional[float] = None
+    n: Optional[int] = None
+    stop: Optional[Union[str, List[str]]] = None
     max_tokens: Optional[int] = Field(default=None, alias="max_completion_tokens")
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    seed: Optional[int] = None
+    response_format: Optional[Union[ResponseFormat, Dict[str, Any]]] = None
     stream: Optional[bool] = False
     stream_options: Optional[StreamOptions | Dict[str, Any]] = None
     tools: Optional[List[Dict[str, Any]]] = None
-    tool_choice: Optional[Any] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     reasoning_effort: Optional[str] = None
     user: Optional[str] = None
 
@@ -69,17 +79,19 @@ class OpenAITranslator:
         tool_call_names: Dict[str, str] = {}
 
         for msg in req.messages:
-            role = msg.get("role", "user").lower()
+            role = str(msg.get("role", "user")).lower()
             content = msg.get("content")
             
-            # Extract system messages
-            if role == "system":
+            # Extract system / developer messages
+            if role in ("system", "developer"):
                 if isinstance(content, str):
                     system_texts.append(content)
                 elif isinstance(content, list):
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "text":
                             system_texts.append(item.get("text", ""))
+                        elif isinstance(item, str):
+                            system_texts.append(item)
                 continue
 
             # Handle user message
@@ -110,6 +122,17 @@ class OpenAITranslator:
                                     })
                                 else:
                                     parts.append({"text": f"[Image URL: {url}]"})
+                            elif itype == "input_audio":
+                                audio_obj = item.get("input_audio", {})
+                                audio_data = audio_obj.get("data", "")
+                                audio_format = audio_obj.get("format", "wav")
+                                mime_type = f"audio/{audio_format}"
+                                parts.append({
+                                    "inlineData": {
+                                        "mimeType": mime_type,
+                                        "data": audio_data
+                                    }
+                                })
                 if parts:
                     contents.append({"role": "user", "parts": parts})
 
@@ -202,6 +225,43 @@ class OpenAITranslator:
             generation_config["temperature"] = req.temperature
         if req.top_p is not None:
             generation_config["topP"] = req.top_p
+        if req.presence_penalty is not None:
+            generation_config["presencePenalty"] = req.presence_penalty
+        if req.frequency_penalty is not None:
+            generation_config["frequencyPenalty"] = req.frequency_penalty
+        if req.seed is not None:
+            generation_config["seed"] = req.seed
+        if req.n is not None and req.n > 1:
+            generation_config["candidateCount"] = req.n
+
+        # Stop sequences
+        if req.stop:
+            if isinstance(req.stop, str):
+                generation_config["stopSequences"] = [req.stop]
+            elif isinstance(req.stop, list):
+                generation_config["stopSequences"] = req.stop
+
+        # Response Format / Structured Outputs
+        if req.response_format:
+            resp_fmt = req.response_format
+            if isinstance(resp_fmt, dict):
+                fmt_type = resp_fmt.get("type")
+                if fmt_type in ("json_object", "json"):
+                    generation_config["responseMimeType"] = "application/json"
+                elif fmt_type == "json_schema":
+                    generation_config["responseMimeType"] = "application/json"
+                    schema_def = resp_fmt.get("json_schema", {})
+                    if "schema" in schema_def:
+                        generation_config["responseSchema"] = schema_def["schema"]
+                    elif schema_def:
+                        generation_config["responseSchema"] = schema_def
+            elif hasattr(resp_fmt, "type"):
+                if resp_fmt.type in ("json_object", "json"):
+                    generation_config["responseMimeType"] = "application/json"
+                elif resp_fmt.type == "json_schema":
+                    generation_config["responseMimeType"] = "application/json"
+                    if resp_fmt.json_schema:
+                        generation_config["responseSchema"] = resp_fmt.json_schema.get("schema", resp_fmt.json_schema)
 
         # Reasoning / Thinking config
         if "gemini-3.7" in internal_model or "gemini-3" in internal_model:
@@ -235,7 +295,7 @@ class OpenAITranslator:
                     "thinkingBudget": 8192
                 }
 
-        # Build Tools
+        # Build Tools & Tool Config
         tools = None
         if req.tools:
             function_declarations = []
@@ -250,6 +310,33 @@ class OpenAITranslator:
                     function_declarations.append(fn_decl)
             if function_declarations:
                 tools = [{"functionDeclarations": function_declarations}]
+
+        # Tool choice handling
+        if req.tool_choice and tools:
+            # Map tool_choice to toolConfig / functionCallingConfig
+            tool_config: Dict[str, Any] = {}
+            if isinstance(req.tool_choice, str):
+                tc_lower = req.tool_choice.lower()
+                if tc_lower == "none":
+                    tool_config = {"functionCallingConfig": {"mode": "NONE"}}
+                elif tc_lower == "auto":
+                    tool_config = {"functionCallingConfig": {"mode": "AUTO"}}
+                elif tc_lower == "required":
+                    tool_config = {"functionCallingConfig": {"mode": "ANY"}}
+            elif isinstance(req.tool_choice, dict):
+                tc_type = req.tool_choice.get("type")
+                if tc_type == "function":
+                    fn_obj = req.tool_choice.get("function", {})
+                    fn_name = fn_obj.get("name")
+                    if fn_name:
+                        tool_config = {
+                            "functionCallingConfig": {
+                                "mode": "ANY",
+                                "allowedFunctionNames": [fn_name]
+                            }
+                        }
+            if tool_config:
+                tools.append(tool_config)
 
         return internal_model, contents, system_instruction, generation_config, tools
 

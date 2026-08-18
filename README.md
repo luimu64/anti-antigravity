@@ -9,6 +9,24 @@ Supports all **Antigravity models** (Gemini 3.7 Flash with reasoning, Claude Son
 ## Features
 
 - **OpenAI v1 Compatible**: Full drop-in replacement for OpenAI SDKs, Cursor, Continue, Cline, Open WebUI, LiteLLM, LangChain, etc.
+- **Token Usage & Prompt Caching Reporting**:
+  - Detailed token consumption metadata (`prompt_tokens`, `completion_tokens`, `total_tokens`)
+  - Prompt caching breakdown (`usage.prompt_tokens_details.cached_tokens`)
+  - Reasoning/thinking token usage breakdown (`usage.completion_tokens_details.reasoning_tokens`)
+  - Streaming usage support via `stream_options: {"include_usage": true}`
+- **Structured Outputs & Response Formats**:
+  - JSON mode (`response_format: {"type": "json_object"}`)
+  - Strict JSON schema validation (`response_format: {"type": "json_schema", "json_schema": {...}}`)
+- **Advanced Generation Controls**:
+  - Custom stop sequences (`stop: ["\n\n", "User:"]`)
+  - Penalties (`presence_penalty`, `frequency_penalty`)
+  - Deterministic sampling (`seed`) and candidate counts (`n`)
+- **Modern Message Roles & Modalities**:
+  - Full support for `"developer"` role (o1/o3 style system prompts)
+  - Multimodal image (`image_url`) and audio (`input_audio`) input payloads
+- **Tool & Function Calling**:
+  - Standard `tools` function declarations with `thoughtSignature` preservation across turns
+  - Flexible `tool_choice` modes (`auto`, `none`, `required`, or forced specific function)
 - **Bridge API Key Management & Enforcement**:
   - Generate, list, and revoke multiple bridge API keys (`sk-agy-...`)
   - Enforce API keys across all incoming `/v1/*` OpenAI endpoints with standard OpenAI 401 error responses
@@ -16,7 +34,6 @@ Supports all **Antigravity models** (Gemini 3.7 Flash with reasoning, Claude Son
   - Track key creation and last used timestamps
 - **Real-time SSE Streaming**: Low-latency token-by-token streaming compatible with OpenAI chat completion chunk schema.
 - **Thinking / Reasoning Support**: Streams `reasoning_content` (thinking tokens) from Gemini 3.7 Flash Thinking, Claude Opus Thinking, etc.
-- **Tool / Function Calling**: Bidirectional translation between OpenAI function calling tools and Antigravity `functionDeclarations` with `thoughtSignature` preservation.
 - **Google OAuth 2.0 Flow**:
   - One-click Web UI login (`/auth/login`)
   - Terminal CLI interactive login (`python main.py --login`)

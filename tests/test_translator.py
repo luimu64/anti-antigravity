@@ -59,6 +59,59 @@ def test_openai_to_internal_tools():
     assert decl["name"] == "get_weather"
     assert decl["description"] == "Get current weather"
 
+def test_openai_to_internal_advanced_spec_features():
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[
+            {"role": "developer", "content": "Developer instructions"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Listen to this and answer"},
+                    {"type": "input_audio", "input_audio": {"data": "UklGRg...", "format": "mp3"}}
+                ]
+            }
+        ],
+        stop=["\n\n", "User:"],
+        presence_penalty=0.5,
+        frequency_penalty=0.3,
+        seed=42,
+        n=1,
+        response_format={"type": "json_schema", "json_schema": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}},
+        tool_choice={"type": "function", "function": {"name": "get_weather"}},
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather"
+                }
+            }
+        ]
+    )
+    internal_model, contents, sys_inst, gen_cfg, tools = OpenAITranslator.openai_to_internal_request(req)
+    
+    assert internal_model == "gemini-3.7-flash-high"
+    assert sys_inst == {"parts": [{"text": "Developer instructions"}]}
+    assert len(contents) == 1
+    assert contents[0]["parts"][0] == {"text": "Listen to this and answer"}
+    assert contents[0]["parts"][1]["inlineData"]["mimeType"] == "audio/mp3"
+    assert contents[0]["parts"][1]["inlineData"]["data"] == "UklGRg..."
+    
+    # Check generation config
+    assert gen_cfg["stopSequences"] == ["\n\n", "User:"]
+    assert gen_cfg["presencePenalty"] == 0.5
+    assert gen_cfg["frequencyPenalty"] == 0.3
+    assert gen_cfg["seed"] == 42
+    assert gen_cfg["responseMimeType"] == "application/json"
+    assert gen_cfg["responseSchema"] == {"type": "object", "properties": {"name": {"type": "string"}}}
+    
+    # Check tools & toolConfig
+    assert len(tools) == 2
+    assert "functionDeclarations" in tools[0]
+    assert tools[1]["functionCallingConfig"]["mode"] == "ANY"
+    assert tools[1]["functionCallingConfig"]["allowedFunctionNames"] == ["get_weather"]
+
 def test_internal_to_openai_response_with_caching_and_reasoning():
     internal_result = {
         "responseId": "test-resp-123",
