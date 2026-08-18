@@ -61,7 +61,7 @@ agy-to-api/
 │   │   ├── auth_routes.py    # /auth/login, /auth/callback, /auth/status, /auth/refresh, /auth/logout
 │   │   └── dashboard.py      # Web dashboard, /api/keys, /api/quotas, /health
 │   └── templates/
-│       └── dashboard.html    # Interactive dashboard & live streaming chat playground
+│       └── dashboard.html    # Interactive dashboard & API key management
 ├── data/                     # Local persistence directory (credentials.json, api_keys.json)
 ├── tests/                    # Unit and integration test suite
 │   ├── test_api_endpoints.py
@@ -104,6 +104,12 @@ agy-to-api/
 - **Content Translation**: Converts OpenAI multi-turn messages, system messages, multimodal image data, and tool definitions into Google's `contents`, `systemInstruction`, and `tools` schema.
 - **Thinking / Reasoning Tokens**: Extracts thought tokens (`part["thought"] == True`) and maps them to `delta.reasoning_content` in OpenAI chunks.
 - **Tool Calling & Thought Signatures**: Caches and restores `thoughtSignature` across multi-turn function calls to satisfy Gemini's strict signature requirement.
+
+### 3.5 Web Dashboard & UI (`app/templates/dashboard.html`, `app/routes/dashboard.py`)
+- **Header Layout**: Top navbar displays the service identity, a center interactive Base URL button (copies the endpoint URL to clipboard on click), and connection status.
+- **Auth Card**: Displays account metadata, project ID, tier, and remaining token lifetime. Features an inline "Refresh Token" action next to the expiration timer and dedicated Login/Logout in the footer.
+- **Quota Monitoring & Key Management**: Visual gauges for quota usage and full UI for generating, inspecting, revoking bridge API keys, and toggling enforcement.
+- **Toast Feedback System**: Non-blocking animated pill toasts for clipboard copying, token refresh events, and status updates without disruptive browser alerts.
 
 ---
 

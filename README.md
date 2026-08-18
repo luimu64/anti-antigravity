@@ -23,7 +23,7 @@ Supports all **Antigravity models** (Gemini 3.7 Flash with reasoning, Claude Son
   - Auto-discovery from Linux Secret Service / Keyring (`secret-tool` / DBus)
   - Automatic token refresh before expiration
   - Headless environment support via environment variables (`REFRESH_TOKEN` / `ACCESS_TOKEN`)
-- **Modern Web Dashboard**: View auth state, quota gauges, token expiration, interactive real-time chat playground, and generate/revoke API keys.
+- **Modern Web Dashboard**: View auth state, quota gauges, token expiration, and generate/revoke API keys.
 - **Dockerized**: Multi-stage lightweight container with volume persistence for credentials and API keys.
 
 ---
@@ -126,7 +126,7 @@ If an invalid or missing key is provided, the bridge returns standard OpenAI HTT
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/` | `GET` | Interactive Web Dashboard & Chat Playground |
+| `/` | `GET` | Interactive Web Dashboard |
 | `/health` | `GET` | Health check, auth status & project ID |
 | `/api/keys` | `GET`, `POST` | Manage Bridge API keys |
 | `/api/keys/{key_id}` | `DELETE` | Revoke a Bridge API key |

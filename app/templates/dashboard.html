@@ -5,8 +5,99 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Antigravity OpenAI Bridge Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+  <style>
+    /* Toast Notification */
+    #toast-container {
+      position: fixed;
+      top: 1.25rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 99999;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .toast {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.55rem 1.15rem;
+      background: var(--pico-card-background-color, #1b232c);
+      color: var(--pico-color, #e2e8f0);
+      border: 1px solid var(--pico-border-color, #334155);
+      border-radius: 9999px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+      font-size: 0.85rem;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(-8px) scale(0.95);
+      transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    .toast.hide {
+      opacity: 0;
+      transform: translateY(-10px) scale(0.95);
+    }
+    .toast.toast-error {
+      border-color: #ef4444;
+    }
+    .toast-icon {
+      display: inline-flex;
+      align-items: center;
+      color: var(--pico-primary, #2ecc71);
+    }
+    .toast-icon.toast-icon-error {
+      color: #ef4444;
+    }
+
+    /* Header Endpoint Button */
+    .header-endpoint-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      margin: 0;
+      border-radius: 2rem;
+      cursor: pointer;
+      background: var(--pico-card-background-color, rgba(255, 255, 255, 0.05));
+      border: 1px solid var(--pico-border-color, #334155);
+      color: var(--pico-color, inherit);
+      transition: border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+    }
+    .header-endpoint-btn:hover {
+      border-color: var(--pico-primary, #2ecc71);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+    .header-endpoint-btn:active {
+      transform: translateY(0);
+    }
+    .header-endpoint-btn code {
+      font-size: 0.85rem;
+      padding: 0;
+      background: none;
+      color: inherit;
+    }
+    .header-endpoint-btn svg {
+      opacity: 0.7;
+      transition: opacity 0.15s ease, color 0.15s ease;
+    }
+    .header-endpoint-btn:hover svg {
+      opacity: 1;
+      color: var(--pico-primary, #2ecc71);
+    }
+  </style>
 </head>
 <body>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Navigation Header -->
   <header class="container">
@@ -14,6 +105,17 @@
       <ul>
         <li><strong>Antigravity API</strong></li>
         <li><small>OpenAI v1 Bridge</small></li>
+      </ul>
+      <ul>
+        <li>
+          <button type="button" class="header-endpoint-btn" onclick="copyText('{{ base_url }}', 'Base URL copied to clipboard!')" title="Click to copy OpenAI Base URL">
+            <code>{{ base_url }}</code>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </li>
       </ul>
       <ul>
         <li>
@@ -31,7 +133,7 @@
   <main class="container">
     <div class="grid">
 
-      <!-- Left Column: Auth, Quotas, and Endpoint -->
+      <!-- Left Column: Auth Status & Usage/Quotas -->
       <div>
         <!-- Auth Status Card -->
         <article>
@@ -59,7 +161,14 @@
                 </tr>
                 <tr>
                   <th scope="row">Token Expires</th>
-                  <td id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></td>
+                  <td>
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                      <span id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></span>
+                      {% if auth_status.authenticated %}
+                        <button type="button" onclick="refreshToken(this)" class="secondary outline" style="margin: 0; padding: 0.2rem 0.6rem; font-size: 0.75rem;">Refresh Token</button>
+                      {% endif %}
+                    </div>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -67,15 +176,12 @@
 
           <footer>
             {% if auth_status.authenticated %}
-              <fieldset role="group">
-                <button type="button" onclick="refreshToken()" class="secondary">Refresh Token</button>
-                <button type="button" onclick="logout()" class="contrast">Logout</button>
-              </fieldset>
+              <button type="button" onclick="logout()" class="contrast outline" style="width: 100%; margin: 0;">Logout</button>
             {% else %}
-              <a href="/auth/login" role="button">Sign in with Google</a>
-              <details>
+              <a href="/auth/login" role="button" style="width: 100%; text-align: center;">Sign in with Google</a>
+              <details style="margin-top: 0.75rem; margin-bottom: 0;">
                 <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
-                <form onsubmit="event.preventDefault(); submitManualCode();" role="group">
+                <form onsubmit="event.preventDefault(); submitManualCode();" role="group" style="margin-top: 0.5rem; margin-bottom: 0;">
                   <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
                   <button type="submit">Submit</button>
                 </form>
@@ -97,65 +203,10 @@
             <p><small aria-busy="true">Loading quotas...</small></p>
           </div>
         </article>
-
-        <!-- Endpoint URL Card -->
-        <article>
-          <header>
-            <strong>OpenAI Base URL</strong>
-          </header>
-          <form onsubmit="event.preventDefault(); copyText('{{ base_url }}');" role="group">
-            <input type="text" readonly value="{{ base_url }}" id="base-url-input">
-            <button type="submit" class="secondary">Copy</button>
-          </form>
-          <small>Use this endpoint in Cursor, Continue, LangChain, or OpenAI SDK.</small>
-        </article>
       </div>
 
-      <!-- Right Column: Playground & API Key Management -->
+      <!-- Right Column: API Key Management -->
       <div>
-        
-        <!-- Live Chat Playground -->
-        <article>
-          <header>
-            <nav>
-              <ul><li><strong>Live Chat Playground</strong></li></ul>
-              <ul>
-                <li>
-                  <select id="model-select">
-                    <option value="gemini-3.7-flash-high">Gemini 3.7 Flash (High)</option>
-                    <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Thinking)</option>
-                    <option value="claude-opus-4-6-thinking">Claude Opus 4.6 (Thinking)</option>
-                    <option value="gemini-3.1-pro-high">Gemini 3.1 Pro (High)</option>
-                    <option value="gemini-3.6-flash-high">Gemini 3.6 Flash (High)</option>
-                    <option value="gpt-oss-120b-medium">GPT-OSS 120B</option>
-                    <option value="gpt-4o">gpt-4o (Alias)</option>
-                    <option value="claude-3-7-sonnet">claude-3-7-sonnet (Alias)</option>
-                  </select>
-                </li>
-                <li>
-                  <button type="button" onclick="clearChat()" class="secondary outline">Clear</button>
-                </li>
-              </ul>
-            </nav>
-          </header>
-
-          <!-- Chat messages area -->
-          <div id="chat-history" class="overflow-auto">
-            <article>
-              <header><small><strong>Bridge</strong></small></header>
-              <p>Hello! I am your Antigravity AI bridge. Ask me any question, test reasoning tokens, or run tool calling!</p>
-            </article>
-          </div>
-
-          <!-- Chat Input -->
-          <footer>
-            <form onsubmit="event.preventDefault(); sendMessage();" role="group">
-              <input type="text" id="chat-input" placeholder="Type your message..." autocomplete="off">
-              <button type="submit" id="send-btn">Send</button>
-            </form>
-          </footer>
-        </article>
-
         <!-- API Key Management Card -->
         <article>
           <header>
@@ -189,7 +240,7 @@
                 <strong>New API Key Generated</strong>
               </header>
               <p>Save your key now! It will not be displayed in full again:</p>
-              <form onsubmit="event.preventDefault(); copyText(document.getElementById('raw-key-value').value);" role="group">
+              <form onsubmit="event.preventDefault(); copyText(document.getElementById('raw-key-value').value, 'API Key copied to clipboard!');" role="group">
                 <input type="text" id="raw-key-value" readonly>
                 <button type="submit">Copy</button>
               </form>
@@ -204,18 +255,47 @@
             <p><small aria-busy="true">Loading API keys...</small></p>
           </div>
         </article>
-
       </div>
     </div>
   </main>
 
   <script>
-    let activeClientKey = "{{ initial_key }}";
+    // Toast helper
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+
+      const toast = document.createElement('div');
+      toast.className = `toast ${type === 'error' ? 'toast-error' : ''}`;
+      const iconHtml = type === 'error'
+        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`
+        : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+      toast.innerHTML = `
+        <span class="toast-icon ${type === 'error' ? 'toast-icon-error' : ''}">
+          ${iconHtml}
+        </span>
+        <span>${escapeHtml(message)}</span>
+      `;
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.add('show');
+      });
+
+      setTimeout(() => {
+        toast.classList.remove('show');
+        toast.classList.add('hide');
+        setTimeout(() => {
+          toast.remove();
+        }, 250);
+      }, 2400);
+    }
 
     // Copy helper
-    function copyText(text) {
+    function copyText(text, message = 'Copied to clipboard!') {
       navigator.clipboard.writeText(text);
-      alert('Copied to clipboard!');
+      showToast(message);
     }
 
     // Submit manual code / token
@@ -232,10 +312,10 @@
             body: JSON.stringify({ refresh_token: input })
           });
           if (res.ok) {
-            alert('Connected successfully via token!');
-            window.location.reload();
+            showToast('Connected successfully via token!');
+            setTimeout(() => window.location.reload(), 1000);
           } else {
-            alert('Failed to set token');
+            showToast('Failed to set token', 'error');
           }
         } else {
           // Authorization code or URL
@@ -246,30 +326,36 @@
           });
           const data = await res.json();
           if (res.ok) {
-            alert('Authentication successful!');
-            window.location.reload();
+            showToast('Authentication successful!');
+            setTimeout(() => window.location.reload(), 1000);
           } else {
-            alert('Authentication failed: ' + (data.detail || JSON.stringify(data)));
+            showToast('Authentication failed: ' + (data.detail || JSON.stringify(data)), 'error');
           }
         }
       } catch (err) {
-        alert('Error: ' + err.message);
+        showToast('Error: ' + err.message, 'error');
       }
     }
 
     // Refresh token
-    async function refreshToken() {
+    async function refreshToken(btn) {
+      if (btn) btn.setAttribute('aria-busy', 'true');
       try {
         const res = await fetch('/auth/refresh', { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
-          alert('Token refreshed successfully!');
-          window.location.reload();
+          showToast('Token refreshed successfully!');
+          const timerEl = document.getElementById('token-timer');
+          if (timerEl && data.expires_in) {
+            timerEl.innerHTML = `<small>${data.expires_in}s</small>`;
+          }
         } else {
-          alert('Failed to refresh token: ' + (data.detail || JSON.stringify(data)));
+          showToast('Failed to refresh token: ' + (data.detail || JSON.stringify(data)), 'error');
         }
       } catch (err) {
-        alert('Error: ' + err.message);
+        showToast('Error: ' + err.message, 'error');
+      } finally {
+        if (btn) btn.removeAttribute('aria-busy');
       }
     }
 
@@ -348,7 +434,6 @@
         if (res.ok) {
           nameInput.value = '';
           const rawKey = data.key.key;
-          activeClientKey = rawKey;
           
           document.getElementById('raw-key-value').value = rawKey;
           document.getElementById('new-key-dialog').setAttribute('open', 'true');
@@ -420,139 +505,6 @@
         container.innerHTML = html;
       } catch (err) {
         container.innerHTML = '<p><del>Failed to load quotas</del></p>';
-      }
-    }
-
-    // Chat Playground Logic
-    const chatHistory = document.getElementById('chat-history');
-    const chatInput = document.getElementById('chat-input');
-    const sendBtn = document.getElementById('send-btn');
-    const modelSelect = document.getElementById('model-select');
-
-    let messages = [];
-
-    function clearChat() {
-      chatHistory.innerHTML = `
-        <article>
-          <header><small><strong>Bridge</strong></small></header>
-          <p>Chat cleared! Select a model and send a message.</p>
-        </article>
-      `;
-      messages = [];
-    }
-
-    async function sendMessage() {
-      const text = chatInput.value.trim();
-      if (!text) return;
-
-      chatInput.value = '';
-      chatInput.disabled = true;
-      sendBtn.disabled = true;
-
-      // Add user message to UI
-      messages.push({ role: 'user', content: text });
-      
-      const userArticle = document.createElement('article');
-      userArticle.innerHTML = `<header><small><strong>You</strong></small></header><p>${escapeHtml(text)}</p>`;
-      chatHistory.appendChild(userArticle);
-
-      // Create assistant placeholder
-      const asstArticle = document.createElement('article');
-      asstArticle.innerHTML = `<header><small><strong>Assistant (${escapeHtml(modelSelect.value)})</strong></small></header><div class="response-body"><small aria-busy="true">Generating...</small></div>`;
-      chatHistory.appendChild(asstArticle);
-      chatHistory.scrollTop = chatHistory.scrollHeight;
-
-      const responseBody = asstArticle.querySelector('.response-body');
-      const model = modelSelect.value;
-
-      try {
-        const response = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + (activeClientKey || 'sk-agy-default')
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: messages,
-            stream: true
-          })
-        });
-
-        if (!response.ok) {
-          const err = await response.json();
-          const errMsg = err.error?.message || err.detail?.error?.message || err.detail || response.statusText;
-          responseBody.innerHTML = `<del>Error: ${escapeHtml(String(errMsg))}</del>`;
-          return;
-        }
-
-        responseBody.innerHTML = '';
-        let thoughtContent = '';
-        let textContent = '';
-        let thoughtDetails = null;
-        let thoughtCode = null;
-        let textParagraph = null;
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('data: ')) {
-              const dataStr = trimmed.substring(6).trim();
-              if (dataStr === '[DONE]') break;
-              try {
-                const parsed = JSON.parse(dataStr);
-                const delta = parsed.choices?.[0]?.delta || {};
-                
-                if (delta.reasoning_content) {
-                  if (!thoughtDetails) {
-                    thoughtDetails = document.createElement('details');
-                    thoughtDetails.open = true;
-                    const summary = document.createElement('summary');
-                    summary.innerHTML = '<small>Thinking Process</small>';
-                    thoughtDetails.appendChild(summary);
-                    const pre = document.createElement('pre');
-                    thoughtCode = document.createElement('code');
-                    pre.appendChild(thoughtCode);
-                    thoughtDetails.appendChild(pre);
-                    responseBody.appendChild(thoughtDetails);
-                  }
-                  thoughtContent += delta.reasoning_content;
-                  thoughtCode.textContent = thoughtContent;
-                }
-
-                if (delta.content) {
-                  if (!textParagraph) {
-                    textParagraph = document.createElement('p');
-                    responseBody.appendChild(textParagraph);
-                  }
-                  textContent += delta.content;
-                  textParagraph.textContent = textContent;
-                }
-                chatHistory.scrollTop = chatHistory.scrollHeight;
-              } catch (e) {}
-            }
-          }
-        }
-
-        messages.push({ role: 'assistant', content: textContent });
-
-      } catch (err) {
-        responseBody.innerHTML = `<del>Error: ${escapeHtml(err.message)}</del>`;
-      } finally {
-        chatInput.disabled = false;
-        sendBtn.disabled = false;
-        chatInput.focus();
       }
     }
 

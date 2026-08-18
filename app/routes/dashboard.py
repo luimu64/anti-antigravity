@@ -47,8 +47,7 @@ async def get_dashboard(request: Request):
         auth_status=status,
         port=SERVER_PORT,
         base_url=base_url,
-        enforce_keys=api_key_manager.enforce_keys,
-        initial_key=api_key_manager.get_first_active_key() or ""
+        enforce_keys=api_key_manager.enforce_keys
     )
     return HTMLResponse(content=html_content)
 
