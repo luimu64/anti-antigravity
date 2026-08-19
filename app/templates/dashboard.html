@@ -6,6 +6,16 @@
   <title>Antigravity OpenAI Bridge Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
   <style>
+    /* Desktop Compact Scale */
+    @media (min-width: 768px) {
+      :root {
+        --pico-font-size: 88%;
+      }
+      html {
+        font-size: 88%;
+      }
+    }
+
     /* Toast Notification */
     #toast-container {
       position: fixed;
@@ -56,14 +66,62 @@
       color: #ef4444;
     }
 
+    /* Header Responsive Layout */
+    .header-nav {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+    }
+    @media (max-width: 767px) {
+      .header-brand {
+        order: 1;
+        margin: 0;
+      }
+      .header-status {
+        order: 2;
+        margin: 0;
+      }
+      .header-endpoint {
+        order: 3;
+        width: 100%;
+        margin: 0.25rem 0 0 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+      }
+      .header-endpoint li {
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+      }
+      .header-endpoint-btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+    @media (min-width: 768px) {
+      .header-brand {
+        order: 1;
+      }
+      .header-endpoint {
+        order: 2;
+      }
+      .header-status {
+        order: 3;
+      }
+    }
+
     /* Header Endpoint Button */
     .header-endpoint-btn {
       display: inline-flex;
       align-items: center;
-      gap: 0.6rem;
-      padding: 0.45rem 1rem;
+      gap: 0.65rem;
+      padding: 0.65rem 1.25rem;
       margin: 0;
-      border-radius: 0.5rem;
+      border-radius: var(--pico-border-radius, 0.5rem);
       cursor: pointer;
       background: var(--pico-card-background-color, rgba(255, 255, 255, 0.05));
       border: none;
@@ -79,7 +137,7 @@
       transform: translateY(0);
     }
     .header-endpoint-btn code {
-      font-size: 0.85rem;
+      font-size: 0.88rem;
       padding: 0;
       background: none;
       color: inherit;
@@ -161,20 +219,20 @@
       white-space: nowrap;
     }
     .keys-col-name {
-      flex: 2 1 140px;
-      min-width: 120px;
+      flex: 2 1 8.75rem;
+      min-width: 7.5rem;
     }
     .keys-col-preview {
-      flex: 2 1 140px;
-      min-width: 130px;
+      flex: 2 1 8.75rem;
+      min-width: 8rem;
     }
     .keys-col-created {
-      flex: 1.5 1 100px;
-      min-width: 90px;
+      flex: 1.5 1 6.25rem;
+      min-width: 5.5rem;
     }
     .keys-col-lastused {
-      flex: 1.5 1 100px;
-      min-width: 90px;
+      flex: 1.5 1 6.25rem;
+      min-width: 5.5rem;
     }
     .keys-col-action {
       flex: 0 0 auto;
@@ -230,11 +288,11 @@
 
   <!-- Navigation Header -->
   <header class="container">
-    <nav>
-      <ul>
+    <nav class="header-nav">
+      <ul class="header-brand">
         <li><strong>Antigravity API</strong></li>
       </ul>
-      <ul>
+      <ul class="header-endpoint">
         <li>
           <button type="button" class="header-endpoint-btn" onclick="copyText('{{ base_url }}', 'Base URL copied to clipboard!')" title="Click to copy OpenAI Base URL">
             <code>{{ base_url }}</code>
@@ -245,7 +303,7 @@
           </button>
         </li>
       </ul>
-      <ul>
+      <ul class="header-status">
         <li>
           {% if auth_status.authenticated %}
             <ins>● Google Connected</ins>
