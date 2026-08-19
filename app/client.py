@@ -210,12 +210,10 @@ class AntigravityClient:
     ) -> Dict[str, Any]:
         """
         Non-streaming generate content call.
-        Collects all streaming chunks and returns merged response object.
+        Collects all streaming chunks and returns merged response object with multi-candidate support.
         """
-        combined_text = []
-        combined_thoughts = []
-        tool_calls = []
-        usage_metadata = {}
+        candidates_map: Dict[int, Dict[str, Any]] = {}
+        usage_metadata: Dict[str, Any] = {}
         finish_reason = "STOP"
         response_id = None
         model_version = model
@@ -239,30 +237,118 @@ class AntigravityClient:
                 usage_metadata.update(event["usageMetadata"])
 
             candidates = resp_obj.get("candidates", [])
-            for cand in candidates:
+            for default_idx, cand in enumerate(candidates):
+                idx = cand.get("index", default_idx)
+                if idx not in candidates_map:
+                    candidates_map[idx] = {
+                        "text": [],
+                        "thoughts": [],
+                        "toolCalls": [],
+                        "finishReason": "STOP",
+                        "thoughtSignature": None
+                    }
+
                 if cand.get("finishReason"):
+                    candidates_map[idx]["finishReason"] = cand["finishReason"]
                     finish_reason = cand["finishReason"]
+
                 parts = cand.get("content", {}).get("parts", [])
                 for p in parts:
                     if p.get("thoughtSignature"):
                         last_thought_signature = p["thoughtSignature"]
+                        candidates_map[idx]["thoughtSignature"] = last_thought_signature
                     if p.get("thought"):
-                        combined_thoughts.append(p.get("text", ""))
+                        candidates_map[idx]["thoughts"].append(p.get("text", ""))
                     elif p.get("text"):
-                        combined_text.append(p["text"])
+                        candidates_map[idx]["text"].append(p["text"])
                     if p.get("functionCall"):
-                        tool_calls.append(p["functionCall"])
+                        candidates_map[idx]["toolCalls"].append(p["functionCall"])
 
+        formatted_candidates = []
+        if candidates_map:
+            for idx in sorted(candidates_map.keys()):
+                c = candidates_map[idx]
+                formatted_candidates.append({
+                    "index": idx,
+                    "text": "".join(c["text"]),
+                    "thoughts": "".join(c["thoughts"]),
+                    "toolCalls": c["toolCalls"],
+                    "finishReason": c["finishReason"],
+                    "thoughtSignature": c["thoughtSignature"]
+                })
+        else:
+            formatted_candidates.append({
+                "index": 0,
+                "text": "",
+                "thoughts": "",
+                "toolCalls": [],
+                "finishReason": finish_reason,
+                "thoughtSignature": None
+            })
+
+        primary = formatted_candidates[0]
         return {
             "responseId": response_id,
             "modelVersion": model_version,
-            "text": "".join(combined_text),
-            "thoughts": "".join(combined_thoughts),
-            "toolCalls": tool_calls,
-            "finishReason": finish_reason,
+            "candidates": formatted_candidates,
+            "text": primary["text"],
+            "thoughts": primary["thoughts"],
+            "toolCalls": primary["toolCalls"],
+            "finishReason": primary["finishReason"],
             "usageMetadata": usage_metadata,
             "thoughtSignature": last_thought_signature
         }
+
+    async def embed_contents(
+        self,
+        model: str,
+        texts: List[str],
+        dimensions: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Call /v1internal:batchEmbedContents to generate text embeddings.
+        """
+        headers = await self._get_headers()
+        project_id = await self.get_project_id()
+
+        internal_model = model
+        if internal_model.startswith("models/"):
+            internal_model = internal_model.replace("models/", "")
+
+        requests_payload = []
+        for text in texts:
+            req_item: Dict[str, Any] = {
+                "content": {
+                    "parts": [{"text": text}]
+                }
+            }
+            if dimensions is not None:
+                req_item["outputDimensionality"] = dimensions
+            requests_payload.append(req_item)
+
+        payload = {
+            "project": project_id,
+            "model": internal_model,
+            "requests": requests_payload
+        }
+
+        logger.info(f"Sending batchEmbedContents for model={internal_model}: {len(texts)} texts")
+
+        url = f"{self.base_url}/v1internal:batchEmbedContents"
+        http = self.get_http_client()
+        resp = await http.post(url, json=payload, headers=headers)
+
+        if resp.status_code == 401 and self.auth.refresh_token:
+            logger.info("Received 401 on batchEmbedContents, refreshing token and retrying...")
+            await self.auth.refresh_access_token()
+            headers = await self._get_headers()
+            resp = await http.post(url, json=payload, headers=headers)
+
+        if resp.status_code != 200:
+            logger.error(f"batchEmbedContents failed: {resp.status_code} {resp.text}")
+            raise ValueError(f"Antigravity API Error ({resp.status_code}): {resp.text}")
+
+        return resp.json()
 
 # Global client singleton
 client = AntigravityClient()

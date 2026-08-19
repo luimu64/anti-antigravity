@@ -1,4 +1,6 @@
 import time
+import struct
+import base64
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
@@ -8,7 +10,7 @@ from app.config import MODEL_ALIASES
 from app.auth import auth_manager
 from app.keys import api_key_manager
 from app.client import client
-from app.translator import OpenAITranslator, ChatCompletionRequest
+from app.translator import OpenAITranslator, ChatCompletionRequest, EmbeddingRequest
 
 logger = logging.getLogger("agy_to_api.openai")
 router = APIRouter(tags=["OpenAI"])
@@ -227,28 +229,112 @@ async def legacy_completions(request: Request):
 
 @router.post("/v1/embeddings", dependencies=[Depends(verify_api_key)])
 @router.post("/embeddings", dependencies=[Depends(verify_api_key)])
-async def embeddings_placeholder(request: Request):
+async def create_embeddings(request: EmbeddingRequest):
     """
-    Embeddings endpoint placeholder.
+    Generate embeddings for given input texts via Antigravity backend.
+    Supports float and base64 encoding_format, and custom dimensions.
     """
-    body = await request.json()
-    input_text = body.get("input", "")
-    inputs = [input_text] if isinstance(input_text, str) else input_text
-    
-    # Return standard embedding vector placeholder
+    # 1. Normalize input into list of strings
+    if isinstance(request.input, str):
+        texts = [request.input]
+    elif isinstance(request.input, list):
+        if len(request.input) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="input list cannot be empty"
+            )
+        if isinstance(request.input[0], int):
+            texts = [" ".join(str(tok) for tok in request.input)]
+        elif isinstance(request.input[0], list):
+            texts = [" ".join(str(tok) for tok in sub) for sub in request.input]
+        else:
+            texts = [str(x) for x in request.input]
+    else:
+        texts = [str(request.input)]
+
+    # 2. Validate parameters
+    encoding_format = request.encoding_format or "float"
+    if encoding_format not in ("float", "base64"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid encoding_format: {encoding_format}. Must be 'float' or 'base64'."
+        )
+
+    if request.dimensions is not None and request.dimensions <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="dimensions must be a positive integer."
+        )
+
+    resolved_model = OpenAITranslator.resolve_model(request.model)
+
+    try:
+        raw_result = await client.embed_contents(
+            model=resolved_model,
+            texts=texts,
+            dimensions=request.dimensions
+        )
+    except Exception as e:
+        logger.error(f"Embedding error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Embedding failed: {str(e)}"
+        )
+
+    # 3. Extract embedding vectors from response
+    raw_embeddings = []
+    if isinstance(raw_result, dict):
+        if "embeddings" in raw_result and isinstance(raw_result["embeddings"], list):
+            for item in raw_result["embeddings"]:
+                if isinstance(item, dict) and "values" in item:
+                    raw_embeddings.append(item["values"])
+                elif isinstance(item, list):
+                    raw_embeddings.append(item)
+        elif "responses" in raw_result and isinstance(raw_result["responses"], list):
+            for item in raw_result["responses"]:
+                emb = item.get("embedding", {}) if isinstance(item, dict) else {}
+                raw_embeddings.append(emb.get("values", []))
+        elif "embedding" in raw_result:
+            emb = raw_result["embedding"]
+            if isinstance(emb, dict) and "values" in emb:
+                raw_embeddings.append(emb["values"])
+
+    # Fallback to ensure one vector per input text
+    while len(raw_embeddings) < len(texts):
+        raw_embeddings.append([0.0] * (request.dimensions or 768))
+
+    # 4. Format embeddings according to encoding_format and dimensions
     data = []
-    for i, _ in enumerate(inputs):
+    for i, vec in enumerate(raw_embeddings):
+        if request.dimensions is not None:
+            vec = vec[:request.dimensions]
+            if len(vec) < request.dimensions:
+                vec = vec + [0.0] * (request.dimensions - len(vec))
+
+        if encoding_format == "base64":
+            binary_data = struct.pack(f"<{len(vec)}f", *vec)
+            embedding_val = base64.b64encode(binary_data).decode("utf-8")
+        else:
+            embedding_val = [float(v) for v in vec]
+
         data.append({
             "object": "embedding",
             "index": i,
-            "embedding": [0.0] * 768
+            "embedding": embedding_val
         })
+
+    # 5. Token usage calculation
+    usage_meta = raw_result.get("usageMetadata", {}) if isinstance(raw_result, dict) else {}
+    prompt_tokens = usage_meta.get("promptTokenCount")
+    if prompt_tokens is None:
+        prompt_tokens = sum(max(1, len(t) // 4) for t in texts)
+
     return {
         "object": "list",
         "data": data,
-        "model": body.get("model", "text-embedding-3-small"),
+        "model": request.model,
         "usage": {
-            "prompt_tokens": len(inputs) * 5,
-            "total_tokens": len(inputs) * 5
+            "prompt_tokens": prompt_tokens,
+            "total_tokens": prompt_tokens
         }
     }

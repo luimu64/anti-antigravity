@@ -48,6 +48,15 @@ class ChatCompletionRequest(BaseModel):
     reasoning_effort: Optional[str] = None
     user: Optional[str] = None
 
+class EmbeddingRequest(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    input: Union[str, List[str], List[int], List[List[int]]]
+    model: str = "text-embedding-004"
+    encoding_format: Optional[str] = "float"
+    dimensions: Optional[int] = None
+    user: Optional[str] = None
+
 class OpenAITranslator:
     @staticmethod
     def resolve_model(requested_model: str) -> str:
@@ -122,8 +131,8 @@ class OpenAITranslator:
                                     })
                                 else:
                                     parts.append({"text": f"[Image URL: {url}]"})
-                            elif itype == "input_audio":
-                                audio_obj = item.get("input_audio", {})
+                            elif itype in ("audio", "input_audio"):
+                                audio_obj = item.get("audio") or item.get("input_audio") or {}
                                 audio_data = audio_obj.get("data", "")
                                 audio_format = audio_obj.get("format", "wav")
                                 mime_type = f"audio/{audio_format}"
@@ -379,48 +388,105 @@ class OpenAITranslator:
     ) -> Dict[str, Any]:
         """
         Convert complete internal response into OpenAI ChatCompletion response.
+        Supports single and multi-candidate (n > 1) responses.
         """
         completion_id = result.get("responseId") or f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created_time = int(time.time())
-        
-        # Save thought signature for subsequent turns if present
-        thought_sig = result.get("thoughtSignature")
-        if thought_sig:
-            _thought_signature_cache["last_signature"] = thought_sig
 
-        tool_calls_openai = []
-        raw_tool_calls = result.get("toolCalls", [])
-        for i, tc in enumerate(raw_tool_calls):
-            call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
-            if thought_sig:
-                _thought_signature_cache[call_id] = thought_sig
+        choices = []
+        candidates = result.get("candidates", [])
 
-            args = tc.get("args", {})
-            args_str = json.dumps(args) if isinstance(args, dict) else str(args)
-            tool_calls_openai.append({
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": tc.get("name", ""),
-                    "arguments": args_str
+        if candidates:
+            for cand in candidates:
+                cand_idx = cand.get("index", len(choices))
+                cand_thought_sig = cand.get("thoughtSignature") or result.get("thoughtSignature")
+                if cand_thought_sig:
+                    _thought_signature_cache["last_signature"] = cand_thought_sig
+
+                tool_calls_openai = []
+                raw_tool_calls = cand.get("toolCalls", [])
+                for tc in raw_tool_calls:
+                    call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                    if cand_thought_sig:
+                        _thought_signature_cache[call_id] = cand_thought_sig
+
+                    args = tc.get("args", {})
+                    args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                    tool_calls_openai.append({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name", ""),
+                            "arguments": args_str
+                        }
+                    })
+
+                msg: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": cand.get("text", "")
                 }
+                if cand.get("thoughts"):
+                    msg["reasoning_content"] = cand["thoughts"]
+                if tool_calls_openai:
+                    msg["tool_calls"] = tool_calls_openai
+
+                finish_reason = "stop"
+                raw_finish = cand.get("finishReason", "STOP")
+                if tool_calls_openai or raw_finish == "TOOL_CALL":
+                    finish_reason = "tool_calls"
+                elif raw_finish == "MAX_TOKENS":
+                    finish_reason = "length"
+
+                choices.append({
+                    "index": cand_idx,
+                    "message": msg,
+                    "finish_reason": finish_reason
+                })
+        else:
+            # Fallback for single candidate payload without candidates list
+            thought_sig = result.get("thoughtSignature")
+            if thought_sig:
+                _thought_signature_cache["last_signature"] = thought_sig
+
+            tool_calls_openai = []
+            raw_tool_calls = result.get("toolCalls", [])
+            for tc in raw_tool_calls:
+                call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                if thought_sig:
+                    _thought_signature_cache[call_id] = thought_sig
+
+                args = tc.get("args", {})
+                args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                tool_calls_openai.append({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("name", ""),
+                        "arguments": args_str
+                    }
+                })
+
+            msg = {
+                "role": "assistant",
+                "content": result.get("text", "")
+            }
+            if result.get("thoughts"):
+                msg["reasoning_content"] = result["thoughts"]
+            if tool_calls_openai:
+                msg["tool_calls"] = tool_calls_openai
+
+            finish_reason = "stop"
+            raw_finish = result.get("finishReason", "STOP")
+            if tool_calls_openai or raw_finish == "TOOL_CALL":
+                finish_reason = "tool_calls"
+            elif raw_finish == "MAX_TOKENS":
+                finish_reason = "length"
+
+            choices.append({
+                "index": 0,
+                "message": msg,
+                "finish_reason": finish_reason
             })
-
-        message: Dict[str, Any] = {
-            "role": "assistant",
-            "content": result.get("text", "")
-        }
-        if result.get("thoughts"):
-            message["reasoning_content"] = result["thoughts"]
-        if tool_calls_openai:
-            message["tool_calls"] = tool_calls_openai
-
-        finish_reason = "stop"
-        raw_finish = result.get("finishReason", "STOP")
-        if tool_calls_openai or raw_finish == "TOOL_CALL":
-            finish_reason = "tool_calls"
-        elif raw_finish == "MAX_TOKENS":
-            finish_reason = "length"
 
         usage_meta = result.get("usageMetadata", {})
 
@@ -429,13 +495,7 @@ class OpenAITranslator:
             "object": "chat.completion",
             "created": created_time,
             "model": requested_model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": message,
-                    "finish_reason": finish_reason
-                }
-            ],
+            "choices": choices,
             "usage": cls.format_usage(usage_meta)
         }
 
@@ -449,10 +509,11 @@ class OpenAITranslator:
         """
         Convert SSE stream from Antigravity internal API to standard OpenAI SSE chunk format.
         Yields lines formatted as `data: {...}\n\n` ending with `data: [DONE]\n\n`.
+        Supports multi-candidate responses with distinct indices.
         """
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created_time = int(time.time())
-        is_first_chunk = True
+        seen_cand_indexes = set()
         last_thought_signature = None
         latest_usage_metadata: Dict[str, Any] = {}
 
@@ -467,10 +528,11 @@ class OpenAITranslator:
                 latest_usage_metadata.update(event["usageMetadata"])
 
             candidates = resp_obj.get("candidates", [])
-            for cand in candidates:
+            for default_idx, cand in enumerate(candidates):
+                cand_idx = cand.get("index", default_idx)
                 parts = cand.get("content", {}).get("parts", [])
                 raw_finish = cand.get("finishReason")
-                
+
                 for p in parts:
                     if p.get("thoughtSignature"):
                         last_thought_signature = p["thoughtSignature"]
@@ -481,10 +543,10 @@ class OpenAITranslator:
                         thought_text = p.get("text", "")
                         if thought_text:
                             delta: Dict[str, Any] = {"reasoning_content": thought_text}
-                            if is_first_chunk:
+                            if cand_idx not in seen_cand_indexes:
                                 delta["role"] = "assistant"
-                                is_first_chunk = False
-                            
+                                seen_cand_indexes.add(cand_idx)
+
                             chunk = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",
@@ -492,7 +554,7 @@ class OpenAITranslator:
                                 "model": requested_model,
                                 "choices": [
                                     {
-                                        "index": 0,
+                                        "index": cand_idx,
                                         "delta": delta,
                                         "finish_reason": None
                                     }
@@ -504,9 +566,9 @@ class OpenAITranslator:
                     elif p.get("text"):
                         text_chunk = p["text"]
                         delta = {"content": text_chunk}
-                        if is_first_chunk:
+                        if cand_idx not in seen_cand_indexes:
                             delta["role"] = "assistant"
-                            is_first_chunk = False
+                            seen_cand_indexes.add(cand_idx)
 
                         chunk = {
                             "id": completion_id,
@@ -515,7 +577,7 @@ class OpenAITranslator:
                             "model": requested_model,
                             "choices": [
                                 {
-                                    "index": 0,
+                                    "index": cand_idx,
                                     "delta": delta,
                                     "finish_reason": None
                                 }
@@ -529,10 +591,10 @@ class OpenAITranslator:
                         call_id = fc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
                         if last_thought_signature:
                             _thought_signature_cache[call_id] = last_thought_signature
-                        
+
                         args = fc.get("args", {})
                         args_str = json.dumps(args) if isinstance(args, dict) else str(args)
-                        
+
                         delta = {
                             "tool_calls": [
                                 {
@@ -546,9 +608,9 @@ class OpenAITranslator:
                                 }
                             ]
                         }
-                        if is_first_chunk:
+                        if cand_idx not in seen_cand_indexes:
                             delta["role"] = "assistant"
-                            is_first_chunk = False
+                            seen_cand_indexes.add(cand_idx)
 
                         chunk = {
                             "id": completion_id,
@@ -557,7 +619,7 @@ class OpenAITranslator:
                             "model": requested_model,
                             "choices": [
                                 {
-                                    "index": 0,
+                                    "index": cand_idx,
                                     "delta": delta,
                                     "finish_reason": None
                                 }
@@ -580,7 +642,7 @@ class OpenAITranslator:
                         "model": requested_model,
                         "choices": [
                             {
-                                "index": 0,
+                                "index": cand_idx,
                                 "delta": {},
                                 "finish_reason": finish_reason
                             }

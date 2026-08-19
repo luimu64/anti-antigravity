@@ -203,3 +203,102 @@ async def test_streaming_chunks_with_include_usage_and_caching():
     assert usage["total_tokens"] == 245
     assert usage["prompt_tokens_details"]["cached_tokens"] == 150
     assert usage["completion_tokens_details"]["reasoning_tokens"] == 20
+
+def test_audio_content_parts_standard_and_legacy():
+    # Test standard "audio" type and legacy "input_audio"
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "audio", "audio": {"data": "AUDIO_MP3_DATA", "format": "mp3"}},
+                    {"type": "audio", "audio": {"data": "AUDIO_WAV_DEFAULT"}},
+                    {"type": "input_audio", "input_audio": {"data": "LEGACY_WAV_DATA", "format": "wav"}}
+                ]
+            }
+        ]
+    )
+    _, contents, _, _, _ = OpenAITranslator.openai_to_internal_request(req)
+    assert len(contents) == 1
+    parts = contents[0]["parts"]
+    assert len(parts) == 3
+    assert parts[0]["inlineData"]["mimeType"] == "audio/mp3"
+    assert parts[0]["inlineData"]["data"] == "AUDIO_MP3_DATA"
+    assert parts[1]["inlineData"]["mimeType"] == "audio/wav"
+    assert parts[1]["inlineData"]["data"] == "AUDIO_WAV_DEFAULT"
+    assert parts[2]["inlineData"]["mimeType"] == "audio/wav"
+    assert parts[2]["inlineData"]["data"] == "LEGACY_WAV_DATA"
+
+def test_multi_candidate_non_streaming():
+    internal_result = {
+        "responseId": "resp_multi_001",
+        "candidates": [
+            {
+                "index": 0,
+                "text": "Candidate 1 text response",
+                "thoughts": "Thinking candidate 1...",
+                "finishReason": "STOP",
+                "toolCalls": []
+            },
+            {
+                "index": 1,
+                "text": "Candidate 2 alternative response",
+                "thoughts": "Thinking candidate 2...",
+                "finishReason": "STOP",
+                "toolCalls": []
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 50,
+            "candidatesTokenCount": 60,
+            "totalTokenCount": 110
+        }
+    }
+    openai_resp = OpenAITranslator.internal_to_openai_response(internal_result, "gpt-4o")
+    assert len(openai_resp["choices"]) == 2
+    assert openai_resp["choices"][0]["index"] == 0
+    assert openai_resp["choices"][0]["message"]["content"] == "Candidate 1 text response"
+    assert openai_resp["choices"][0]["message"]["reasoning_content"] == "Thinking candidate 1..."
+    assert openai_resp["choices"][1]["index"] == 1
+    assert openai_resp["choices"][1]["message"]["content"] == "Candidate 2 alternative response"
+    assert openai_resp["choices"][1]["message"]["reasoning_content"] == "Thinking candidate 2..."
+
+@pytest.mark.asyncio
+async def test_multi_candidate_streaming():
+    async def mock_multi_candidate_stream():
+        # Stream chunks for candidate 0 and candidate 1
+        yield {
+            "candidates": [
+                {"index": 0, "content": {"role": "model", "parts": [{"text": "Hello from 0"}]}},
+                {"index": 1, "content": {"role": "model", "parts": [{"text": "Hello from 1"}]}}
+            ]
+        }
+        yield {
+            "candidates": [
+                {"index": 0, "content": {"role": "model", "parts": []}, "finishReason": "STOP"},
+                {"index": 1, "content": {"role": "model", "parts": []}, "finishReason": "STOP"}
+            ]
+        }
+
+    chunks = []
+    async for chunk_str in OpenAITranslator.internal_stream_to_openai_chunks(
+        mock_multi_candidate_stream(),
+        "gemini-3.7-flash-high"
+    ):
+        chunks.append(chunk_str)
+
+    assert chunks[-1] == "data: [DONE]\n\n"
+    # Parse chunks
+    parsed_chunks = [json.loads(c.replace("data: ", "")) for c in chunks if c.startswith("data: {")]
+    
+    # Verify candidate indices in choices
+    cand_0_chunks = [c for c in parsed_chunks if c["choices"] and c["choices"][0]["index"] == 0]
+    cand_1_chunks = [c for c in parsed_chunks if c["choices"] and c["choices"][0]["index"] == 1]
+    assert len(cand_0_chunks) >= 2
+    assert len(cand_1_chunks) >= 2
+    assert cand_0_chunks[0]["choices"][0]["delta"]["content"] == "Hello from 0"
+    assert cand_1_chunks[0]["choices"][0]["delta"]["content"] == "Hello from 1"
+    assert cand_0_chunks[-1]["choices"][0]["finish_reason"] == "stop"
+    assert cand_1_chunks[-1]["choices"][0]["finish_reason"] == "stop"
+

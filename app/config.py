@@ -86,5 +86,11 @@ MODEL_ALIASES = {
     "o1": "claude-opus-4-6-thinking",
     "o3-mini": "gemini-3.7-flash-high",
     "gpt-oss-120b": "gpt-oss-120b-medium",
-    "gpt-oss-120b-medium": "gpt-oss-120b-medium"
+    "gpt-oss-120b-medium": "gpt-oss-120b-medium",
+
+    # Embedding aliases
+    "text-embedding-3-small": "text-embedding-004",
+    "text-embedding-3-large": "text-embedding-004",
+    "text-embedding-ada-002": "text-embedding-004",
+    "text-embedding-004": "text-embedding-004"
 }
