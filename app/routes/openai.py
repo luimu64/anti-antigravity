@@ -68,7 +68,7 @@ async def list_models():
     created_time = 1700000000
     seen_ids = set()
 
-    # 1. Models from Antigravity backend
+    # 1. Models from active backends (ordered by provider support count)
     for model_id, info in raw_models.items():
         seen_ids.add(model_id)
         model_list.append({
@@ -81,7 +81,9 @@ async def list_models():
             "parent": None,
             "display_name": info.get("displayName", model_id),
             "max_tokens": info.get("maxTokens", 1048576),
-            "supports_thinking": info.get("supportsThinking", False)
+            "supports_thinking": info.get("supportsThinking", False),
+            "providers": info.get("providers", ["google"]),
+            "provider_count": info.get("provider_count", len(info.get("providers", ["google"])))
         })
 
     # 2. Add standard OpenAI / Claude aliases

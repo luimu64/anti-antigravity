@@ -194,8 +194,17 @@ class OAuthManager:
             logger.debug(f"Could not extract email from id_token: {e}")
 
     def save_credentials(self):
-        """Save current credentials and metadata to disk."""
+        """Save current credentials and metadata to disk while preserving multi-backend settings."""
+        existing_data = {}
+        if os.path.exists(self.credentials_file):
+            try:
+                with open(self.credentials_file, "r") as f:
+                    existing_data = json.load(f)
+            except Exception:
+                existing_data = {}
+
         data = {
+            **existing_data,
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
             "token_expiry": self.token_expiry,

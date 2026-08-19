@@ -395,7 +395,39 @@
         flex: 1 1 auto;
       }
 
-      /* Mobile Card Layout for API Keys */
+      /* Provider Cards Grid */
+    .provider-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .provider-card {
+      margin-bottom: 0 !important;
+      padding: 1.25rem;
+      background: var(--pico-card-background-color);
+      border: 1px solid var(--card-subtle-border);
+      border-radius: var(--pico-border-radius);
+    }
+    .provider-card header {
+      padding-bottom: 0.5rem;
+      margin-bottom: 0.75rem;
+      border-bottom: 1px solid var(--pico-border-color, rgba(255, 255, 255, 0.1));
+    }
+    .badge-active {
+      color: #2ecc71;
+      font-weight: bold;
+    }
+    .badge-cooldown {
+      color: #f39c12;
+      font-weight: bold;
+    }
+    .badge-disabled {
+      color: #7f8c8d;
+    }
+    .badge-unconfigured {
+      color: #e74c3c;
+    }
       .keys-table-wrapper {
         overflow-x: visible;
       }
@@ -566,6 +598,102 @@
 
   <!-- Main Container -->
   <main class="container">
+
+    <!-- 0. Multi-Backend Routing & Providers (Full Width) -->
+    <article id="backends-card">
+      <header>
+        <nav>
+          <ul><li><strong>Multi-Backend Routing &amp; Providers</strong></li></ul>
+          <ul>
+            <li>
+              <button type="button" onclick="clearCooldowns()" class="secondary outline" style="margin: 0; padding: 0.25rem 0.75rem; font-size: 0.8rem;" title="Reset 429 rate limit cooldown timers">Clear Cooldowns</button>
+            </li>
+          </ul>
+        </nav>
+      </header>
+
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label for="routing-strategy-select" style="font-weight: bold; margin-bottom: 0.25rem; display: block;">Routing Strategy:</label>
+          <small>Automated request dispatching across active providers.</small>
+        </div>
+        <div style="min-width: 250px;">
+          <select id="routing-strategy-select" onchange="setRoutingStrategy(this.value)" style="margin: 0;">
+            <option value="free_first">Free First (Web &rarr; Studio API &rarr; Antigravity Fallback)</option>
+            <option value="round_robin">Round Robin (Distribute across available backends)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="provider-grid">
+        <!-- 1. Google Gemini AI Studio API Card -->
+        <article class="provider-card" id="card-gemini-api">
+          <header>
+            <nav>
+              <ul><li><strong>Gemini AI Studio API</strong></li></ul>
+              <ul>
+                <li>
+                  <label>
+                    <input type="checkbox" id="toggle-gemini-api" role="switch" onchange="toggleBackend('gemini_api', this.checked)">
+                    Enabled
+                  </label>
+                </li>
+              </ul>
+            </nav>
+          </header>
+          <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-gemini-api">Loading...</span></small></p>
+          <form onsubmit="event.preventDefault(); saveGeminiApiKey();" role="group">
+            <input type="password" id="gemini-api-key-input" placeholder="Google AI Studio API Key (AIzaSy...)">
+            <button type="submit">Save</button>
+          </form>
+        </article>
+
+        <!-- 2. Google Gemini Web UI Card -->
+        <article class="provider-card" id="card-gemini-web">
+          <header>
+            <nav>
+              <ul><li><strong>Gemini Web Interface</strong></li></ul>
+              <ul>
+                <li>
+                  <label>
+                    <input type="checkbox" id="toggle-gemini-web" role="switch" onchange="toggleBackend('gemini_web', this.checked)">
+                    Enabled
+                  </label>
+                </li>
+              </ul>
+            </nav>
+          </header>
+          <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-gemini-web">Loading...</span></small></p>
+          <form onsubmit="event.preventDefault(); saveGeminiWebCookies();">
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+              <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value">
+              <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)">
+            </div>
+            <button type="submit" style="width: 100%;">Save Cookies</button>
+          </form>
+        </article>
+
+        <!-- 3. Antigravity OAuth Backend Card -->
+        <article class="provider-card" id="card-antigravity">
+          <header>
+            <nav>
+              <ul><li><strong>Antigravity Backend</strong></li></ul>
+              <ul>
+                <li>
+                  <label>
+                    <input type="checkbox" id="toggle-antigravity" role="switch" onchange="toggleBackend('antigravity', this.checked)">
+                    Enabled
+                  </label>
+                </li>
+              </ul>
+            </nav>
+          </header>
+          <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-antigravity">Loading...</span></small></p>
+          <p style="margin-bottom: 0.5rem;"><small>Account: <strong id="antigravity-account-display">{{ auth_status.user_email or 'Not logged in' }}</strong></small></p>
+          <a href="#auth-card" role="button" class="secondary outline" style="width: 100%; text-align: center; margin-top: 0.5rem;">Manage Google OAuth</a>
+        </article>
+      </div>
+    </article>
 
     <!-- 1. Usage & Quotas Widget (Full Width) -->
     <article id="quotas-card">
@@ -997,8 +1125,187 @@
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
+    // Multi-Backend Management
+    async function loadBackends() {
+      try {
+        const res = await fetch('/api/backends');
+        const data = await res.json();
+        const strategy = data.routing_strategy || 'free_first';
+        const backends = data.backends || {};
+
+        // Update Strategy selector
+        const stratSelect = document.getElementById('routing-strategy-select');
+        if (stratSelect) stratSelect.value = strategy;
+
+        // 1. Gemini API
+        const gApi = backends.gemini_api || {};
+        const toggleGApi = document.getElementById('toggle-gemini-api');
+        const statusGApi = document.getElementById('status-gemini-api');
+        if (toggleGApi) toggleGApi.checked = !!gApi.enabled;
+        if (statusGApi) {
+          if (!gApi.enabled) {
+            statusGApi.innerHTML = '<span class="badge-disabled">Disabled</span>';
+          } else if (gApi.cooldown_remaining > 0) {
+            statusGApi.innerHTML = `<span class="badge-cooldown">Cooldown (${gApi.cooldown_remaining}s)</span>`;
+          } else if (gApi.configured) {
+            statusGApi.innerHTML = `<span class="badge-active">Active (${gApi.masked_key || 'Configured'})</span>`;
+          } else {
+            statusGApi.innerHTML = '<span class="badge-unconfigured">No API Key</span>';
+          }
+        }
+
+        // 2. Gemini Web
+        const gWeb = backends.gemini_web || {};
+        const toggleGWeb = document.getElementById('toggle-gemini-web');
+        const statusGWeb = document.getElementById('status-gemini-web');
+        if (toggleGWeb) toggleGWeb.checked = !!gWeb.enabled;
+        if (statusGWeb) {
+          if (!gWeb.enabled) {
+            statusGWeb.innerHTML = '<span class="badge-disabled">Disabled</span>';
+          } else if (gWeb.cooldown_remaining > 0) {
+            statusGWeb.innerHTML = `<span class="badge-cooldown">Cooldown (${gWeb.cooldown_remaining}s)</span>`;
+          } else if (gWeb.configured) {
+            statusGWeb.innerHTML = `<span class="badge-active">Active (${gWeb.masked_psid || 'Cookies Set'})</span>`;
+          } else {
+            statusGWeb.innerHTML = '<span class="badge-unconfigured">No Cookies</span>';
+          }
+        }
+
+        // 3. Antigravity
+        const agy = backends.antigravity || {};
+        const toggleAgy = document.getElementById('toggle-antigravity');
+        const statusAgy = document.getElementById('status-antigravity');
+        if (toggleAgy) toggleAgy.checked = !!agy.enabled;
+        if (statusAgy) {
+          if (!agy.enabled) {
+            statusAgy.innerHTML = '<span class="badge-disabled">Disabled</span>';
+          } else if (agy.cooldown_remaining > 0) {
+            statusAgy.innerHTML = `<span class="badge-cooldown">Cooldown (${agy.cooldown_remaining}s)</span>`;
+          } else if (agy.authenticated) {
+            statusAgy.innerHTML = '<span class="badge-active">Active (Connected)</span>';
+          } else {
+            statusAgy.innerHTML = '<span class="badge-unconfigured">Not Authenticated</span>';
+          }
+        }
+
+      } catch (err) {
+        console.error('Failed to load backend status:', err);
+      }
+    }
+
+    async function toggleBackend(backendId, enabled) {
+      try {
+        const res = await fetch(`/api/backends/${backendId}/toggle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled })
+        });
+        if (res.ok) {
+          showToast(`Backend ${backendId} ${enabled ? 'enabled' : 'disabled'}`);
+          loadBackends();
+        } else {
+          showToast(`Failed to update backend ${backendId}`, 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function setRoutingStrategy(strategy) {
+      try {
+        const res = await fetch('/api/backends/strategy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy: strategy })
+        });
+        if (res.ok) {
+          showToast(`Routing strategy set to: ${strategy}`);
+          loadBackends();
+        } else {
+          showToast('Failed to update routing strategy', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function saveGeminiApiKey() {
+      const keyInput = document.getElementById('gemini-api-key-input');
+      const key = keyInput ? keyInput.value.trim() : '';
+      if (!key) return;
+
+      try {
+        const res = await fetch('/api/backends', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gemini_api_key: key, gemini_api_enabled: true })
+        });
+        if (res.ok) {
+          showToast('Gemini API key saved!');
+          keyInput.value = '';
+          loadBackends();
+        } else {
+          showToast('Failed to save API key', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function saveGeminiWebCookies() {
+      const psidInput = document.getElementById('gemini-web-psid-input');
+      const psidtsInput = document.getElementById('gemini-web-psidts-input');
+      const psid = psidInput ? psidInput.value.trim() : '';
+      const psidts = psidtsInput ? psidtsInput.value.trim() : '';
+      if (!psid) {
+        showToast('Please enter at least __Secure-1PSID', 'error');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/backends', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            gemini_web_psid: psid,
+            gemini_web_psidts: psidts,
+            gemini_web_enabled: true
+          })
+        });
+        if (res.ok) {
+          showToast('Gemini Web session cookies saved!');
+          if (psidInput) psidInput.value = '';
+          if (psidtsInput) psidtsInput.value = '';
+          loadBackends();
+        } else {
+          showToast('Failed to save cookies', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function clearCooldowns() {
+      try {
+        const res = await fetch('/api/backends/cooldown/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (res.ok) {
+          showToast('Cooldown timers cleared!');
+          loadBackends();
+        } else {
+          showToast('Failed to clear cooldowns', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
     // Auto-load on start
     window.addEventListener('DOMContentLoaded', () => {
+      loadBackends();
       loadQuotas();
       loadKeys();
     });

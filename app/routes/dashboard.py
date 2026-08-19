@@ -1,16 +1,16 @@
 import os
 import logging
 from pathlib import Path
-from typing import Optional
-from fastapi import APIRouter, Request
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
+from pydantic import BaseModel
 
 from app.config import SERVER_PORT, BASE_DIR
 from app.auth import auth_manager
 from app.keys import api_key_manager
 from app.client import client
-from pydantic import BaseModel
 
 logger = logging.getLogger("agy_to_api.dashboard")
 router = APIRouter(tags=["Dashboard"])
@@ -24,12 +24,32 @@ class CreateKeyRequest(BaseModel):
 class ToggleEnforcementRequest(BaseModel):
     enforce: bool
 
+class UpdateBackendsRequest(BaseModel):
+    routing_strategy: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    gemini_api_enabled: Optional[bool] = None
+    gemini_web_psid: Optional[str] = None
+    gemini_web_psidts: Optional[str] = None
+    gemini_web_enabled: Optional[bool] = None
+    antigravity_enabled: Optional[bool] = None
+
+class ToggleBackendRequest(BaseModel):
+    enabled: bool
+
+class SetStrategyRequest(BaseModel):
+    strategy: str
+
+class ClearCooldownRequest(BaseModel):
+    backend: Optional[str] = None
+
 @router.get("/", response_class=HTMLResponse)
+@router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
     """
     Render main interactive web dashboard.
     """
-    status = auth_manager.get_status()
+    auth_status = auth_manager.get_status()
+    backend_status = client.get_status() if hasattr(client, "get_status") else {}
     template = jinja_env.get_template("dashboard.html")
 
     # Determine base URL dynamically using HOST env or request host header
@@ -44,12 +64,86 @@ async def get_dashboard(request: Request):
             base_url = f"http://localhost:{SERVER_PORT}/v1"
 
     html_content = template.render(
-        auth_status=status,
+        auth_status=auth_status,
+        backend_status=backend_status,
         port=SERVER_PORT,
         base_url=base_url,
         enforce_keys=api_key_manager.enforce_keys
     )
     return HTMLResponse(content=html_content)
+
+@router.get("/api/backends")
+@router.get("/api/providers")
+async def get_backends():
+    """
+    Get current status and configuration of all backend adapters.
+    """
+    if hasattr(client, "get_status"):
+        return client.get_status()
+    return {"routing_strategy": "free_first", "backends": {}}
+
+@router.post("/api/backends")
+@router.post("/api/providers")
+async def update_backends(payload: UpdateBackendsRequest):
+    """
+    Update backend configurations and routing strategy.
+    """
+    if hasattr(client, "update_config"):
+        updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+        updated_status = client.update_config(updates)
+        return {
+            "status": "updated",
+            "config": updated_status
+        }
+    return {"status": "error", "message": "Router not available"}
+
+@router.post("/api/backends/{backend_id}/toggle")
+async def toggle_backend(backend_id: str, payload: ToggleBackendRequest):
+    """
+    Toggle a specific backend adapter on or off.
+    """
+    if hasattr(client, "get_adapter"):
+        adapter = client.get_adapter(backend_id)
+        if not adapter:
+            raise HTTPException(status_code=404, detail=f"Backend '{backend_id}' not found")
+        
+        adapter.enabled = payload.enabled
+        key_name = f"{backend_id}_enabled"
+        if hasattr(client, "save_config"):
+            client.save_config()
+        return {
+            "status": "updated",
+            "backend": backend_id,
+            "enabled": adapter.enabled,
+            "config": client.get_status()
+        }
+    raise HTTPException(status_code=500, detail="Router not available")
+
+@router.post("/api/backends/strategy")
+async def set_routing_strategy(payload: SetStrategyRequest):
+    """
+    Set active routing strategy: 'free_first' or 'round_robin'.
+    """
+    strategy = payload.strategy.strip().lower()
+    if strategy not in ("free_first", "round_robin"):
+        raise HTTPException(status_code=400, detail="Strategy must be 'free_first' or 'round_robin'")
+    
+    if hasattr(client, "update_config"):
+        res = client.update_config({"routing_strategy": strategy})
+        return {"status": "updated", "routing_strategy": strategy, "config": res}
+    
+    raise HTTPException(status_code=500, detail="Router not available")
+
+@router.post("/api/backends/cooldown/clear")
+async def clear_cooldowns(payload: Optional[ClearCooldownRequest] = None):
+    """
+    Clear rate limit cooldown for a specific backend or all backends.
+    """
+    backend = payload.backend if payload else None
+    if hasattr(client, "clear_all_cooldowns"):
+        client.clear_all_cooldowns(backend)
+        return {"status": "cleared", "backend": backend or "all", "config": client.get_status()}
+    return {"status": "error"}
 
 @router.get("/api/keys")
 async def get_api_keys():
@@ -115,10 +209,13 @@ async def health_check():
     Service health check endpoint.
     """
     status = auth_manager.get_status()
+    backend_status = client.get_status() if hasattr(client, "get_status") else {}
     return {
         "status": "healthy",
         "service": "agy-to-api",
         "authenticated": status["authenticated"],
         "project_id": status["project_id"],
-        "api_key_enforcement": api_key_manager.enforce_keys
+        "api_key_enforcement": api_key_manager.enforce_keys,
+        "routing_strategy": backend_status.get("routing_strategy", "free_first"),
+        "backends": backend_status.get("backends", {})
     }
