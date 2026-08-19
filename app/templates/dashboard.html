@@ -183,6 +183,23 @@
       height: 2.75rem;
     }
 
+    /* Auth Table Base */
+    .auth-table {
+      width: 100%;
+      margin-bottom: 0.5rem;
+      border-collapse: collapse;
+    }
+    .auth-table th {
+      width: 28%;
+      min-width: 6.5rem;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .auth-table td {
+      vertical-align: middle;
+      word-break: break-all;
+    }
+
     /* Dense Keys Table Styling with space-between flex & right-aligned sticky action */
     .keys-table-wrapper {
       width: 100%;
@@ -252,6 +269,180 @@
       white-space: nowrap;
       min-width: auto;
       width: auto !important;
+    }
+
+    /* Mobile Responsive Styles (< 768px) */
+    @media (max-width: 767px) {
+      .hide-desktop {
+        display: inline !important;
+      }
+
+      /* Auth Items as Cards on Mobile */
+      #auth-card figure {
+        overflow-x: visible !important;
+        margin-bottom: 0.85rem !important;
+      }
+      .auth-table,
+      .auth-table tbody {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.65rem !important;
+        width: 100% !important;
+      }
+      .auth-table tr {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        padding: 0.75rem 1rem !important;
+        background-color: var(--pico-card-background-color) !important;
+        border-radius: var(--pico-border-radius) !important;
+        box-shadow: var(--pico-card-box-shadow) !important;
+        gap: 0.25rem !important;
+        box-sizing: border-box !important;
+      }
+      .auth-table th {
+        width: 100% !important;
+        min-width: 0 !important;
+        font-size: 0.72rem !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.06em !important;
+        opacity: 0.7 !important;
+        padding: 0 !important;
+        border: none !important;
+        font-weight: 600 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      .auth-table td {
+        width: 100% !important;
+        padding: 0 !important;
+        border: none !important;
+        font-size: 0.95rem !important;
+        font-weight: 500 !important;
+        word-break: break-all !important;
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      .auth-table small,
+      .auth-table span {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      .auth-action-row {
+        flex-direction: column !important;
+        gap: 0.6rem !important;
+        width: 100%;
+      }
+      .auth-action-row button {
+        width: 100% !important;
+        flex: 1 1 auto;
+      }
+
+      /* Mobile Card Layout for API Keys */
+      .keys-table-wrapper {
+        overflow-x: visible;
+      }
+      .keys-table thead {
+        display: none;
+      }
+      .keys-table,
+      .keys-table tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        width: 100%;
+      }
+      .keys-table tr {
+        display: grid !important;
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+          "name action"
+          "preview preview"
+          "created lastused";
+        gap: 0.4rem 0.6rem;
+        padding: 0.75rem 1rem;
+        background-color: var(--pico-card-background-color) !important;
+        border-radius: var(--pico-border-radius) !important;
+        box-shadow: var(--pico-card-box-shadow) !important;
+        align-items: center;
+      }
+      .keys-table th,
+      .keys-table td,
+      .keys-table small,
+      .keys-table span {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      .keys-col-name {
+        grid-area: name;
+        min-width: 0;
+        font-size: 0.95rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .keys-col-action {
+        grid-area: action;
+        position: static;
+        background: transparent;
+        padding: 0;
+        margin: 0;
+        justify-content: flex-end;
+      }
+      .keys-col-preview {
+        grid-area: preview;
+        min-width: 0;
+        width: 100%;
+      }
+      .keys-col-preview code {
+        font-size: 0.82rem;
+        word-break: break-all;
+        white-space: normal;
+        display: block;
+        width: 100%;
+        padding: 0.35rem 0.6rem;
+        background-color: var(--pico-code-background-color, rgba(0, 0, 0, 0.25));
+        border-radius: var(--pico-border-radius);
+        box-sizing: border-box;
+      }
+      .keys-col-created {
+        grid-area: created;
+        min-width: 0;
+        font-size: 0.75rem;
+        opacity: 0.8;
+      }
+      .keys-col-lastused {
+        grid-area: lastused;
+        min-width: 0;
+        font-size: 0.75rem;
+        opacity: 0.8;
+        justify-content: flex-end;
+      }
+    }
+
+    @media (min-width: 768px) {
+      .hide-desktop {
+        display: none !important;
+      }
+    }
+
+    /* Small Screen (< 576px) Controls & Dialogs */
+    @media (max-width: 576px) {
+      dialog article {
+        margin: 1rem;
+        padding: 1.25rem;
+        width: calc(100% - 2rem);
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      form[role="group"] {
+        flex-direction: column !important;
+        gap: 0.5rem;
+      }
+      form[role="group"] input,
+      form[role="group"] button {
+        width: 100% !important;
+        border-radius: var(--pico-border-radius, 0.25rem) !important;
+      }
     }
 
     /* Unified Height for Form Groups (Input + Button) */
@@ -405,11 +596,11 @@
         </nav>
       </header>
 
-      <figure>
-        <table>
+      <figure style="margin-bottom: 1rem; overflow-x: auto;">
+        <table class="auth-table">
           <tbody>
             <tr>
-              <th scope="row" style="width: 220px;">Account</th>
+              <th scope="row">Account</th>
               <td><small>{{ auth_status.user_email or 'None' }}</small></td>
             </tr>
             <tr>
@@ -625,8 +816,8 @@
             <tr>
               <td class="keys-col-name"><strong>${escapeHtml(k.name)}</strong></td>
               <td class="keys-col-preview"><code>${escapeHtml(k.key_preview)}</code></td>
-              <td class="keys-col-created"><small>${createdDate}</small></td>
-              <td class="keys-col-lastused"><small>${lastUsed}</small></td>
+              <td class="keys-col-created"><small><span class="hide-desktop">Created: </span>${createdDate}</small></td>
+              <td class="keys-col-lastused"><small><span class="hide-desktop">Used: </span>${lastUsed}</small></td>
               <td class="keys-col-action">
                 <button type="button" onclick="revokeKey('${k.id}')" class="contrast outline btn-revoke">Revoke</button>
               </td>
