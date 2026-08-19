@@ -5,6 +5,7 @@ import httpx
 from unittest.mock import AsyncMock, patch
 from main import app
 from app.client import client
+from app.keys import api_key_manager
 
 @pytest.mark.asyncio
 async def test_health_endpoint():
@@ -25,8 +26,6 @@ async def test_auth_status_endpoint():
         data = response.json()
         assert "authenticated" in data
         assert "project_id" in data
-
-from app.keys import api_key_manager
 
 @pytest.mark.asyncio
 async def test_models_endpoint():

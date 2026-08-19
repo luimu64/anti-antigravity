@@ -42,7 +42,7 @@ class ChatCompletionRequest(BaseModel):
     seed: Optional[int] = None
     response_format: Optional[Union[ResponseFormat, Dict[str, Any]]] = None
     stream: Optional[bool] = False
-    stream_options: Optional[StreamOptions | Dict[str, Any]] = None
+    stream_options: Optional[Union[StreamOptions, Dict[str, Any]]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     reasoning_effort: Optional[str] = None
