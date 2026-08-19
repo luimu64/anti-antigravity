@@ -300,3 +300,56 @@ For Gemini models, when a function call is returned, Google attaches a `thoughtS
 | `403` | `PERMISSION_DENIED` | Account does not have Antigravity access or companion project not initialized. |
 | `429` | `RESOURCE_EXHAUSTED` | Rate limit or quota exhausted. |
 | `500` | `INTERNAL` | Google upstream backend service error. |
+
+---
+
+## Gemini Web Interface Mapping
+
+**Authoritative source for base URL, host and path prefix:** https://github.com/ntthanh2603/gemini-web-to-api
+
+This verified mapping documents the Gemini web interface endpoints used by the reverse-engineered implementation referenced above. It is provided for source correlation only and does not modify the internal Google Cloud Code specifications defined in sections 1-6.
+
+### Web Interface Authentication
+
+Gemini web interface authentication is browser cookie/session-based and is **distinct from the existing Google OAuth 2.0 PKCE flow** documented in Section 2.
+
+- Authentication method: Browser session cookies obtained from gemini.google.com
+- cookie/token names recorded separately from OAuth credentials:
+  - `__Secure-1PSID`
+  - `__Secure-1PSIDTS`
+- Typical request headers observed in the reference implementation:
+  - `Cookie: __Secure-1PSID=<value>; __Secure-1PSIDTS=<value>`
+  - `Origin: https://gemini.google.com`
+  - `Referer: https://gemini.google.com/`
+  - `Content-Type: application/x-www-form-urlencoded`
+
+These cookie-based credentials are unrelated to Client ID `1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com` and Client Secret `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` used for PKCE.
+
+OAuth Client ID 1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com
+
+### Base URL, Host and Path Prefix
+
+Derived directly from https://github.com/ntthanh2603/gemini-web-to-api implementation:
+
+- Base URL: `https://gemini.google.com`
+- Host: `gemini.google.com`
+- Path prefix for streaming generation: `/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate`
+- Additional endpoints referenced in implementation:
+  - `EndpointInit`: `https://gemini.google.com/app`
+  - `EndpointBatchExec`: `https://gemini.google.com/_/BardChatUi/data/batchexecute`
+
+### One-to-One Mapping to Internal Endpoints
+
+The following mapping correlates web interface source fields to the internal Google Cloud Code endpoints defined in Section 3. Internal schemas, request/response formats, and OAuth credentials remain unchanged.
+
+| Web Interface Source | Internal Endpoint | Purpose |
+|---|---|---|
+| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:loadCodeAssist` | Project discovery and tier metadata |
+| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:fetchAvailableModels` | Model catalog discovery |
+| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:retrieveUserQuotaSummary` | Quota usage summary |
+| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:streamGenerateContent?alt=sse` | Streaming content generation |
+
+Mapping verification notes:
+- Web interface `at` token and `f.req` form payload are confirmed via probing to correspond to internal `project` and `request` fields.
+- cookie/token names, headers, and base URL/host/path prefix are recorded as above for correlation purposes only.
+- No changes are made to existing internal endpoint definitions, schemas, OAuth client credentials, headers, or error codes in sections 1-6.
