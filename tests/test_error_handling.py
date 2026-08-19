@@ -1,7 +1,6 @@
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch
-from fastapi import HTTPException
 from main import app
 from app.keys import api_key_manager
 from app.client import client

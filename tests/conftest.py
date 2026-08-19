@@ -1,4 +1,3 @@
-import os
 import pytest
 from app.keys import api_key_manager
 from app.auth import auth_manager
