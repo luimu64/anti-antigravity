@@ -147,3 +147,100 @@ async def test_embeddings_endpoint_invalid_inputs():
         )
         assert resp2.status_code == 400
 
+@pytest.mark.asyncio
+async def test_legacy_completions_endpoint_non_streaming():
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+    mock_resp = {
+        "responseId": "cmpl-test-abc",
+        "text": "This is a completed text response.",
+        "finishReason": "STOP",
+        "usageMetadata": {
+            "promptTokenCount": 5,
+            "candidatesTokenCount": 7,
+            "totalTokenCount": 12
+        }
+    }
+    with patch.object(client, "generate_content", new_callable=AsyncMock, return_value=mock_resp):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/v1/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": "gpt-3.5-turbo-instruct",
+                    "prompt": "Say this is a test",
+                    "max_tokens": 10
+                }
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["object"] == "text_completion"
+            assert data["id"] == "cmpl-test-abc"
+            assert len(data["choices"]) == 1
+            assert data["choices"][0]["text"] == "This is a completed text response."
+            assert data["choices"][0]["logprobs"] is None
+            assert data["choices"][0]["finish_reason"] == "stop"
+            assert data["usage"]["total_tokens"] == 12
+
+@pytest.mark.asyncio
+async def test_legacy_completions_endpoint_streaming():
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+
+    async def mock_stream(*args, **kwargs):
+        yield {
+            "response": {
+                "candidates": [{"content": {"role": "model", "parts": [{"text": "Streamed text"}]}}],
+                "responseId": "cmpl-stream-001"
+            }
+        }
+        yield {
+            "response": {
+                "candidates": [{"content": {"role": "model", "parts": []}, "finishReason": "STOP"}],
+                "responseId": "cmpl-stream-001"
+            }
+        }
+
+    with patch.object(client, "stream_generate_content", side_effect=mock_stream):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/v1/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": "gemini-3.7-flash-high",
+                    "prompt": "Stream this test",
+                    "stream": True
+                }
+            )
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+            lines = [line.strip() for line in resp.text.split("\n") if line.startswith("data: ")]
+            assert len(lines) >= 2
+            assert lines[-1] == "data: [DONE]"
+
+@pytest.mark.asyncio
+async def test_standardized_error_envelope():
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. 404 Not Found
+        resp_404 = await ac.get("/nonexistent/endpoint")
+        assert resp_404.status_code == 404
+        data_404 = resp_404.json()
+        assert "error" in data_404
+        assert "message" in data_404["error"]
+        assert "type" in data_404["error"]
+
+        # 2. 400 Bad Request / Validation
+        resp_400 = await ac.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": "gpt-4o"} # Missing messages
+        )
+        assert resp_400.status_code == 400
+        data_400 = resp_400.json()
+        assert "error" in data_400
+        assert data_400["error"]["type"] == "invalid_request_error"
+        assert "messages" in data_400["error"]["message"]
+
+

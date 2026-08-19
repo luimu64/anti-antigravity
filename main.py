@@ -7,9 +7,12 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import (
     SERVER_HOST,
@@ -77,6 +80,60 @@ if static_dir.exists():
 app.include_router(dashboard_router)
 app.include_router(openai_router)
 app.include_router(auth_router)
+
+# Global OpenAI-compatible Exception Handlers
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.detail,
+            headers=getattr(exc, "headers", None)
+        )
+    
+    if isinstance(exc.detail, dict):
+        msg = exc.detail.get("message", str(exc.detail))
+        err_type = exc.detail.get("type", "invalid_request_error" if exc.status_code < 500 else "api_error")
+        param = exc.detail.get("param")
+        code = exc.detail.get("code", str(exc.status_code))
+    else:
+        msg = str(exc.detail)
+        err_type = "invalid_request_error" if exc.status_code < 500 else "api_error"
+        param = None
+        code = str(exc.status_code)
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "message": msg,
+                "type": err_type,
+                "param": param,
+                "code": code
+            }
+        },
+        headers=getattr(exc, "headers", None)
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    first_err = errors[0] if errors else {}
+    msg = first_err.get("msg", "Request validation failed")
+    loc = first_err.get("loc", [])
+    param = loc[-1] if loc and loc[-1] != "body" else None
+    error_msg = f"{param}: {msg}" if param else msg
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": {
+                "message": error_msg,
+                "type": "invalid_request_error",
+                "param": str(param) if param else None,
+                "code": "invalid_request_error"
+            }
+        }
+    )
 
 def cli_login():
     """

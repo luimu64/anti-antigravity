@@ -209,23 +209,112 @@ async def chat_completions(request: ChatCompletionRequest):
 @router.post("/completions", dependencies=[Depends(verify_api_key)])
 async def legacy_completions(request: Request):
     """
-    Legacy /v1/completions endpoint adapter.
+    Legacy /v1/completions endpoint returning standard OpenAI text_completion objects.
+    Supports streaming (SSE) and non-streaming responses.
     """
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON request body."
+        )
+
     prompt = body.get("prompt", "")
     if isinstance(prompt, list):
-        prompt = "\n".join(prompt)
-    
+        prompt = "\n".join(str(p) for p in prompt)
+    elif not isinstance(prompt, str):
+        prompt = str(prompt)
+
+    model_name = body.get("model", "gemini-3.7-flash-high")
+    stream = bool(body.get("stream", False))
+    stream_options = body.get("stream_options")
+    include_usage = False
+    if stream_options and isinstance(stream_options, dict):
+        include_usage = bool(stream_options.get("include_usage", False))
+
     chat_req = ChatCompletionRequest(
-        model=body.get("model", "gemini-3.7-flash-high"),
+        model=model_name,
         messages=[{"role": "user", "content": prompt}],
         temperature=body.get("temperature"),
         top_p=body.get("top_p"),
+        n=body.get("n"),
+        stop=body.get("stop"),
         max_completion_tokens=body.get("max_tokens"),
-        stream=body.get("stream", False),
-        stream_options=body.get("stream_options")
+        presence_penalty=body.get("presence_penalty"),
+        frequency_penalty=body.get("frequency_penalty"),
+        seed=body.get("seed"),
+        stream=stream,
+        stream_options=stream_options
     )
-    return await chat_completions(chat_req)
+
+    try:
+        (
+            internal_model,
+            contents,
+            system_instruction,
+            generation_config,
+            tools
+        ) = OpenAITranslator.openai_to_internal_request(chat_req)
+    except Exception as e:
+        logger.error(f"Error translating completion request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request parameters: {str(e)}"
+        )
+
+    # 1. Streaming response
+    if stream:
+        try:
+            event_stream = client.stream_generate_content(
+                model=internal_model,
+                contents=contents,
+                system_instruction=system_instruction,
+                generation_config=generation_config,
+                tools=tools
+            )
+            openai_chunks = OpenAITranslator.internal_stream_to_openai_text_chunks(
+                event_stream=event_stream,
+                requested_model=model_name,
+                include_usage=include_usage
+            )
+            return StreamingResponse(
+                openai_chunks,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Content-Type": "text/event-stream",
+                    "X-Accel-Buffering": "no"
+                }
+            )
+        except Exception as e:
+            logger.error(f"Streaming text completion generation error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Generation failed: {str(e)}"
+            )
+
+    # 2. Non-streaming response
+    try:
+        result = await client.generate_content(
+            model=internal_model,
+            contents=contents,
+            system_instruction=system_instruction,
+            generation_config=generation_config,
+            tools=tools
+        )
+        response_json = OpenAITranslator.internal_to_openai_text_completion(
+            result=result,
+            requested_model=model_name
+        )
+        return JSONResponse(content=response_json)
+    except Exception as e:
+        logger.error(f"Non-streaming text completion generation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Generation failed: {str(e)}"
+        )
 
 @router.post("/v1/embeddings", dependencies=[Depends(verify_api_key)])
 @router.post("/embeddings", dependencies=[Depends(verify_api_key)])

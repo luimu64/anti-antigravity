@@ -59,6 +59,10 @@ class EmbeddingRequest(BaseModel):
 
 class OpenAITranslator:
     @staticmethod
+    def _generate_fingerprint(model: str) -> str:
+        return f"fp_agy_{abs(hash(model)) & 0xffffffff:08x}"
+
+    @staticmethod
     def resolve_model(requested_model: str) -> str:
         """Map user-requested model to Antigravity internal model name."""
         clean = requested_model.lower().strip()
@@ -142,6 +146,49 @@ class OpenAITranslator:
                                         "data": audio_data
                                     }
                                 })
+                            elif itype in ("file", "document"):
+                                file_obj = item.get("file") or {}
+                                if isinstance(file_obj, str):
+                                    file_val = file_obj
+                                    file_mime = item.get("mime_type") or item.get("mimeType")
+                                else:
+                                    file_val = (
+                                        file_obj.get("file_data")
+                                        or file_obj.get("data")
+                                        or file_obj.get("url")
+                                        or item.get("file_data")
+                                        or (item.get("file_url", {}).get("url") if isinstance(item.get("file_url"), dict) else item.get("file_url"))
+                                        or item.get("url")
+                                        or item.get("data")
+                                        or ""
+                                    )
+                                    file_mime = (
+                                        file_obj.get("mime_type")
+                                        or file_obj.get("mimeType")
+                                        or item.get("mime_type")
+                                        or item.get("mimeType")
+                                    )
+
+                                if isinstance(file_val, str) and file_val.startswith("data:"):
+                                    header, b64_data = file_val.split(",", 1)
+                                    extracted_mime = header.split(";")[0].replace("data:", "").strip()
+                                    mime_type = extracted_mime or file_mime or "application/pdf"
+                                    parts.append({
+                                        "inlineData": {
+                                            "mimeType": mime_type,
+                                            "data": b64_data
+                                        }
+                                    })
+                                elif isinstance(file_val, str) and file_val.startswith(("http://", "https://")):
+                                    parts.append({"text": f"[File URL: {file_val}]"})
+                                elif isinstance(file_val, str) and file_val:
+                                    mime_type = file_mime or "application/pdf"
+                                    parts.append({
+                                        "inlineData": {
+                                            "mimeType": mime_type,
+                                            "data": file_val
+                                        }
+                                    })
                 if parts:
                     contents.append({"role": "user", "parts": parts})
 
@@ -495,6 +542,61 @@ class OpenAITranslator:
             "object": "chat.completion",
             "created": created_time,
             "model": requested_model,
+            "system_fingerprint": cls._generate_fingerprint(requested_model),
+            "service_tier": "default",
+            "choices": choices,
+            "usage": cls.format_usage(usage_meta)
+        }
+
+    @classmethod
+    def internal_to_openai_text_completion(
+        cls,
+        result: Dict[str, Any],
+        requested_model: str
+    ) -> Dict[str, Any]:
+        """
+        Convert internal response into OpenAI /v1/completions text completion response.
+        """
+        completion_id = result.get("responseId") or f"cmpl-{uuid.uuid4().hex[:12]}"
+        created_time = int(time.time())
+        choices = []
+        candidates = result.get("candidates", [])
+
+        if candidates:
+            for cand in candidates:
+                cand_idx = cand.get("index", len(choices))
+                finish_reason = "stop"
+                raw_finish = cand.get("finishReason", "STOP")
+                if raw_finish == "MAX_TOKENS":
+                    finish_reason = "length"
+
+                choices.append({
+                    "text": cand.get("text", ""),
+                    "index": cand_idx,
+                    "logprobs": None,
+                    "finish_reason": finish_reason
+                })
+        else:
+            finish_reason = "stop"
+            raw_finish = result.get("finishReason", "STOP")
+            if raw_finish == "MAX_TOKENS":
+                finish_reason = "length"
+
+            choices.append({
+                "text": result.get("text", ""),
+                "index": 0,
+                "logprobs": None,
+                "finish_reason": finish_reason
+            })
+
+        usage_meta = result.get("usageMetadata", {})
+        return {
+            "id": completion_id,
+            "object": "text_completion",
+            "created": created_time,
+            "model": requested_model,
+            "system_fingerprint": cls._generate_fingerprint(requested_model),
+            "service_tier": "default",
             "choices": choices,
             "usage": cls.format_usage(usage_meta)
         }
@@ -516,6 +618,7 @@ class OpenAITranslator:
         seen_cand_indexes = set()
         last_thought_signature = None
         latest_usage_metadata: Dict[str, Any] = {}
+        fp = cls._generate_fingerprint(requested_model)
 
         async for event in event_stream:
             resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
@@ -552,6 +655,7 @@ class OpenAITranslator:
                                 "object": "chat.completion.chunk",
                                 "created": created_time,
                                 "model": requested_model,
+                                "system_fingerprint": fp,
                                 "choices": [
                                     {
                                         "index": cand_idx,
@@ -575,6 +679,7 @@ class OpenAITranslator:
                             "object": "chat.completion.chunk",
                             "created": created_time,
                             "model": requested_model,
+                            "system_fingerprint": fp,
                             "choices": [
                                 {
                                     "index": cand_idx,
@@ -617,6 +722,7 @@ class OpenAITranslator:
                             "object": "chat.completion.chunk",
                             "created": created_time,
                             "model": requested_model,
+                            "system_fingerprint": fp,
                             "choices": [
                                 {
                                     "index": cand_idx,
@@ -640,6 +746,7 @@ class OpenAITranslator:
                         "object": "chat.completion.chunk",
                         "created": created_time,
                         "model": requested_model,
+                        "system_fingerprint": fp,
                         "choices": [
                             {
                                 "index": cand_idx,
@@ -657,10 +764,95 @@ class OpenAITranslator:
                 "object": "chat.completion.chunk",
                 "created": created_time,
                 "model": requested_model,
+                "system_fingerprint": fp,
                 "choices": [],
                 "usage": cls.format_usage(latest_usage_metadata)
             }
             yield f"data: {json.dumps(usage_chunk)}\n\n"
 
         # End of stream
+        yield "data: [DONE]\n\n"
+
+    @classmethod
+    async def internal_stream_to_openai_text_chunks(
+        cls,
+        event_stream: AsyncGenerator[Dict[str, Any], None],
+        requested_model: str,
+        include_usage: bool = False
+    ) -> AsyncGenerator[str, None]:
+        """
+        Convert SSE stream from Antigravity internal API to OpenAI text_completion chunks.
+        Yields lines formatted as `data: {...}\n\n` ending with `data: [DONE]\n\n`.
+        """
+        completion_id = f"cmpl-{uuid.uuid4().hex[:12]}"
+        created_time = int(time.time())
+        latest_usage_metadata: Dict[str, Any] = {}
+        fp = cls._generate_fingerprint(requested_model)
+
+        async for event in event_stream:
+            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
+            if "responseId" in resp_obj and not completion_id.startswith("cmpl-"):
+                completion_id = resp_obj["responseId"]
+
+            if "usageMetadata" in resp_obj:
+                latest_usage_metadata.update(resp_obj["usageMetadata"])
+            elif "usageMetadata" in event:
+                latest_usage_metadata.update(event["usageMetadata"])
+
+            candidates = resp_obj.get("candidates", [])
+            for default_idx, cand in enumerate(candidates):
+                cand_idx = cand.get("index", default_idx)
+                parts = cand.get("content", {}).get("parts", [])
+                raw_finish = cand.get("finishReason")
+
+                for p in parts:
+                    if p.get("text") and not p.get("thought"):
+                        chunk = {
+                            "id": completion_id,
+                            "object": "text_completion",
+                            "created": created_time,
+                            "model": requested_model,
+                            "system_fingerprint": fp,
+                            "choices": [
+                                {
+                                    "text": p["text"],
+                                    "index": cand_idx,
+                                    "logprobs": None,
+                                    "finish_reason": None
+                                }
+                            ]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
+                if raw_finish:
+                    finish_reason = "length" if raw_finish == "MAX_TOKENS" else "stop"
+                    final_chunk = {
+                        "id": completion_id,
+                        "object": "text_completion",
+                        "created": created_time,
+                        "model": requested_model,
+                        "system_fingerprint": fp,
+                        "choices": [
+                            {
+                                "text": "",
+                                "index": cand_idx,
+                                "logprobs": None,
+                                "finish_reason": finish_reason
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(final_chunk)}\n\n"
+
+        if include_usage:
+            usage_chunk = {
+                "id": completion_id,
+                "object": "text_completion",
+                "created": created_time,
+                "model": requested_model,
+                "system_fingerprint": fp,
+                "choices": [],
+                "usage": cls.format_usage(latest_usage_metadata)
+            }
+            yield f"data: {json.dumps(usage_chunk)}\n\n"
+
         yield "data: [DONE]\n\n"

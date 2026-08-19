@@ -302,3 +302,83 @@ async def test_multi_candidate_streaming():
     assert cand_0_chunks[-1]["choices"][0]["finish_reason"] == "stop"
     assert cand_1_chunks[-1]["choices"][0]["finish_reason"] == "stop"
 
+def test_file_document_attachments():
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze these documents"},
+                    {"type": "file", "file": {"file_data": "data:application/pdf;base64,JVBERi0xLjQK..."}},
+                    {"type": "file", "data": "BASE64_DOC_DATA", "mime_type": "text/plain"},
+                    {"type": "file", "url": "https://example.com/doc.pdf"}
+                ]
+            }
+        ]
+    )
+    _, contents, _, _, _ = OpenAITranslator.openai_to_internal_request(req)
+    assert len(contents) == 1
+    parts = contents[0]["parts"]
+    assert len(parts) == 4
+    assert parts[0]["text"] == "Analyze these documents"
+    assert parts[1]["inlineData"]["mimeType"] == "application/pdf"
+    assert parts[1]["inlineData"]["data"] == "JVBERi0xLjQK..."
+    assert parts[2]["inlineData"]["mimeType"] == "text/plain"
+    assert parts[2]["inlineData"]["data"] == "BASE64_DOC_DATA"
+    assert parts[3]["text"] == "[File URL: https://example.com/doc.pdf]"
+
+def test_internal_to_openai_text_completion():
+    internal_result = {
+        "responseId": "cmpl-test-123",
+        "text": "Completed text.",
+        "finishReason": "STOP",
+        "usageMetadata": {
+            "promptTokenCount": 10,
+            "candidatesTokenCount": 5,
+            "totalTokenCount": 15
+        }
+    }
+    resp = OpenAITranslator.internal_to_openai_text_completion(internal_result, "gemini-3.7-flash-high")
+    assert resp["object"] == "text_completion"
+    assert resp["id"] == "cmpl-test-123"
+    assert resp["model"] == "gemini-3.7-flash-high"
+    assert "system_fingerprint" in resp
+    assert resp["service_tier"] == "default"
+    assert len(resp["choices"]) == 1
+    assert resp["choices"][0]["text"] == "Completed text."
+    assert resp["choices"][0]["logprobs"] is None
+    assert resp["choices"][0]["finish_reason"] == "stop"
+    assert resp["usage"]["total_tokens"] == 15
+
+@pytest.mark.asyncio
+async def test_streaming_text_chunks():
+    async def mock_events():
+        yield {
+            "response": {
+                "candidates": [{"content": {"role": "model", "parts": [{"text": "Hello text completion"}]}}],
+                "responseId": "resp_txt_001"
+            }
+        }
+        yield {
+            "response": {
+                "candidates": [{"content": {"role": "model", "parts": []}, "finishReason": "STOP"}],
+                "responseId": "resp_txt_001"
+            }
+        }
+
+    chunks = []
+    async for chunk_str in OpenAITranslator.internal_stream_to_openai_text_chunks(mock_events(), "gemini-3.7-flash-high"):
+        chunks.append(chunk_str)
+
+    assert len(chunks) >= 3
+    assert chunks[-1] == "data: [DONE]\n\n"
+    first_chunk = json.loads(chunks[0].replace("data: ", ""))
+    assert first_chunk["object"] == "text_completion"
+    assert first_chunk["choices"][0]["text"] == "Hello text completion"
+    assert first_chunk["choices"][0]["logprobs"] is None
+    assert first_chunk["choices"][0]["finish_reason"] is None
+    finish_chunk = json.loads(chunks[1].replace("data: ", ""))
+    assert finish_chunk["choices"][0]["finish_reason"] == "stop"
+
+
