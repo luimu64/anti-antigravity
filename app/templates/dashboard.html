@@ -6,6 +6,27 @@
   <title>Antigravity OpenAI Bridge Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
   <style>
+    /* Subtle Card Border Styling */
+    :root {
+      --card-subtle-border: rgba(255, 255, 255, 0.09);
+      --pico-card-border-color: var(--card-subtle-border);
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --card-subtle-border: rgba(0, 0, 0, 0.08);
+      }
+    }
+    [data-theme="light"] {
+      --card-subtle-border: rgba(0, 0, 0, 0.08);
+    }
+    [data-theme="dark"] {
+      --card-subtle-border: rgba(255, 255, 255, 0.09);
+    }
+
+    article {
+      border: 1px solid var(--card-subtle-border) !important;
+    }
+
     /* Desktop Compact Scale */
     @media (min-width: 768px) {
       :root {
@@ -124,14 +145,15 @@
       border-radius: var(--pico-border-radius, 0.5rem);
       cursor: pointer;
       background: var(--pico-card-background-color, rgba(255, 255, 255, 0.05));
-      border: none;
+      border: 1px solid var(--card-subtle-border);
       color: var(--pico-color, inherit);
-      transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+      transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease;
     }
     .header-endpoint-btn:hover {
       background-color: var(--pico-dropdown-hover-background-color, rgba(255, 255, 255, 0.1));
       transform: translateY(-1px);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      border-color: var(--pico-primary, #2ecc71);
     }
     .header-endpoint-btn:active {
       transform: translateY(0);
@@ -200,7 +222,7 @@
       word-break: break-all;
     }
 
-    /* Dense Keys Table Styling with space-between flex & right-aligned sticky action */
+    /* Dense Keys Table Styling for Desktop */
     .keys-table-wrapper {
       width: 100%;
       overflow-x: auto;
@@ -262,19 +284,52 @@
     }
     .btn-revoke {
       margin: 0 !important;
-      padding: 0.2rem 0.65rem !important;
+      padding: 0.25rem 0.75rem !important;
       font-size: 0.75rem !important;
       height: 1.75rem !important;
       line-height: 1 !important;
       white-space: nowrap;
       min-width: auto;
       width: auto !important;
+      background-color: #dc2626 !important;
+      border-color: #dc2626 !important;
+      color: #ffffff !important;
+      cursor: pointer;
+      border-radius: var(--pico-border-radius, 0.25rem);
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 500;
+    }
+    .btn-revoke:hover, .btn-revoke:focus {
+      background-color: #b91c1c !important;
+      border-color: #b91c1c !important;
+      color: #ffffff !important;
     }
 
     /* Mobile Responsive Styles (< 768px) */
     @media (max-width: 767px) {
       .hide-desktop {
         display: inline !important;
+      }
+
+      /* Full Width Toasts on Mobile */
+      #toast-container {
+        top: 0.75rem;
+        left: 0.75rem;
+        right: 0.75rem;
+        transform: none;
+        width: auto;
+        align-items: stretch;
+      }
+      .toast {
+        width: 100%;
+        display: flex;
+        justify-content: flex-start;
+        box-sizing: border-box;
+        border-radius: var(--pico-border-radius, 0.5rem);
+        padding: 0.65rem 1rem;
       }
 
       /* Auth Items as Cards on Mobile */
@@ -295,6 +350,7 @@
         width: 100% !important;
         padding: 0.75rem 1rem !important;
         background-color: var(--pico-card-background-color) !important;
+        border: 1px solid var(--card-subtle-border) !important;
         border-radius: var(--pico-border-radius) !important;
         box-shadow: var(--pico-card-box-shadow) !important;
         gap: 0.25rem !important;
@@ -362,6 +418,7 @@
         gap: 0.4rem 0.6rem;
         padding: 0.75rem 1rem;
         background-color: var(--pico-card-background-color) !important;
+        border: 1px solid var(--card-subtle-border) !important;
         border-radius: var(--pico-border-radius) !important;
         box-shadow: var(--pico-card-box-shadow) !important;
         align-items: center;
@@ -819,7 +876,7 @@
               <td class="keys-col-created"><small><span class="hide-desktop">Created: </span>${createdDate}</small></td>
               <td class="keys-col-lastused"><small><span class="hide-desktop">Used: </span>${lastUsed}</small></td>
               <td class="keys-col-action">
-                <button type="button" onclick="revokeKey('${k.id}')" class="contrast outline btn-revoke">Revoke</button>
+                <button type="button" onclick="revokeKey('${k.id}')" class="btn-revoke">Revoke</button>
               </td>
             </tr>
           `;
