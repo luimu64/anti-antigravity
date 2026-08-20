@@ -303,53 +303,131 @@ For Gemini models, when a function call is returned, Google attaches a `thoughtS
 
 ---
 
-## Gemini Web Interface Mapping
+## 7. Gemini Web Interface Mapping (Reverse-Engineered Reference)
 
-**Authoritative source for base URL, host and path prefix:** https://github.com/ntthanh2603/gemini-web-to-api
+**Authoritative Reference Implementations:**
+- [HanaokaYuzu/Gemini-API](https://github.com/HanaokaYuzu/Gemini-API) (Upstream standard for modern Gemini Web reverse engineering)
+- [n0madic/go-gemini-web2api](https://github.com/n0madic/go-gemini-web2api) (Go port of HanaokaYuzu's RPC & header architecture)
 
-This verified mapping documents the Gemini web interface endpoints used by the reverse-engineered implementation referenced above. It is provided for source correlation only and does not modify the internal Google Cloud Code specifications defined in sections 1-6.
+This section documents the reverse-engineered protocol of Google Gemini's web interface (`gemini.google.com`). This mapping explains how Gemini Web dynamically discovers model catalogs (3.5 Flash-Lite, 3.7 Flash, 3.1 Pro), configures extended thinking mode, authenticates via session cookies/SAPISID, and parses streaming responses with reasoning tokens.
 
-### Web Interface Authentication
+---
 
-Gemini web interface authentication is browser cookie/session-based and is **distinct from the existing Google OAuth 2.0 PKCE flow** documented in Section 2.
+### 7.1 Web Interface Authentication & Credentials
 
-- Authentication method: Browser session cookies obtained from gemini.google.com
-- cookie/token names recorded separately from OAuth credentials:
-  - `__Secure-1PSID`
-  - `__Secure-1PSIDTS`
-- Typical request headers observed in the reference implementation:
-  - `Cookie: __Secure-1PSID=<value>; __Secure-1PSIDTS=<value>`
-  - `Origin: https://gemini.google.com`
-  - `Referer: https://gemini.google.com/`
-  - `Content-Type: application/x-www-form-urlencoded`
+Unlike the OAuth 2.0 PKCE flow used by Cloud Code / Antigravity (Section 2), Gemini Web relies on session cookies and XSRF/SNlM0e tokens:
 
-These cookie-based credentials are unrelated to Client ID `1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com` and Client Secret `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` used for PKCE.
+- **Cookies**:
+  - `__Secure-1PSID`: Core account session cookie.
+  - `__Secure-1PSIDTS`: Rolling timestamp cookie required to prevent session invalidation.
+  - `SAPISID` (Optional / Enhanced): Used to construct the `SAPISIDHASH` authorization header.
+- **XSRF Token (`at`)**: Extracted from `gemini.google.com/app` initialization payload via `"SNlM0e":"([^"]+)"`.
+- **SAPISIDHASH Calculation**:
+  ```python
+  import time, hashlib
+  timestamp = int(time.time())
+  digest = hashlib.sha1(f"{timestamp} {sapisid} https://gemini.google.com".encode()).hexdigest()
+  authorization_header = f"SAPISIDHASH {timestamp}_{digest}"
+  ```
 
-OAuth Client ID 1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com
+---
 
-### Base URL, Host and Path Prefix
+### 7.2 Core Endpoints & RPC Architecture
 
-Derived directly from https://github.com/ntthanh2603/gemini-web-to-api implementation:
+Gemini Web routes all structured operations through Google's internal `batchexecute` and `StreamGenerate` endpoints:
 
-- Base URL: `https://gemini.google.com`
-- Host: `gemini.google.com`
-- Path prefix for streaming generation: `/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate`
-- Additional endpoints referenced in implementation:
-  - `EndpointInit`: `https://gemini.google.com/app`
-  - `EndpointBatchExec`: `https://gemini.google.com/_/BardChatUi/data/batchexecute`
+- **Base URL**: `https://gemini.google.com` (or `https://gemini.google.com/u/<authuser>` for multi-account sessions)
+- **Model Discovery & User Status RPC**: `https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=otAQ7b`
+- **Streaming Generation Endpoint**: `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate`
 
-### One-to-One Mapping to Internal Endpoints
+---
 
-The following mapping correlates web interface source fields to the internal Google Cloud Code endpoints defined in Section 3. Internal schemas, request/response formats, and OAuth credentials remain unchanged.
+### 7.3 Dynamic Model Discovery (`otAQ7b` RPC)
 
-| Web Interface Source | Internal Endpoint | Purpose |
+Rather than hardcoding models or parsing static HTML regexes, the web client fetches its account-specific model catalog dynamically via the `otAQ7b` RPC:
+
+- **Request**:
+  ```http
+  POST /_/BardChatUi/data/batchexecute?rpcids=otAQ7b&source-path=/app&bl=<BUILD_LABEL>&hl=en&_reqid=<REQ_ID>&rt=c
+  Content-Type: application/x-www-form-urlencoded;charset=utf-8
+  x-goog-ext-525001261-jspb: [1,null,null,null,null,null,null,null,[4]]
+
+  f.req=[[["otAQ7b","[]",null,"generic"]]]&at=<XSRF_TOKEN>
+  ```
+
+- **Response Parsing (`part_body`)**:
+  - `part_body[15]`: Array of model objects.
+    - `[0]`: Hexadecimal `model_id` (e.g. `2c8a...`).
+    - `[1]` / `[10]`: Category / label (`"Fast"`, `"Pro"`, `"Thinking"`, etc.).
+    - `[11]` / `[19]`: Full versioned model name (e.g. `"3.5 Flash-Lite"`, `"3.7 Flash"`, `"3.1 Pro"`).
+    - `[12]`: Model capability description.
+    - `[17]` / `[9]`: Internal `model_number` (e.g. `1` for Flash, `3` for Pro, `5` for Dynamic Thinking, `6` for Flash Lite).
+  - `part_body[16]` & `part_body[17]`: Tier & capability bitmasks to derive account `(capacity, capacity_field)`:
+    - **Free Tier**: `capacity=1, capacity_field=12`
+    - **Pro / Advanced Tier**: `capacity=2` or `3, capacity_field=12`
+    - **Plus Tier**: `capacity=4, capacity_field=12`
+
+---
+
+### 7.4 Generation Request Construction (`StreamGenerate`)
+
+When initiating a generation request, model selection and thinking parameters are enforced via custom JSPB headers and payload indices.
+
+#### Required Request Headers:
+```http
+Content-Type: application/x-www-form-urlencoded
+Origin: https://gemini.google.com
+Referer: https://gemini.google.com/app
+X-Same-Domain: 1
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+Cookie: __Secure-1PSID=<...>; __Secure-1PSIDTS=<...>
+Authorization: SAPISIDHASH <timestamp>_<hash>
+x-goog-ext-525001261-jspb: [1,null,null,null,"<MODEL_HEX_ID>",null,null,0,[4],null,null,<CAPACITY_TAIL>,<THINKING_LEVEL>,"<SESSION_ID>"]
+x-goog-ext-525005358-jspb: ["<UUID>",1]
+x-goog-ext-73010989-jspb: [0]
+x-goog-ext-73010990-jspb: [0]
+```
+
+- `<CAPACITY_TAIL>`: `1` (or `null, 1` if `capacity_field == 13`).
+- `<THINKING_LEVEL>`: `1` for Standard / Default Thinking, `2` for **Extended Thinking Mode**.
+- `x-goog-ext-525005358-jspb`: Encodes the client session/request UUID, matching `inner[59]`.
+
+#### Request Form Body (`f.req` Inner JSPB Array):
+The `f.req` parameter contains `[null, JSON.stringify(inner)]`:
+- `inner[0]`: `[prompt, 0, null, file_refs, null, null, 0]` (Text prompt + multimodal file references).
+- `inner[1]`: `["en"]` (Language code).
+- `inner[2]`: `["", "", "", null, null, null, null, null, null, ""]` (Conversation/turn metadata).
+- `inner[17]`: `[[0]]` for explicit/extended thinking, `[[4]]` for auto.
+- `inner[27]`: `1`
+- `inner[30]`: `[4]`
+- `inner[41]`: `[1]` (or `[2]` for persistent chats).
+- `inner[45]`: `1` (Temporary / incognito chat toggle).
+- `inner[59]`: Client request UUID (uppercase string matching header `525005358`).
+- `inner[79]`: Selected `model_number` (`1` = Flash, `3` = Pro, `5` = Fast Dynamic Thinking, `6` = Flash Lite).
+- `inner[80]`: `1` for standard thinking, `2` for **Extended Thinking Mode**.
+
+---
+
+### 7.5 Response Parsing & Reasoning / Thinking Extraction
+
+Responses arrive as chunked JSON wrapped in `wrb.fr` / JSPB envelopes prefixed by `)]}'`:
+
+- **Main Response Text**: Extracted from candidate path `candidate[1][0]` (or `candidate[22][0]` when card artifacts are rendered).
+- **Reasoning / Extended Thinking Thoughts**: Extracted from candidate path `candidate[37][0][0]`.
+- **Grounding Citations**: Extracted from candidate field `[12][43]`.
+- **Generated Media & Images**: Extracted from candidate fields `[12][1]` (web images), `[12][7]` (generated images), and `[12][59]` (generated videos).
+
+---
+
+### 7.6 Correlating Web Interface vs. Cloud Code Internal Endpoints
+
+| Capability | Cloud Code / Antigravity Internal API | Gemini Web Interface (HanaokaYuzu Reverse-Engineered) |
 |---|---|---|
-| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:loadCodeAssist` | Project discovery and tier metadata |
-| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:fetchAvailableModels` | Model catalog discovery |
-| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:retrieveUserQuotaSummary` | Quota usage summary |
-| `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate` with session cookies | `/v1internal:streamGenerateContent?alt=sse` | Streaming content generation |
-
-Mapping verification notes:
-- Web interface `at` token and `f.req` form payload are confirmed via probing to correspond to internal `project` and `request` fields.
-- cookie/token names, headers, and base URL/host/path prefix are recorded as above for correlation purposes only.
-- No changes are made to existing internal endpoint definitions, schemas, OAuth client credentials, headers, or error codes in sections 1-6.
+| **Protocol / Format** | Direct JSON over HTTP/2 & SSE | JSPB nested arrays over `batchexecute` & `StreamGenerate` |
+| **Authentication** | OAuth 2.0 PKCE Bearer token | `__Secure-1PSID` / `__Secure-1PSIDTS` cookies + `SAPISIDHASH` + `at` token |
+| **Project / Tier Discovery** | `POST /v1internal:loadCodeAssist` | RPC `otAQ7b` (`part_body[16]`, `part_body[17]`) |
+| **Model Catalog** | `POST /v1internal:fetchAvailableModels` | RPC `otAQ7b` (`part_body[15]` array: 3.5 Flash-Lite, 3.7 Flash, 3.1 Pro) |
+| **Model Selection** | `request.model` field (`gemini-3.7-flash-high`) | Header `x-goog-ext-525001261-jspb` + payload `inner[79]` |
+| **Thinking Configuration** | `thinkingConfig.thinkingBudget` / `includeThoughts` | Header `525001261` level (`1` vs `2`) + payload `inner[17]` + `inner[80]` |
+| **Thinking Tokens** | SSE candidate `part.thought = true` | Candidate index `[37][0][0]` |
+| **Multimodal Uploads** | Inline base64 image/audio parts | Upload session via `upload_image` / file reference IDs in `inner[0]` |
