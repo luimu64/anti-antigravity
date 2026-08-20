@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from app.config import MODEL_ALIASES
+from app.config import MODEL_ALIASES, get_model_metadata
 from app.auth import auth_manager
 from app.keys import api_key_manager
 from app.client import client
@@ -55,7 +55,7 @@ async def verify_api_key(authorization: Optional[str] = Header(None)):
 @router.get("/models", dependencies=[Depends(verify_api_key)])
 async def list_models():
     """
-    List all available models in standard OpenAI format.
+    List all available models in standard OpenAI format with accurate context window and max output limits.
     """
     try:
         raw_models_data = await client.fetch_available_models()
@@ -71,33 +71,14 @@ async def list_models():
     # 1. Models from Antigravity backend
     for model_id, info in raw_models.items():
         seen_ids.add(model_id)
-        model_list.append({
-            "id": model_id,
-            "object": "model",
-            "created": created_time,
-            "owned_by": "google",
-            "permission": [],
-            "root": model_id,
-            "parent": None,
-            "display_name": info.get("displayName", model_id),
-            "max_tokens": info.get("maxTokens", 1048576),
-            "supports_thinking": info.get("supportsThinking", False)
-        })
+        model_list.append(get_model_metadata(model_id, raw_info=info, created_time=created_time))
 
-    # 2. Add standard OpenAI / Claude aliases
+    # 2. Add standard OpenAI / Claude aliases and predefined models
     for alias, internal_target in MODEL_ALIASES.items():
         if alias not in seen_ids:
             seen_ids.add(alias)
-            model_list.append({
-                "id": alias,
-                "object": "model",
-                "created": created_time,
-                "owned_by": "google-antigravity",
-                "permission": [],
-                "root": internal_target,
-                "parent": None,
-                "display_name": f"{alias} (-> {internal_target})"
-            })
+            target_info = raw_models.get(internal_target)
+            model_list.append(get_model_metadata(alias, raw_info=target_info, created_time=created_time))
 
     return {
         "object": "list",
@@ -108,18 +89,20 @@ async def list_models():
 @router.get("/models/{model_id:path}", dependencies=[Depends(verify_api_key)])
 async def retrieve_model(model_id: str):
     """
-    Retrieve single model info in standard OpenAI format.
+    Retrieve single model info in standard OpenAI format with context window and token limits.
     """
+    try:
+        raw_models_data = await client.fetch_available_models()
+        raw_models = raw_models_data.get("models", {})
+    except Exception:
+        raw_models = {}
+
     resolved = OpenAITranslator.resolve_model(model_id)
-    return {
-        "id": model_id,
-        "object": "model",
-        "created": 1700000000,
-        "owned_by": "google",
-        "permission": [],
-        "root": resolved,
-        "parent": None
-    }
+    raw_info = raw_models.get(model_id) or raw_models.get(resolved)
+    metadata = get_model_metadata(model_id, raw_info=raw_info)
+    metadata["root"] = resolved
+    metadata["owned_by"] = "google"
+    return metadata
 
 @router.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 @router.post("/chat/completions", dependencies=[Depends(verify_api_key)])
