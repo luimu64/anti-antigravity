@@ -2,6 +2,7 @@ import pytest
 from app.keys import api_key_manager
 from app.auth import auth_manager
 
+
 @pytest.fixture(autouse=True)
 def restore_global_state():
     """

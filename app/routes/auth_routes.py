@@ -11,15 +11,18 @@ from app.client import client
 logger = logging.getLogger("agy_to_api.auth_routes")
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+
 class SetTokenRequest(BaseModel):
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     project_id: Optional[str] = None
 
+
 class ExchangeCodeRequest(BaseModel):
     code_or_url: str
     state: Optional[str] = None
     redirect_uri: Optional[str] = None
+
 
 @router.post("/exchange")
 async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request):
@@ -28,11 +31,13 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
     Works seamlessly for remote/LAN/headless setups.
     """
     input_str = payload.code_or_url.strip()
-    
+
     # If user pasted a refresh token directly
     if input_str.startswith("1//") or input_str.startswith("ya29."):
-        auth_manager.set_tokens(refresh_token=input_str if input_str.startswith("1//") else None,
-                                access_token=input_str if input_str.startswith("ya29.") else None)
+        auth_manager.set_tokens(
+            refresh_token=input_str if input_str.startswith("1//") else None,
+            access_token=input_str if input_str.startswith("ya29.") else None,
+        )
         try:
             await client.load_code_assist()
         except Exception as e:
@@ -40,7 +45,7 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
         return {
             "status": "ok",
             "message": "Token saved successfully!",
-            "auth": auth_manager.get_status()
+            "auth": auth_manager.get_status(),
         }
 
     code = input_str
@@ -50,6 +55,7 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
     # If full callback URL was pasted (e.g. http://localhost:8085/?state=...&code=...)
     if "code=" in input_str:
         import urllib.parse
+
         parsed = urllib.parse.urlparse(input_str)
         qs = urllib.parse.parse_qs(parsed.query)
         if "code" in qs:
@@ -57,44 +63,54 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
         if "state" in qs and not state:
             state = qs["state"][0]
         if not payload.redirect_uri:
-            redirect_uri = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/") or "http://localhost:8085"
+            redirect_uri = (
+                f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+                or "http://localhost:8085"
+            )
 
     try:
-        tokens = await auth_manager.exchange_code(code=code, redirect_uri=redirect_uri, state=state)
+        tokens = await auth_manager.exchange_code(
+            code=code, redirect_uri=redirect_uri, state=state
+        )
         try:
             await client.load_code_assist()
         except Exception as e:
             logger.warning(f"Could not load code assist: {e}")
-        
+
         return {
             "status": "ok",
             "message": "Authenticated successfully!",
-            "auth": auth_manager.get_status()
+            "auth": auth_manager.get_status(),
         }
     except Exception as e:
         logger.error(f"Manual exchange failed: {e}")
         # Try fallback loopback redirect uri
         if redirect_uri != "http://localhost:8085":
             try:
-                await auth_manager.exchange_code(code=code, redirect_uri="http://localhost:8085", state=state)
+                await auth_manager.exchange_code(
+                    code=code, redirect_uri="http://localhost:8085", state=state
+                )
                 await client.load_code_assist()
                 return {
                     "status": "ok",
                     "message": "Authenticated successfully with loopback URI!",
-                    "auth": auth_manager.get_status()
+                    "auth": auth_manager.get_status(),
                 }
             except Exception:
                 pass
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Authorization code exchange failed: {str(e)}"
+            detail=f"Authorization code exchange failed: {str(e)}",
         )
+
 
 @router.get("/login")
 async def auth_login(
     request: Request,
-    redirect: bool = Query(default=True, description="Redirect to Google OAuth page directly"),
-    redirect_uri: Optional[str] = Query(default=None)
+    redirect: bool = Query(
+        default=True, description="Redirect to Google OAuth page directly"
+    ),
+    redirect_uri: Optional[str] = Query(default=None),
 ):
     """
     Initiate Google OAuth 2.0 flow.
@@ -105,9 +121,13 @@ async def auth_login(
     is_localhost = hostname in ("localhost", "127.0.0.1", "::1")
 
     # For remote IPs, always use Google-approved loopback URI http://localhost:8085
-    callback_url = redirect_uri or ("http://localhost:8085" if not is_localhost else str(request.url_for("auth_callback")))
+    callback_url = redirect_uri or (
+        "http://localhost:8085"
+        if not is_localhost
+        else str(request.url_for("auth_callback"))
+    )
     auth_url, state, _ = auth_manager.get_authorization_url(redirect_uri=callback_url)
-    
+
     if is_localhost and redirect:
         return RedirectResponse(url=auth_url)
 
@@ -227,12 +247,13 @@ async def auth_login(
         """
     )
 
+
 @router.get("/callback")
 async def auth_callback(
     request: Request,
     code: Optional[str] = Query(default=None),
     state: Optional[str] = Query(default=None),
-    error: Optional[str] = Query(default=None)
+    error: Optional[str] = Query(default=None),
 ):
     """
     Handle OAuth callback from Google.
@@ -266,18 +287,20 @@ async def auth_callback(
             </body>
             </html>
             """,
-            status_code=400
+            status_code=400,
         )
 
     if not code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing authorization code."
+            detail="Missing authorization code.",
         )
 
     callback_url = str(request.url).split("?")[0]
     try:
-        await auth_manager.exchange_code(code=code, redirect_uri=callback_url, state=state)
+        await auth_manager.exchange_code(
+            code=code, redirect_uri=callback_url, state=state
+        )
         # Fetch and sync user/project metadata
         try:
             await client.load_code_assist()
@@ -304,8 +327,8 @@ async def auth_callback(
                     <span class="font-bold">Authentication Successful!</span>
                   </div>
                   <p class="text-sm text-base-content/80 mb-2">Your Google account has been connected to Antigravity API.</p>
-                  <p class="text-sm mb-1">Project ID: <strong>{auth_manager.project_id or 'Auto-discovered'}</strong></p>
-                  <p class="text-sm mb-4">Account: <strong>{auth_manager.user_email or 'Authenticated'}</strong></p>
+                  <p class="text-sm mb-1">Project ID: <strong>{auth_manager.project_id or "Auto-discovered"}</strong></p>
+                  <p class="text-sm mb-4">Account: <strong>{auth_manager.user_email or "Authenticated"}</strong></p>
                   <div class="card-actions justify-between items-center">
                     <span class="text-xs text-base-content/60">Redirecting in 3 seconds...</span>
                     <a href="/" class="btn btn-primary btn-sm">Go to Dashboard</a>
@@ -345,8 +368,9 @@ async def auth_callback(
             </body>
             </html>
             """,
-            status_code=500
+            status_code=500,
         )
+
 
 @router.get("/status")
 async def auth_status():
@@ -354,6 +378,7 @@ async def auth_status():
     Get current authentication status.
     """
     return auth_manager.get_status()
+
 
 @router.post("/token")
 async def set_tokens_endpoint(payload: SetTokenRequest):
@@ -363,7 +388,7 @@ async def set_tokens_endpoint(payload: SetTokenRequest):
     auth_manager.set_tokens(
         access_token=payload.access_token,
         refresh_token=payload.refresh_token,
-        project_id=payload.project_id
+        project_id=payload.project_id,
     )
     if auth_manager.access_token or auth_manager.refresh_token:
         try:
@@ -371,10 +396,8 @@ async def set_tokens_endpoint(payload: SetTokenRequest):
         except Exception as e:
             logger.warning(f"Could not load code assist: {e}")
 
-    return {
-        "status": "ok",
-        "auth": auth_manager.get_status()
-    }
+    return {"status": "ok", "auth": auth_manager.get_status()}
+
 
 @router.post("/refresh")
 async def refresh_token_endpoint():
@@ -387,13 +410,14 @@ async def refresh_token_endpoint():
         return {
             "status": "ok",
             "access_token": token[:15] + "...",
-            "expires_in": auth_manager.get_status().get("expires_in_seconds")
+            "expires_in": auth_manager.get_status().get("expires_in_seconds"),
         }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Token refresh failed: {str(e)}"
+            detail=f"Token refresh failed: {str(e)}",
         )
+
 
 @router.post("/logout")
 async def logout_endpoint():

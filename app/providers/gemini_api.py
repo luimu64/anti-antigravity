@@ -8,6 +8,7 @@ from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("agy_to_api.providers.gemini_api")
 
+
 class GeminiApiAdapter(BaseAdapter):
     name = "gemini_api"
 
@@ -15,7 +16,7 @@ class GeminiApiAdapter(BaseAdapter):
         self,
         api_key: Optional[str] = None,
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
-        enabled: bool = False
+        enabled: bool = False,
     ):
         super().__init__(enabled=enabled)
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
@@ -28,7 +29,9 @@ class GeminiApiAdapter(BaseAdapter):
 
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=30.0)
+            )
         return self._http_client
 
     def _normalize_model_name(self, model: str) -> str:
@@ -54,21 +57,47 @@ class GeminiApiAdapter(BaseAdapter):
         return {
             "x-goog-api-key": self.api_key or "",
             "Content-Type": "application/json",
-            "User-Agent": "agy-to-api/1.0.0 (GeminiApiAdapter)"
+            "User-Agent": "agy-to-api/1.0.0 (GeminiApiAdapter)",
         }
 
-    async def fetch_available_models(self, force_refresh: bool = False) -> Dict[str, Any]:
+    async def fetch_available_models(
+        self, force_refresh: bool = False
+    ) -> Dict[str, Any]:
         """Fetch available models from Google AI Studio."""
         if self._cached_models and not force_refresh:
             return self._cached_models
 
         fallback_models = {
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash", "maxTokens": 1048576, "supportsThinking": True},
-            "gemini-2.5-pro": {"displayName": "Gemini 2.5 Pro", "maxTokens": 2097152, "supportsThinking": True},
-            "gemini-2.0-flash": {"displayName": "Gemini 2.0 Flash", "maxTokens": 1048576, "supportsThinking": False},
-            "gemini-1.5-pro": {"displayName": "Gemini 1.5 Pro", "maxTokens": 2097152, "supportsThinking": False},
-            "gemini-1.5-flash": {"displayName": "Gemini 1.5 Flash", "maxTokens": 1048576, "supportsThinking": False},
-            "text-embedding-004": {"displayName": "Text Embedding 004", "maxTokens": 2048, "supportsThinking": False},
+            "gemini-2.5-flash": {
+                "displayName": "Gemini 2.5 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+            },
+            "gemini-2.5-pro": {
+                "displayName": "Gemini 2.5 Pro",
+                "maxTokens": 2097152,
+                "supportsThinking": True,
+            },
+            "gemini-2.0-flash": {
+                "displayName": "Gemini 2.0 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": False,
+            },
+            "gemini-1.5-pro": {
+                "displayName": "Gemini 1.5 Pro",
+                "maxTokens": 2097152,
+                "supportsThinking": False,
+            },
+            "gemini-1.5-flash": {
+                "displayName": "Gemini 1.5 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": False,
+            },
+            "text-embedding-004": {
+                "displayName": "Text Embedding 004",
+                "maxTokens": 2048,
+                "supportsThinking": False,
+            },
         }
 
         if not self.is_configured():
@@ -91,7 +120,7 @@ class GeminiApiAdapter(BaseAdapter):
                         models_dict[m_name] = {
                             "displayName": m.get("displayName", m_name),
                             "maxTokens": m.get("outputTokenLimit", 1048576),
-                            "supportsThinking": "2.5" in m_name or "thinking" in m_name
+                            "supportsThinking": "2.5" in m_name or "thinking" in m_name,
                         }
                 self._cached_models = {"models": models_dict or fallback_models}
                 return self._cached_models
@@ -106,7 +135,7 @@ class GeminiApiAdapter(BaseAdapter):
         contents: List[Dict[str, Any]],
         system_instruction: Optional[Dict[str, Any]] = None,
         generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Stream generated content from Google AI Studio."""
         if not self.is_configured():
@@ -124,8 +153,12 @@ class GeminiApiAdapter(BaseAdapter):
         url = f"{self.base_url}/models/{normalized_model}:streamGenerateContent?alt=sse"
         http = self.get_http_client()
 
-        logger.info(f"[GeminiApi] Sending streamGenerateContent for model={normalized_model}")
-        async with http.stream("POST", url, json=payload, headers=self._get_headers()) as resp:
+        logger.info(
+            f"[GeminiApi] Sending streamGenerateContent for model={normalized_model}"
+        )
+        async with http.stream(
+            "POST", url, json=payload, headers=self._get_headers()
+        ) as resp:
             if resp.status_code == 429:
                 self.set_cooldown(60.0)
                 err_text = (await resp.aread()).decode("utf-8", errors="replace")
@@ -145,7 +178,9 @@ class GeminiApiAdapter(BaseAdapter):
                             parsed = json.loads(data_str)
                             yield parsed
                         except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse Gemini API SSE JSON: {data_str} ({e})")
+                            logger.warning(
+                                f"Failed to parse Gemini API SSE JSON: {data_str} ({e})"
+                            )
 
     async def generate_content(
         self,
@@ -153,7 +188,7 @@ class GeminiApiAdapter(BaseAdapter):
         contents: List[Dict[str, Any]],
         system_instruction: Optional[Dict[str, Any]] = None,
         generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Non-streaming generate content call. Merges SSE stream chunks."""
         candidates_map: Dict[int, Dict[str, Any]] = {}
@@ -168,9 +203,13 @@ class GeminiApiAdapter(BaseAdapter):
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
-            tools=tools
+            tools=tools,
         ):
-            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
+            resp_obj = (
+                event.get("response")
+                if isinstance(event.get("response"), dict)
+                else event
+            )
             if "responseId" in resp_obj:
                 response_id = resp_obj["responseId"]
             if "modelVersion" in resp_obj:
@@ -189,7 +228,7 @@ class GeminiApiAdapter(BaseAdapter):
                         "thoughts": [],
                         "toolCalls": [],
                         "finishReason": "STOP",
-                        "thoughtSignature": None
+                        "thoughtSignature": None,
                     }
 
                 if cand.get("finishReason"):
@@ -212,23 +251,27 @@ class GeminiApiAdapter(BaseAdapter):
         if candidates_map:
             for idx in sorted(candidates_map.keys()):
                 c = candidates_map[idx]
-                formatted_candidates.append({
-                    "index": idx,
-                    "text": "".join(c["text"]),
-                    "thoughts": "".join(c["thoughts"]),
-                    "toolCalls": c["toolCalls"],
-                    "finishReason": c["finishReason"],
-                    "thoughtSignature": c["thoughtSignature"]
-                })
+                formatted_candidates.append(
+                    {
+                        "index": idx,
+                        "text": "".join(c["text"]),
+                        "thoughts": "".join(c["thoughts"]),
+                        "toolCalls": c["toolCalls"],
+                        "finishReason": c["finishReason"],
+                        "thoughtSignature": c["thoughtSignature"],
+                    }
+                )
         else:
-            formatted_candidates.append({
-                "index": 0,
-                "text": "",
-                "thoughts": "",
-                "toolCalls": [],
-                "finishReason": finish_reason,
-                "thoughtSignature": None
-            })
+            formatted_candidates.append(
+                {
+                    "index": 0,
+                    "text": "",
+                    "thoughts": "",
+                    "toolCalls": [],
+                    "finishReason": finish_reason,
+                    "thoughtSignature": None,
+                }
+            )
 
         primary = formatted_candidates[0]
         return {
@@ -240,14 +283,11 @@ class GeminiApiAdapter(BaseAdapter):
             "toolCalls": primary["toolCalls"],
             "finishReason": primary["finishReason"],
             "usageMetadata": usage_metadata,
-            "thoughtSignature": last_thought_signature
+            "thoughtSignature": last_thought_signature,
         }
 
     async def embed_contents(
-        self,
-        model: str,
-        texts: List[str],
-        dimensions: Optional[int] = None
+        self, model: str, texts: List[str], dimensions: Optional[int] = None
     ) -> Dict[str, Any]:
         """Call Gemini API batchEmbedContents."""
         if not self.is_configured():
@@ -258,7 +298,7 @@ class GeminiApiAdapter(BaseAdapter):
         for text in texts:
             req_item: Dict[str, Any] = {
                 "model": f"models/{clean_model}",
-                "content": {"parts": [{"text": text}]}
+                "content": {"parts": [{"text": text}]},
             }
             if dimensions is not None:
                 req_item["outputDimensionality"] = dimensions
@@ -271,10 +311,14 @@ class GeminiApiAdapter(BaseAdapter):
 
         if resp.status_code == 429:
             self.set_cooldown(60.0)
-            raise RateLimitError(f"Gemini API embedding rate limited (429): {resp.text}")
+            raise RateLimitError(
+                f"Gemini API embedding rate limited (429): {resp.text}"
+            )
 
         if resp.status_code != 200:
-            logger.error(f"Gemini API batchEmbedContents failed: {resp.status_code} {resp.text}")
+            logger.error(
+                f"Gemini API batchEmbedContents failed: {resp.status_code} {resp.text}"
+            )
             raise ValueError(f"Gemini API Error ({resp.status_code}): {resp.text}")
 
         return resp.json()

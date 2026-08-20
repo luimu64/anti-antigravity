@@ -13,6 +13,7 @@ from app.providers.router import MultiBackendRouter
 from app.client import client
 from main import app
 
+
 @pytest.fixture
 def mock_credentials_file(tmp_path, monkeypatch):
     cred_file = tmp_path / "credentials.json"
@@ -23,25 +24,31 @@ def mock_credentials_file(tmp_path, monkeypatch):
         "user_email": "tester@example.com",
         "project_id": "test-project-123",
         "tier_name": "Antigravity",
-        "routing_strategy": "free_first"
+        "routing_strategy": "free_first",
     }
     with open(cred_file, "w") as f:
         json.dump(init_data, f)
-    
+
     monkeypatch.setattr("app.providers.router.CREDENTIALS_FILE", cred_file)
     monkeypatch.setattr("app.auth.CREDENTIALS_FILE", cred_file)
     return cred_file
 
+
 def test_adapter_base_and_cooldown():
     """Verify BaseAdapter cooldown mechanics and default disabled state."""
+
     class DummyAdapter(BaseAdapter):
         name = "dummy"
+
         def is_configured(self) -> bool:
             return True
+
         async def generate_content(self, *args, **kwargs):
             return {}
+
         async def stream_generate_content(self, *args, **kwargs):
             yield {}
+
         async def fetch_available_models(self, force_refresh=False):
             return {"models": {}}
 
@@ -65,6 +72,7 @@ def test_adapter_base_and_cooldown():
     assert adapter.is_available() is True
     assert adapter.get_cooldown_remaining() == 0.0
 
+
 def test_adapter_configuration_checks():
     """Verify configuration status and disabled-by-default state across adapters."""
     agy = AntigravityAdapter()
@@ -83,6 +91,7 @@ def test_adapter_configuration_checks():
     g_web.psid = "test_psid_cookie"
     assert g_web.is_configured() is True
 
+
 @pytest.mark.asyncio
 async def test_free_first_routing_and_429_fallback():
     """Verify free_first routing strategy: Gemini Web -> Gemini API -> Antigravity on 429."""
@@ -93,7 +102,12 @@ async def test_free_first_routing_and_429_fallback():
     mock_agy.is_available.return_value = True
     mock_agy.cooldown_until = 0.0
     mock_agy.get_cooldown_remaining.return_value = 0.0
-    mock_agy.generate_content = AsyncMock(return_value={"text": "Antigravity response", "candidates": [{"content": {"parts": [{"text": "Antigravity response"}]}}]})
+    mock_agy.generate_content = AsyncMock(
+        return_value={
+            "text": "Antigravity response",
+            "candidates": [{"content": {"parts": [{"text": "Antigravity response"}]}}],
+        }
+    )
 
     mock_api = MagicMock(spec=GeminiApiAdapter)
     mock_api.name = "gemini_api"
@@ -102,7 +116,9 @@ async def test_free_first_routing_and_429_fallback():
     mock_api.is_available.return_value = True
     mock_api.cooldown_until = 0.0
     mock_api.get_cooldown_remaining.return_value = 0.0
-    mock_api.generate_content = AsyncMock(side_effect=RateLimitError("API quota exhausted (429)"))
+    mock_api.generate_content = AsyncMock(
+        side_effect=RateLimitError("API quota exhausted (429)")
+    )
 
     mock_web = MagicMock(spec=GeminiWebAdapter)
     mock_web.name = "gemini_web"
@@ -111,19 +127,21 @@ async def test_free_first_routing_and_429_fallback():
     mock_web.is_available.return_value = True
     mock_web.cooldown_until = 0.0
     mock_web.get_cooldown_remaining.return_value = 0.0
-    mock_web.generate_content = AsyncMock(side_effect=RateLimitError("Web rate limited (429)"))
+    mock_web.generate_content = AsyncMock(
+        side_effect=RateLimitError("Web rate limited (429)")
+    )
 
     router = MultiBackendRouter(
         antigravity=mock_agy,
         gemini_api=mock_api,
         gemini_web=mock_web,
-        routing_strategy="free_first"
+        routing_strategy="free_first",
     )
 
     # Execute generate_content
     result = await router.generate_content(
         model="gemini-2.5-flash",
-        contents=[{"role": "user", "parts": [{"text": "hello"}]}]
+        contents=[{"role": "user", "parts": [{"text": "hello"}]}],
     )
 
     # Verify Gemini Web was tried first, then Gemini API, then fell back to Antigravity
@@ -131,9 +149,12 @@ async def test_free_first_routing_and_429_fallback():
     mock_api.generate_content.assert_called_once()
     mock_agy.generate_content.assert_called_once()
 
-    assert "Antigravity response" in result["candidates"][0]["content"]["parts"][0]["text"]
+    assert (
+        "Antigravity response" in result["candidates"][0]["content"]["parts"][0]["text"]
+    )
     assert mock_web.set_cooldown.called
     assert mock_api.set_cooldown.called
+
 
 @pytest.mark.asyncio
 async def test_round_robin_routing():
@@ -169,14 +190,14 @@ async def test_round_robin_routing():
         antigravity=mock_agy,
         gemini_api=mock_api,
         gemini_web=mock_web,
-        routing_strategy="round_robin"
+        routing_strategy="round_robin",
     )
 
     calls = []
     for _ in range(6):
         res = await router.generate_content(
             model="gemini-2.5-flash",
-            contents=[{"role": "user", "parts": [{"text": "hello"}]}]
+            contents=[{"role": "user", "parts": [{"text": "hello"}]}],
         )
         calls.append(res["backend"])
 
@@ -185,9 +206,11 @@ async def test_round_robin_routing():
     assert calls.count("gemini_api") == 2
     assert calls.count("gemini_web") == 2
 
+
 @pytest.mark.asyncio
 async def test_streaming_fallback_on_429():
     """Verify stream_generate_content fallback when initial provider rate-limits."""
+
     async def failing_stream(*args, **kwargs):
         raise RateLimitError("Rate limited (429)", retry_after=30.0)
         yield {}
@@ -221,19 +244,21 @@ async def test_streaming_fallback_on_429():
         antigravity=mock_agy,
         gemini_api=mock_api,
         gemini_web=mock_web,
-        routing_strategy="free_first"
+        routing_strategy="free_first",
     )
 
     chunks = []
     async for chunk in router.stream_generate_content(
-        model="gemini-2.5-flash",
-        contents=[{"role": "user", "parts": [{"text": "hi"}]}]
+        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "hi"}]}]
     ):
         chunks.append(chunk)
 
     assert len(chunks) == 1
-    assert "streamed success" in chunks[0]["candidates"][0]["content"]["parts"][0]["text"]
+    assert (
+        "streamed success" in chunks[0]["candidates"][0]["content"]["parts"][0]["text"]
+    )
     assert mock_api.set_cooldown.called
+
 
 @pytest.mark.asyncio
 async def test_models_aggregation_and_ranking():
@@ -241,38 +266,42 @@ async def test_models_aggregation_and_ranking():
     mock_agy = MagicMock(spec=AntigravityAdapter)
     mock_agy.name = "antigravity"
     mock_agy.enabled = True
-    mock_agy.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
-            "gemini-3.7-flash-high": {"displayName": "Gemini 3.7 Flash High"}
+    mock_agy.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+                "gemini-3.7-flash-high": {"displayName": "Gemini 3.7 Flash High"},
+            }
         }
-    })
+    )
 
     mock_api = MagicMock(spec=GeminiApiAdapter)
     mock_api.name = "gemini_api"
     mock_api.enabled = True
-    mock_api.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
-            "gemini-2.5-pro": {"displayName": "Gemini 2.5 Pro"},
-            "gemini-2.0-flash": {"displayName": "Gemini 2.0 Flash"}
+    mock_api.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+                "gemini-2.5-pro": {"displayName": "Gemini 2.5 Pro"},
+                "gemini-2.0-flash": {"displayName": "Gemini 2.0 Flash"},
+            }
         }
-    })
+    )
 
     mock_web = MagicMock(spec=GeminiWebAdapter)
     mock_web.name = "gemini_web"
     mock_web.enabled = True
-    mock_web.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
-            "gemini-2.5-pro": {"displayName": "Gemini 2.5 Pro"},
+    mock_web.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+                "gemini-2.5-pro": {"displayName": "Gemini 2.5 Pro"},
+            }
         }
-    })
+    )
 
     router = MultiBackendRouter(
-        antigravity=mock_agy,
-        gemini_api=mock_api,
-        gemini_web=mock_web
+        antigravity=mock_agy, gemini_api=mock_api, gemini_web=mock_web
     )
 
     models_data = await router.fetch_available_models()
@@ -282,7 +311,11 @@ async def test_models_aggregation_and_ranking():
     # gemini-2.5-flash is present in all 3 providers -> MUST be ranked first
     assert model_keys[0] == "gemini-2.5-flash"
     assert models_dict["gemini-2.5-flash"]["provider_count"] == 3
-    assert set(models_dict["gemini-2.5-flash"]["providers"]) == {"antigravity", "gemini_api", "gemini_web"}
+    assert set(models_dict["gemini-2.5-flash"]["providers"]) == {
+        "antigravity",
+        "gemini_api",
+        "gemini_web",
+    }
 
     # gemini-2.5-pro is present in 2 providers -> ranked next
     assert models_dict["gemini-2.5-pro"]["provider_count"] == 2
@@ -291,20 +324,23 @@ async def test_models_aggregation_and_ranking():
     assert "gemini-3.7-flash" in models_dict
     assert models_dict["gemini-3.7-flash"]["provider_count"] == 1
 
+
 @pytest.mark.asyncio
 async def test_models_redundancy_and_newness_sorting():
     """Verify secondary sorting by model version / newness when redundancy count is tied."""
     mock_agy = MagicMock(spec=AntigravityAdapter)
     mock_agy.name = "antigravity"
     mock_agy.enabled = True
-    mock_agy.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-1.5-flash": {"displayName": "Gemini 1.5 Flash"},
-            "gemini-2.0-flash": {"displayName": "Gemini 2.0 Flash"},
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
-            "gemini-3.7-flash": {"displayName": "Gemini 3.7 Flash"},
+    mock_agy.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-1.5-flash": {"displayName": "Gemini 1.5 Flash"},
+                "gemini-2.0-flash": {"displayName": "Gemini 2.0 Flash"},
+                "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+                "gemini-3.7-flash": {"displayName": "Gemini 3.7 Flash"},
+            }
         }
-    })
+    )
 
     mock_api = MagicMock(spec=GeminiApiAdapter)
     mock_api.name = "gemini_api"
@@ -315,9 +351,7 @@ async def test_models_redundancy_and_newness_sorting():
     mock_web.enabled = False
 
     router = MultiBackendRouter(
-        antigravity=mock_agy,
-        gemini_api=mock_api,
-        gemini_web=mock_web
+        antigravity=mock_agy, gemini_api=mock_api, gemini_web=mock_web
     )
 
     models_data = await router.fetch_available_models()
@@ -325,7 +359,13 @@ async def test_models_redundancy_and_newness_sorting():
     model_keys = list(models_dict.keys())
 
     # All models have provider_count = 1, so newness (semantic version) must sort 3.7 > 2.5 > 2.0 > 1.5
-    assert model_keys == ["gemini-3.7-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    assert model_keys == [
+        "gemini-3.7-flash",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+    ]
+
 
 @pytest.mark.asyncio
 async def test_models_disabled_backend_exclusion():
@@ -333,30 +373,32 @@ async def test_models_disabled_backend_exclusion():
     mock_agy = MagicMock(spec=AntigravityAdapter)
     mock_agy.name = "antigravity"
     mock_agy.enabled = True
-    mock_agy.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+    mock_agy.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+            }
         }
-    })
+    )
 
     mock_api = MagicMock(spec=GeminiApiAdapter)
     mock_api.name = "gemini_api"
     mock_api.enabled = False  # Disabled
-    mock_api.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
-            "gemini-api-exclusive": {"displayName": "API Only Model"},
+    mock_api.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-2.5-flash": {"displayName": "Gemini 2.5 Flash"},
+                "gemini-api-exclusive": {"displayName": "API Only Model"},
+            }
         }
-    })
+    )
 
     mock_web = MagicMock(spec=GeminiWebAdapter)
     mock_web.name = "gemini_web"
     mock_web.enabled = False
 
     router = MultiBackendRouter(
-        antigravity=mock_agy,
-        gemini_api=mock_api,
-        gemini_web=mock_web
+        antigravity=mock_agy, gemini_api=mock_api, gemini_web=mock_web
     )
 
     models_data = await router.fetch_available_models()
@@ -367,19 +409,35 @@ async def test_models_disabled_backend_exclusion():
     assert "gemini-2.5-flash" in models_dict
     assert models_dict["gemini-2.5-flash"]["providers"] == ["antigravity"]
 
+
 @pytest.mark.asyncio
 async def test_models_hidden_and_reasoning_tier_mapping():
     """Verify unusable models are marked as hidden and reasoning tiers are mapped under the hood."""
     from app.translator import OpenAITranslator, ChatCompletionRequest
 
     # 1. Verify reasoning tiers map silently under the hood
-    assert OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="low") == "gemini-3.7-flash-low"
-    assert OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="medium") == "gemini-3.7-flash-medium"
-    assert OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="high") == "gemini-3.7-flash-high"
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="low")
+        == "gemini-3.7-flash-low"
+    )
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="medium")
+        == "gemini-3.7-flash-medium"
+    )
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="high")
+        == "gemini-3.7-flash-high"
+    )
     assert OpenAITranslator.resolve_model("gemini-3.7-flash") == "gemini-3.7-flash-high"
 
-    assert OpenAITranslator.resolve_model("gemini-3.6-flash", reasoning_effort="low") == "gemini-3.6-flash-low"
-    assert OpenAITranslator.resolve_model("gemini-3.1-pro", reasoning_effort="low") == "gemini-3.1-pro-low"
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.6-flash", reasoning_effort="low")
+        == "gemini-3.6-flash-low"
+    )
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.1-pro", reasoning_effort="low")
+        == "gemini-3.1-pro-low"
+    )
     assert OpenAITranslator.resolve_model("gemini-3.5-flash") == "gemini-3-flash-agent"
     assert OpenAITranslator.resolve_model("claude-3.7-sonnet") == "claude-sonnet-4-6"
     assert OpenAITranslator.resolve_model("claude-3-opus") == "claude-opus-4-6-thinking"
@@ -389,12 +447,14 @@ async def test_models_hidden_and_reasoning_tier_mapping():
     mock_agy = MagicMock(spec=AntigravityAdapter)
     mock_agy.name = "antigravity"
     mock_agy.enabled = True
-    mock_agy.fetch_available_models = AsyncMock(return_value={
-        "models": {
-            "gemini-3.7-flash-high": {"displayName": "Gemini 3.7 Flash High"},
-            "tab_flash_lite_preview": {"displayName": "Tab Flash Lite Preview"},
+    mock_agy.fetch_available_models = AsyncMock(
+        return_value={
+            "models": {
+                "gemini-3.7-flash-high": {"displayName": "Gemini 3.7 Flash High"},
+                "tab_flash_lite_preview": {"displayName": "Tab Flash Lite Preview"},
+            }
         }
-    })
+    )
 
     mock_api = MagicMock(spec=GeminiApiAdapter)
     mock_api.name = "gemini_api"
@@ -405,9 +465,7 @@ async def test_models_hidden_and_reasoning_tier_mapping():
     mock_web.enabled = False
 
     router = MultiBackendRouter(
-        antigravity=mock_agy,
-        gemini_api=mock_api,
-        gemini_web=mock_web
+        antigravity=mock_agy, gemini_api=mock_api, gemini_web=mock_web
     )
 
     models_data = await router.fetch_available_models()
@@ -416,6 +474,7 @@ async def test_models_hidden_and_reasoning_tier_mapping():
     assert "tab_flash_lite_preview" in models_dict
     assert models_dict["tab_flash_lite_preview"]["hidden"] is True
     assert models_dict["gemini-3.7-flash"]["hidden"] is False
+
 
 @pytest.mark.asyncio
 async def test_dashboard_backend_api_and_persistence(mock_credentials_file):
@@ -439,7 +498,7 @@ async def test_dashboard_backend_api_and_persistence(mock_credentials_file):
             "gemini_web_psid": "psid_cookie_val_12345",
             "gemini_web_psidts": "psidts_cookie_val_67890",
             "gemini_web_enabled": True,
-            "routing_strategy": "round_robin"
+            "routing_strategy": "round_robin",
         }
         res_update = await ac.post("/api/backends", json=update_payload)
         assert res_update.status_code == 200
@@ -461,12 +520,16 @@ async def test_dashboard_backend_api_and_persistence(mock_credentials_file):
         assert persisted["user_email"] == "tester@example.com"
 
         # 3. POST /api/backends/strategy
-        res_strat = await ac.post("/api/backends/strategy", json={"strategy": "free_first"})
+        res_strat = await ac.post(
+            "/api/backends/strategy", json={"strategy": "free_first"}
+        )
         assert res_strat.status_code == 200
         assert client.routing_strategy == "free_first"
 
         # 4. POST /api/backends/{id}/toggle
-        res_toggle = await ac.post("/api/backends/gemini_web/toggle", json={"enabled": False})
+        res_toggle = await ac.post(
+            "/api/backends/gemini_web/toggle", json={"enabled": False}
+        )
         assert res_toggle.status_code == 200
         assert client.gemini_web.enabled is False
 
@@ -502,11 +565,12 @@ async def test_dashboard_backend_api_and_persistence(mock_credentials_file):
         assert "routing_strategy" in health_data
         assert "backends" in health_data
 
+
 @pytest.mark.asyncio
 async def test_gemini_api_adapter_streaming_and_generation():
     """Verify GeminiApiAdapter processes stream chunks and formats generation response."""
     adapter = GeminiApiAdapter(api_key="AIzaSyDummyKey")
-    
+
     mock_resp = MagicMock(spec=httpx.Response)
     mock_resp.status_code = 200
 
@@ -515,7 +579,7 @@ async def test_gemini_api_adapter_streaming_and_generation():
             'data: {"candidates": [{"content": {"parts": [{"text": "Hello from "}]}}]}',
             "",
             'data: {"candidates": [{"content": {"parts": [{"text": "Gemini API!"}]}}]}',
-            ""
+            "",
         ]
         for line in lines:
             yield line
@@ -528,6 +592,7 @@ async def test_gemini_api_adapter_streaming_and_generation():
     class MockStreamContext:
         async def __aenter__(self):
             return mock_resp
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
@@ -541,8 +606,7 @@ async def test_gemini_api_adapter_streaming_and_generation():
 
     # Test non-streaming generate_content
     result = await adapter.generate_content(
-        model="gemini-2.5-flash",
-        contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
+        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
     )
     assert "candidates" in result
     assert result["text"] == "Hello from Gemini API!"
@@ -550,8 +614,7 @@ async def test_gemini_api_adapter_streaming_and_generation():
     # Test streaming
     chunks = []
     async for chunk in adapter.stream_generate_content(
-        model="gemini-2.5-flash",
-        contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
+        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
     ):
         chunks.append(chunk)
 
@@ -559,12 +622,15 @@ async def test_gemini_api_adapter_streaming_and_generation():
     assert chunks[0]["candidates"][0]["content"]["parts"][0]["text"] == "Hello from "
     assert chunks[1]["candidates"][0]["content"]["parts"][0]["text"] == "Gemini API!"
 
+
 @pytest.mark.asyncio
 async def test_gemini_web_adapter_prompt_and_generation():
     """Verify GeminiWebAdapter initialization, headers, SAPISIDHASH, and thinking extraction."""
-    adapter = GeminiWebAdapter(psid="test_psid_val", psidts="test_psidts_val", sapisid="test_sapisid_val")
+    adapter = GeminiWebAdapter(
+        psid="test_psid_val", psidts="test_psidts_val", sapisid="test_sapisid_val"
+    )
     assert adapter.is_configured() is True
-    
+
     headers = adapter._get_headers()
     assert "__Secure-1PSID=test_psid_val" in headers["Cookie"]
     assert "__Secure-1PSIDTS=test_psidts_val" in headers["Cookie"]
@@ -579,8 +645,8 @@ async def test_gemini_web_adapter_prompt_and_generation():
 
     # Mock response with reasoning candidate [37][0][0] and response text [1][0]
     raw_rpc_text = (
-        ')]}\'\n'
-        '150\n'
+        ")]}'\n"
+        "150\n"
         '[["wrb.fr",null,"[[null,null,null,null,[[null,[\\"Hello from Gemini Web!\\"],null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,[[[\\"Thinking step 1\\"]]]]]]]"]]\n'
     )
     mock_resp = MagicMock(spec=httpx.Response)
@@ -590,13 +656,15 @@ async def test_gemini_web_adapter_prompt_and_generation():
     mock_client = AsyncMock()
     mock_client.is_closed = False
     mock_client.post = AsyncMock(return_value=mock_resp)
-    mock_client.get = AsyncMock(return_value=MagicMock(status_code=200, text='{"SNlM0e":"mock_snlm0e_token"}'))
+    mock_client.get = AsyncMock(
+        return_value=MagicMock(status_code=200, text='{"SNlM0e":"mock_snlm0e_token"}')
+    )
     adapter._http_client = mock_client
     adapter.get_http_client = MagicMock(return_value=mock_client)
 
     result = await adapter.generate_content(
         model="gemini-3.7-flash",
-        contents=[{"role": "user", "parts": [{"text": "Hello"}]}]
+        contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
     )
 
     assert result["text"] == "Hello from Gemini Web!"

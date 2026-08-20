@@ -1,8 +1,9 @@
-import sys
 import time
-import os
+
 from openai import OpenAI
+
 from app.keys import api_key_manager
+
 
 def generate_large_haystack_prompt(target_tokens=500_000):
     """
@@ -11,7 +12,7 @@ def generate_large_haystack_prompt(target_tokens=500_000):
     500k tokens ~ 1.95 - 2.0 million characters.
     """
     needle = "THE SECRET KEYWORD IS: >> HYPER-GRAVITY-PULSAR-7734 <<"
-    
+
     paragraph_template = (
         "In the year 2184, astrophysics research stations across the outer solar system "
         "recorded anomalous gravitational waves originating from deep interstellar space. "
@@ -20,31 +21,34 @@ def generate_large_haystack_prompt(target_tokens=500_000):
         "Engineers analyzed subsystem diagnostic logs numbered {idx:06d}, confirming that "
         "quantum entanglement transceivers maintained coherence across 4.2 astronomical units. "
     )
-    
+
     # Each formatted paragraph is ~420 characters (~105 tokens)
     para_len_chars = len(paragraph_template.format(idx=0))
     approx_tokens_per_para = para_len_chars / 3.9
     num_paras = int(target_tokens / approx_tokens_per_para) + 50
-    
+
     print(f"Generating haystack with ~{num_paras} paragraphs...")
-    
+
     paras = []
-    needle_inserted_at = int(num_paras * 0.65) # place needle at 65% depth
-    
+    needle_inserted_at = int(num_paras * 0.65)  # place needle at 65% depth
+
     for i in range(num_paras):
         if i == needle_inserted_at:
-            paras.append(f"\n--- CONFIDENTIAL ARCHIVE ENTRY ---\n{needle}\n---------------------------------\n")
+            paras.append(
+                f"\n--- CONFIDENTIAL ARCHIVE ENTRY ---\n{needle}\n---------------------------------\n"
+            )
         paras.append(paragraph_template.format(idx=i))
-    
+
     haystack = "\n".join(paras)
-    
+
     user_prompt = (
         f"{haystack}\n\n"
         "QUESTION: Search the above telemetry archive and tell me what is the secret keyword? "
         "Provide only the secret keyword inside the markers."
     )
-    
+
     return user_prompt, needle
+
 
 def main():
     base_url = "http://127.0.0.1:8000/v1"
@@ -68,7 +72,9 @@ def main():
     print(f"Prompt Generation Time: {gen_time:.2f}s")
     print("--------------------------------------------------")
 
-    print("Sending request to /v1/chat/completions (model: gemini-3.7-flash-high, stream=True)...")
+    print(
+        "Sending request to /v1/chat/completions (model: gemini-3.7-flash-high, stream=True)..."
+    )
     start_req = time.time()
     ttft = None
     full_response = []
@@ -77,10 +83,8 @@ def main():
     try:
         stream = client.chat.completions.create(
             model="gemini-3.7-flash-high",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            stream=True
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
         )
 
         for chunk in stream:
@@ -103,8 +107,10 @@ def main():
         ans_text = "".join(full_response)
         print(f"Model Answer: {ans_text}")
         if thinking_chunks:
-            print(f"Thinking content received: ~{len(''.join(thinking_chunks))} chars of reasoning")
-        
+            print(
+                f"Thinking content received: ~{len(''.join(thinking_chunks))} chars of reasoning"
+            )
+
         # Verify correctness
         if "HYPER-GRAVITY-PULSAR-7734" in ans_text:
             print("🎯 NEEDLE FOUND SUCCESSFULLY! 100% ACCURACY AT 500K CONTEXT!")
@@ -114,6 +120,7 @@ def main():
     except Exception as e:
         print(f"❌ Streaming request failed: {e}")
         import traceback
+
         traceback.print_exc()
 
     # 3. Test non-streaming to verify exact usage token counts
@@ -123,21 +130,25 @@ def main():
         start_non_stream = time.time()
         resp = client.chat.completions.create(
             model="gemini-3.7-flash-high",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            stream=False
+            messages=[{"role": "user", "content": prompt}],
+            stream=False,
         )
         non_stream_time = time.time() - start_non_stream
         print(f"Non-streaming completed in {non_stream_time:.2f}s")
         print(f"Answer: {resp.choices[0].message.content}")
-        print(f"Usage: prompt_tokens={resp.usage.prompt_tokens:,}, completion_tokens={resp.usage.completion_tokens}, total_tokens={resp.usage.total_tokens:,}")
+        print(
+            f"Usage: prompt_tokens={resp.usage.prompt_tokens:,}, completion_tokens={resp.usage.completion_tokens}, total_tokens={resp.usage.total_tokens:,}"
+        )
         if resp.usage.completion_tokens_details:
-            print(f"Reasoning tokens: {resp.usage.completion_tokens_details.reasoning_tokens}")
+            print(
+                f"Reasoning tokens: {resp.usage.completion_tokens_details.reasoning_tokens}"
+            )
     except Exception as e:
         print(f"❌ Non-streaming request failed: {e}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()

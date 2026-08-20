@@ -3,10 +3,11 @@ import httpx
 from main import app
 from app.keys import APIKeyManager, api_key_manager
 
+
 def test_api_key_manager_crud(tmp_path):
     storage = tmp_path / "test_keys.json"
     mgr = APIKeyManager(storage_file=storage)
-    
+
     # 1. Create key
     created = mgr.create_key(name="Test Client")
     assert created["name"] == "Test Client"
@@ -26,6 +27,7 @@ def test_api_key_manager_crud(tmp_path):
     # 4. Revoke key
     assert mgr.revoke_key(created["id"]) is True
     assert mgr.validate_key(created["key"]) is False
+
 
 @pytest.mark.asyncio
 async def test_api_key_enforcement_endpoints():
@@ -48,11 +50,15 @@ async def test_api_key_enforcement_endpoints():
         assert "error" in err_json or "detail" in err_json
 
         # Request with invalid key -> 401
-        res_bad = await ac.get("/v1/models", headers={"Authorization": "Bearer sk-invalid-key"})
+        res_bad = await ac.get(
+            "/v1/models", headers={"Authorization": "Bearer sk-invalid-key"}
+        )
         assert res_bad.status_code == 401
 
         # Request with valid key -> 200
-        res_valid = await ac.get("/v1/models", headers={"Authorization": f"Bearer {raw_key}"})
+        res_valid = await ac.get(
+            "/v1/models", headers={"Authorization": f"Bearer {raw_key}"}
+        )
         assert res_valid.status_code == 200
 
         # Disable enforcement -> 200 with no key

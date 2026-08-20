@@ -24,7 +24,7 @@ FALLBACK_MODELS = {
         "supportsVision": True,
         "isEmbedding": False,
         "modelNumber": 5,
-        "hexId": "2c8a"
+        "hexId": "2c8a",
     },
     "gemini-3.5-flash-lite": {
         "displayName": "Gemini 3.5 Flash-Lite (Web)",
@@ -34,7 +34,7 @@ FALLBACK_MODELS = {
         "supportsVision": True,
         "isEmbedding": False,
         "modelNumber": 6,
-        "hexId": "2c8b"
+        "hexId": "2c8b",
     },
     "gemini-3.1-pro": {
         "displayName": "Gemini 3.1 Pro (Web)",
@@ -44,7 +44,7 @@ FALLBACK_MODELS = {
         "supportsVision": True,
         "isEmbedding": False,
         "modelNumber": 3,
-        "hexId": "2c8c"
+        "hexId": "2c8c",
     },
     "gemini-2.5-flash": {
         "displayName": "Gemini 2.5 Flash (Web)",
@@ -54,7 +54,7 @@ FALLBACK_MODELS = {
         "supportsVision": True,
         "isEmbedding": False,
         "modelNumber": 1,
-        "hexId": "2c8d"
+        "hexId": "2c8d",
     },
     "gemini-2.5-pro": {
         "displayName": "Gemini 2.5 Pro (Web)",
@@ -64,9 +64,10 @@ FALLBACK_MODELS = {
         "supportsVision": True,
         "isEmbedding": False,
         "modelNumber": 3,
-        "hexId": "2c8e"
-    }
+        "hexId": "2c8e",
+    },
 }
+
 
 class GeminiWebAdapter(BaseAdapter):
     name = "gemini_web"
@@ -76,13 +77,29 @@ class GeminiWebAdapter(BaseAdapter):
         psid: Optional[str] = None,
         psidts: Optional[str] = None,
         sapisid: Optional[str] = None,
-        enabled: bool = False
+        enabled: bool = False,
     ):
         super().__init__(enabled=enabled)
-        self.psid = psid or os.getenv("GEMINI_WEB_PSID") or os.getenv("SECURE_1PSID") or os.getenv("__Secure-1PSID", "")
-        self.psidts = psidts or os.getenv("GEMINI_WEB_PSIDTS") or os.getenv("SECURE_1PSIDTS") or os.getenv("__Secure-1PSIDTS", "")
-        self.sapisid = sapisid or os.getenv("GEMINI_WEB_SAPISID") or os.getenv("SAPISID") or os.getenv("SECURE_3PSID") or os.getenv("__Secure-3PSID", "")
-        
+        self.psid = (
+            psid
+            or os.getenv("GEMINI_WEB_PSID")
+            or os.getenv("SECURE_1PSID")
+            or os.getenv("__Secure-1PSID", "")
+        )
+        self.psidts = (
+            psidts
+            or os.getenv("GEMINI_WEB_PSIDTS")
+            or os.getenv("SECURE_1PSIDTS")
+            or os.getenv("__Secure-1PSIDTS", "")
+        )
+        self.sapisid = (
+            sapisid
+            or os.getenv("GEMINI_WEB_SAPISID")
+            or os.getenv("SAPISID")
+            or os.getenv("SECURE_3PSID")
+            or os.getenv("__Secure-3PSID", "")
+        )
+
         self._http_client: Optional[httpx.AsyncClient] = None
         self._snlm0e_token: Optional[str] = None
         self._build_label: str = DEFAULT_BUILD_LABEL
@@ -97,8 +114,7 @@ class GeminiWebAdapter(BaseAdapter):
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(300.0, connect=30.0),
-                follow_redirects=True
+                timeout=httpx.Timeout(300.0, connect=30.0), follow_redirects=True
             )
         return self._http_client
 
@@ -116,7 +132,9 @@ class GeminiWebAdapter(BaseAdapter):
             return None
         timestamp = int(time.time())
         origin = "https://gemini.google.com"
-        digest = hashlib.sha1(f"{timestamp} {self.sapisid} {origin}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha1(
+            f"{timestamp} {self.sapisid} {origin}".encode("utf-8")
+        ).hexdigest()
         return f"SAPISIDHASH {timestamp}_{digest}"
 
     def _get_headers(self) -> Dict[str, str]:
@@ -129,7 +147,7 @@ class GeminiWebAdapter(BaseAdapter):
             "Origin": "https://gemini.google.com",
             "Referer": "https://gemini.google.com/app",
             "X-Same-Domain": "1",
-            "Cookie": self._get_cookie_header()
+            "Cookie": self._get_cookie_header(),
         }
         sapisid_hash = self._generate_sapisidhash()
         if sapisid_hash:
@@ -145,11 +163,15 @@ class GeminiWebAdapter(BaseAdapter):
 
         http = self.get_http_client()
         try:
-            resp = await http.get("https://gemini.google.com/app", headers=self._get_headers())
+            resp = await http.get(
+                "https://gemini.google.com/app", headers=self._get_headers()
+            )
             if resp.status_code == 429:
                 self.set_cooldown(60.0)
-                raise RateLimitError("Gemini Web rate limited (429) during session init")
-            
+                raise RateLimitError(
+                    "Gemini Web rate limited (429) during session init"
+                )
+
             if resp.status_code in (401, 403):
                 logger.warning(f"Gemini Web session init returned {resp.status_code}")
                 return None
@@ -158,11 +180,11 @@ class GeminiWebAdapter(BaseAdapter):
                 match_snlm = re.search(r'"SNlM0e":"([^"]+)"', resp.text)
                 if match_snlm:
                     self._snlm0e_token = match_snlm.group(1)
-                
+
                 match_bl = re.search(r'"cfb2h":"([^"]+)"', resp.text)
                 if match_bl:
                     self._build_label = match_bl.group(1)
-                
+
                 # Check for session ID pattern if available
                 match_sess = re.search(r'"FdrFJe":"([^"]+)"', resp.text)
                 if match_sess:
@@ -178,7 +200,7 @@ class GeminiWebAdapter(BaseAdapter):
     def _extract_prompt_text(
         self,
         contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None
+        system_instruction: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Flatten contents and system instructions into a clean prompt string."""
         lines = []
@@ -190,13 +212,17 @@ class GeminiWebAdapter(BaseAdapter):
         for turn in contents:
             role = turn.get("role", "user")
             parts = turn.get("parts", [])
-            turn_texts = [p["text"] for p in parts if isinstance(p, dict) and p.get("text")]
+            turn_texts = [
+                p["text"] for p in parts if isinstance(p, dict) and p.get("text")
+            ]
             if turn_texts:
                 lines.append(f"{role.capitalize()}: {' '.join(turn_texts)}")
 
         return "\n\n".join(lines) if lines else "Hello"
 
-    async def fetch_available_models(self, force_refresh: bool = False) -> Dict[str, Any]:
+    async def fetch_available_models(
+        self, force_refresh: bool = False
+    ) -> Dict[str, Any]:
         """
         Dynamically discover available models via the otAQ7b RPC endpoint,
         falling back to default models if offline or unconfigured.
@@ -217,17 +243,19 @@ class GeminiWebAdapter(BaseAdapter):
             url = f"https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=otAQ7b&source-path=/app&bl={self._build_label}&hl=en&_reqid=100001&rt=c"
             post_data = {
                 "f.req": json.dumps([[["otAQ7b", "[]", None, "generic"]]]),
-                "at": at_token
+                "at": at_token,
             }
             http = self.get_http_client()
             headers = self._get_headers()
-            headers["x-goog-ext-525001261-jspb"] = "[1,null,null,null,null,null,null,null,[4]]"
+            headers["x-goog-ext-525001261-jspb"] = (
+                "[1,null,null,null,null,null,null,null,[4]]"
+            )
 
             resp = await http.post(url, data=post_data, headers=headers)
             if resp.status_code == 200:
                 discovered: Dict[str, Any] = {}
                 for line in resp.text.split("\n"):
-                    if line.startswith(')]}\''):
+                    if line.startswith(")]}'"):
                         continue
                     line = line.strip()
                     if not line or line.isdigit():
@@ -235,15 +263,38 @@ class GeminiWebAdapter(BaseAdapter):
                     try:
                         parsed_line = json.loads(line)
                         for item in parsed_line:
-                            if isinstance(item, list) and len(item) > 2 and isinstance(item[2], str):
+                            if (
+                                isinstance(item, list)
+                                and len(item) > 2
+                                and isinstance(item[2], str)
+                            ):
                                 payload = json.loads(item[2])
-                                if isinstance(payload, list) and len(payload) > 15 and isinstance(payload[15], list):
+                                if (
+                                    isinstance(payload, list)
+                                    and len(payload) > 15
+                                    and isinstance(payload[15], list)
+                                ):
                                     for m_obj in payload[15]:
                                         if isinstance(m_obj, list) and len(m_obj) > 0:
-                                            hex_id = str(m_obj[0]) if len(m_obj) > 0 else ""
-                                            raw_name = str(m_obj[11] if len(m_obj) > 11 and m_obj[11] else (m_obj[1] if len(m_obj) > 1 else hex_id))
-                                            model_num = int(m_obj[17] if len(m_obj) > 17 and isinstance(m_obj[17], int) else 1)
-                                            
+                                            hex_id = (
+                                                str(m_obj[0]) if len(m_obj) > 0 else ""
+                                            )
+                                            raw_name = str(
+                                                m_obj[11]
+                                                if len(m_obj) > 11 and m_obj[11]
+                                                else (
+                                                    m_obj[1]
+                                                    if len(m_obj) > 1
+                                                    else hex_id
+                                                )
+                                            )
+                                            model_num = int(
+                                                m_obj[17]
+                                                if len(m_obj) > 17
+                                                and isinstance(m_obj[17], int)
+                                                else 1
+                                            )
+
                                             # Normalize into canonical model ID
                                             norm_id = "gemini-2.5-flash"
                                             if "3.7" in raw_name:
@@ -256,16 +307,22 @@ class GeminiWebAdapter(BaseAdapter):
                                                 norm_id = "gemini-2.5-pro"
                                             elif "lite" in raw_name.lower():
                                                 norm_id = "gemini-3.5-flash-lite"
-                                            
+
                                             discovered[norm_id] = {
                                                 "displayName": f"Gemini {raw_name} (Web)",
-                                                "maxTokens": 2097152 if "pro" in norm_id else 1048576,
-                                                "supportsThinking": ("3.7" in raw_name or "pro" in norm_id or "thinking" in raw_name.lower()),
+                                                "maxTokens": 2097152
+                                                if "pro" in norm_id
+                                                else 1048576,
+                                                "supportsThinking": (
+                                                    "3.7" in raw_name
+                                                    or "pro" in norm_id
+                                                    or "thinking" in raw_name.lower()
+                                                ),
                                                 "supportsTools": True,
                                                 "supportsVision": True,
                                                 "isEmbedding": False,
                                                 "hexId": hex_id,
-                                                "modelNumber": model_num
+                                                "modelNumber": model_num,
                                             }
                     except Exception:
                         pass
@@ -290,7 +347,7 @@ class GeminiWebAdapter(BaseAdapter):
           6 = Gemini Flash Lite
         """
         clean_model = model.lower().replace("models/", "")
-        
+
         if "3.7" in clean_model:
             return ("2c8a", 5, 2)
         if "3.5" in clean_model or "lite" in clean_model:
@@ -301,7 +358,7 @@ class GeminiWebAdapter(BaseAdapter):
             return ("2c8e", 3, 1)
         if "thinking" in clean_model:
             return ("2c8d", 5, 2)
-            
+
         return ("2c8d", 1, 1)
 
     async def stream_generate_content(
@@ -310,7 +367,7 @@ class GeminiWebAdapter(BaseAdapter):
         contents: List[Dict[str, Any]],
         system_instruction: Optional[Dict[str, Any]] = None,
         generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream response from Gemini Web interface using the StreamGenerate RPC.
@@ -331,7 +388,7 @@ class GeminiWebAdapter(BaseAdapter):
             if budget is not None:
                 thinking_level = 2 if budget > 0 or budget == -1 else 1
 
-        is_extended_thinking = (thinking_level == 2)
+        is_extended_thinking = thinking_level == 2
         client_uuid = uuid.uuid4().hex.upper()
 
         # Capacity tail according to capacity field
@@ -342,12 +399,31 @@ class GeminiWebAdapter(BaseAdapter):
         url = f"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl={self._build_label}&_reqid={req_id}&rt=c"
 
         headers = self._get_headers()
-        headers.update({
-            "x-goog-ext-525001261-jspb": json.dumps([1, None, None, None, hex_id, None, None, 0, [4], None, None, capacity_tail, thinking_level, self._session_id]),
-            "x-goog-ext-525005358-jspb": json.dumps([client_uuid, 1]),
-            "x-goog-ext-73010989-jspb": "[0]",
-            "x-goog-ext-73010990-jspb": "[0]"
-        })
+        headers.update(
+            {
+                "x-goog-ext-525001261-jspb": json.dumps(
+                    [
+                        1,
+                        None,
+                        None,
+                        None,
+                        hex_id,
+                        None,
+                        None,
+                        0,
+                        [4],
+                        None,
+                        None,
+                        capacity_tail,
+                        thinking_level,
+                        self._session_id,
+                    ]
+                ),
+                "x-goog-ext-525005358-jspb": json.dumps([client_uuid, 1]),
+                "x-goog-ext-73010989-jspb": "[0]",
+                "x-goog-ext-73010990-jspb": "[0]",
+            }
+        )
 
         # Build inner JSPB payload
         inner = [None] * 81
@@ -364,14 +440,13 @@ class GeminiWebAdapter(BaseAdapter):
         inner[80] = thinking_level
 
         freq = [None, json.dumps([[None, json.dumps(inner)]])]
-        post_data = {
-            "f.req": json.dumps(freq),
-            "at": at_token
-        }
+        post_data = {"f.req": json.dumps(freq), "at": at_token}
 
         http = self.get_http_client()
-        logger.info(f"[GeminiWeb] Sending StreamGenerate request for model={model} (model_num={model_num}, thinking_level={thinking_level})")
-        
+        logger.info(
+            f"[GeminiWeb] Sending StreamGenerate request for model={model} (model_num={model_num}, thinking_level={thinking_level})"
+        )
+
         try:
             resp = await http.post(url, data=post_data, headers=headers)
         except Exception as e:
@@ -385,7 +460,9 @@ class GeminiWebAdapter(BaseAdapter):
 
         if resp.status_code != 200:
             logger.error(f"Gemini Web error ({resp.status_code}): {resp.text[:200]}")
-            raise ValueError(f"Gemini Web Error ({resp.status_code}): {resp.text[:200]}")
+            raise ValueError(
+                f"Gemini Web Error ({resp.status_code}): {resp.text[:200]}"
+            )
 
         # Parse chunked response, extracting reasoning and main text
         response_text = ""
@@ -403,7 +480,7 @@ class GeminiWebAdapter(BaseAdapter):
 
         try:
             for line in resp.text.split("\n"):
-                if line.startswith(')]}\''):
+                if line.startswith(")]}'"):
                     continue
                 line = line.strip()
                 if not line or line.isdigit():
@@ -411,14 +488,24 @@ class GeminiWebAdapter(BaseAdapter):
                 try:
                     parsed_line = json.loads(line)
                     for item in parsed_line:
-                        if isinstance(item, list) and len(item) > 2 and isinstance(item[2], str):
+                        if (
+                            isinstance(item, list)
+                            and len(item) > 2
+                            and isinstance(item[2], str)
+                        ):
                             payload_json = json.loads(item[2])
                             candidates = []
                             if isinstance(payload_json, list):
-                                if len(payload_json) > 4 and isinstance(payload_json[4], list):
+                                if len(payload_json) > 4 and isinstance(
+                                    payload_json[4], list
+                                ):
                                     candidates = payload_json[4]
-                                elif len(payload_json) > 0 and isinstance(payload_json[0], list):
-                                    if len(payload_json[0]) > 4 and isinstance(payload_json[0][4], list):
+                                elif len(payload_json) > 0 and isinstance(
+                                    payload_json[0], list
+                                ):
+                                    if len(payload_json[0]) > 4 and isinstance(
+                                        payload_json[0][4], list
+                                    ):
                                         candidates = payload_json[0][4]
                                     else:
                                         candidates = payload_json[0]
@@ -431,28 +518,46 @@ class GeminiWebAdapter(BaseAdapter):
 
                                 # 1. Check for thoughts / reasoning at cand[37]
                                 if len(cand) > 37 and cand[37]:
-                                    extracted_thoughts = "".join(_extract_strings(cand[37]))
-                                    if extracted_thoughts and extracted_thoughts not in thoughts_text:
+                                    extracted_thoughts = "".join(
+                                        _extract_strings(cand[37])
+                                    )
+                                    if (
+                                        extracted_thoughts
+                                        and extracted_thoughts not in thoughts_text
+                                    ):
                                         thoughts_text = extracted_thoughts
                                         yield {
                                             "candidates": [
                                                 {
                                                     "content": {
-                                                        "parts": [{"text": extracted_thoughts, "thought": True}],
-                                                        "role": "model"
+                                                        "parts": [
+                                                            {
+                                                                "text": extracted_thoughts,
+                                                                "thought": True,
+                                                            }
+                                                        ],
+                                                        "role": "model",
                                                     },
-                                                    "index": 0
+                                                    "index": 0,
                                                 }
                                             ],
-                                            "modelVersion": model
+                                            "modelVersion": model,
                                         }
 
                                 # 2. Check main response text at cand[1] or cand[22]
-                                if len(cand) > 1 and cand[1] and isinstance(cand[1], list):
+                                if (
+                                    len(cand) > 1
+                                    and cand[1]
+                                    and isinstance(cand[1], list)
+                                ):
                                     extracted_text = "".join(_extract_strings(cand[1]))
                                     if extracted_text:
                                         response_text += extracted_text
-                                elif len(cand) > 22 and cand[22] and isinstance(cand[22], list):
+                                elif (
+                                    len(cand) > 22
+                                    and cand[22]
+                                    and isinstance(cand[22], list)
+                                ):
                                     extracted_text = "".join(_extract_strings(cand[22]))
                                     if extracted_text:
                                         response_text += extracted_text
@@ -473,20 +578,17 @@ class GeminiWebAdapter(BaseAdapter):
         yield {
             "candidates": [
                 {
-                    "content": {
-                        "parts": [{"text": response_text}],
-                        "role": "model"
-                    },
+                    "content": {"parts": [{"text": response_text}], "role": "model"},
                     "finishReason": "STOP",
-                    "index": 0
+                    "index": 0,
                 }
             ],
             "usageMetadata": {
                 "promptTokenCount": prompt_tokens,
                 "candidatesTokenCount": completion_tokens + reasoning_tokens,
-                "totalTokenCount": prompt_tokens + completion_tokens + reasoning_tokens
+                "totalTokenCount": prompt_tokens + completion_tokens + reasoning_tokens,
             },
-            "modelVersion": model
+            "modelVersion": model,
         }
 
     async def generate_content(
@@ -495,7 +597,7 @@ class GeminiWebAdapter(BaseAdapter):
         contents: List[Dict[str, Any]],
         system_instruction: Optional[Dict[str, Any]] = None,
         generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Non-streaming generate content call. Merges stream chunks and thought tokens."""
         chunks = []
@@ -504,7 +606,7 @@ class GeminiWebAdapter(BaseAdapter):
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
-            tools=tools
+            tools=tools,
         ):
             chunks.append(chunk)
 
@@ -539,12 +641,9 @@ class GeminiWebAdapter(BaseAdapter):
                     "index": 0,
                     "text": full_text,
                     "thoughts": full_thoughts,
-                    "content": {
-                        "parts": parts,
-                        "role": "model"
-                    },
+                    "content": {"parts": parts, "role": "model"},
                     "finishReason": finish_reason,
-                    "thoughtSignature": None
+                    "thoughtSignature": None,
                 }
             ],
             "text": full_text,
@@ -552,5 +651,5 @@ class GeminiWebAdapter(BaseAdapter):
             "toolCalls": [],
             "finishReason": finish_reason,
             "usageMetadata": usage,
-            "thoughtSignature": None
+            "thoughtSignature": None,
         }

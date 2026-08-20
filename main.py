@@ -1,38 +1,32 @@
-import os
-import sys
 import argparse
 import asyncio
 import logging
-from pathlib import Path
+import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.config import (
-    SERVER_HOST,
-    SERVER_PORT,
-    API_KEY,
-    BASE_DIR,
-    DATA_DIR
-)
 from app.auth import auth_manager
 from app.client import client
-from app.routes.openai import router as openai_router
+from app.config import API_KEY, BASE_DIR, DATA_DIR, SERVER_HOST, SERVER_PORT
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.openai import router as openai_router
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("agy_to_api")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,26 +34,31 @@ async def lifespan(app: FastAPI):
     Startup & shutdown lifespan events.
     """
     logger.info("Initializing Antigravity to OpenAI API bridge...")
-    
+
     # Check authentication state
     if auth_manager.access_token or auth_manager.refresh_token:
         try:
             logger.info("Syncing user metadata and companion project ID...")
             await client.load_code_assist()
-            logger.info(f"Connected as {auth_manager.user_email or 'User'} (Project: {auth_manager.project_id}, Tier: {auth_manager.tier_name})")
+            logger.info(
+                f"Connected as {auth_manager.user_email or 'User'} (Project: {auth_manager.project_id}, Tier: {auth_manager.tier_name})"
+            )
         except Exception as e:
             logger.warning(f"Could not initialize code assist during startup: {e}")
     else:
-        logger.warning("No authentication tokens found. Please log in via browser at /auth/login or run with --login flag.")
-        
+        logger.warning(
+            "No authentication tokens found. Please log in via browser at /auth/login or run with --login flag."
+        )
+
     yield
     logger.info("Shutting down Antigravity to OpenAI API bridge...")
+
 
 app = FastAPI(
     title="Antigravity OpenAI API Bridge",
     description="Maps Google Antigravity internal API into standard OpenAI API schema.",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Enable CORS for all clients (Cursor, Continue, Open WebUI, Web browsers)
@@ -81,6 +80,7 @@ app.include_router(dashboard_router)
 app.include_router(openai_router)
 app.include_router(auth_router)
 
+
 # Global OpenAI-compatible Exception Handlers
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -88,12 +88,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         return JSONResponse(
             status_code=exc.status_code,
             content=exc.detail,
-            headers=getattr(exc, "headers", None)
+            headers=getattr(exc, "headers", None),
         )
-    
+
     if isinstance(exc.detail, dict):
         msg = exc.detail.get("message", str(exc.detail))
-        err_type = exc.detail.get("type", "invalid_request_error" if exc.status_code < 500 else "api_error")
+        err_type = exc.detail.get(
+            "type", "invalid_request_error" if exc.status_code < 500 else "api_error"
+        )
         param = exc.detail.get("param")
         code = exc.detail.get("code", str(exc.status_code))
     else:
@@ -105,15 +107,11 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={
-            "error": {
-                "message": msg,
-                "type": err_type,
-                "param": param,
-                "code": code
-            }
+            "error": {"message": msg, "type": err_type, "param": param, "code": code}
         },
-        headers=getattr(exc, "headers", None)
+        headers=getattr(exc, "headers", None),
     )
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -130,29 +128,34 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "message": error_msg,
                 "type": "invalid_request_error",
                 "param": str(param) if param else None,
-                "code": "invalid_request_error"
+                "code": "invalid_request_error",
             }
-        }
+        },
     )
+
 
 def cli_login():
     """
     CLI interactive login flow.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("      Antigravity Google OAuth Login      ")
-    print("="*60)
-    
+    print("=" * 60)
+
     redirect_uri = f"http://localhost:{SERVER_PORT}/auth/callback"
-    auth_url, state, verifier = auth_manager.get_authorization_url(redirect_uri=redirect_uri)
-    
+    auth_url, state, verifier = auth_manager.get_authorization_url(
+        redirect_uri=redirect_uri
+    )
+
     print("\n1. Open this URL in your web browser:")
     print(f"\n   {auth_url}\n")
     print("2. Authorize with your Google Account.")
     print("3. After approving, you will be redirected to the callback URL.")
-    print("   If running on a remote server or container, paste the full redirected URL")
+    print(
+        "   If running on a remote server or container, paste the full redirected URL"
+    )
     print("   or the 'code' parameter below:\n")
-    
+
     code_input = input("Enter redirected URL or auth code: ").strip()
     if not code_input:
         print("Login cancelled.")
@@ -162,6 +165,7 @@ def cli_login():
     code = code_input
     if "code=" in code_input:
         import urllib.parse
+
         parsed = urllib.parse.urlparse(code_input)
         params = urllib.parse.parse_qs(parsed.query)
         code = params.get("code", [code_input])[0]
@@ -171,46 +175,60 @@ def cli_login():
     async def do_exchange():
         print("Exchanging authorization code for tokens...")
         await auth_manager.exchange_code(
-            code=code,
-            redirect_uri=redirect_uri,
-            state=state,
-            code_verifier=verifier
+            code=code, redirect_uri=redirect_uri, state=state, code_verifier=verifier
         )
         print("Fetching companion project ID...")
         await client.load_code_assist()
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("✓ LOGIN SUCCESSFUL!")
         print(f"  Account:    {auth_manager.user_email or 'Authenticated'}")
         print(f"  Project ID: {auth_manager.project_id}")
         print(f"  Tier:       {auth_manager.tier_name}")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
     asyncio.run(do_exchange())
+
 
 def show_status():
     """
     Print status in terminal.
     """
     status = auth_manager.get_status()
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("  Antigravity OpenAI Bridge Status")
-    print("="*50)
+    print("=" * 50)
     print(f"  Authenticated: {status['authenticated']}")
     print(f"  User Email:    {status['user_email']}")
     print(f"  Project ID:    {status['project_id']}")
     print(f"  Tier Name:     {status['tier_name']}")
     print(f"  Has Refresh:   {status['has_refresh_token']}")
     print(f"  Expires in:    {status['expires_in_seconds']} seconds")
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity OpenAI API Bridge Server")
-    parser.add_argument("--login", action="store_true", help="Start interactive Google OAuth login in terminal")
-    parser.add_argument("--status", action="store_true", help="Display current authentication status")
-    parser.add_argument("--host", type=str, default=SERVER_HOST, help="Server bind host")
-    parser.add_argument("--port", type=int, default=SERVER_PORT, help="Server bind port")
-    parser.add_argument("--key", type=str, default=API_KEY, help="Optional API key required for client requests")
-    
+    parser.add_argument(
+        "--login",
+        action="store_true",
+        help="Start interactive Google OAuth login in terminal",
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Display current authentication status"
+    )
+    parser.add_argument(
+        "--host", type=str, default=SERVER_HOST, help="Server bind host"
+    )
+    parser.add_argument(
+        "--port", type=int, default=SERVER_PORT, help="Server bind port"
+    )
+    parser.add_argument(
+        "--key",
+        type=str,
+        default=API_KEY,
+        help="Optional API key required for client requests",
+    )
+
     args = parser.parse_args()
 
     if args.login:
@@ -226,19 +244,17 @@ def main():
         env_host = os.getenv("HOST")
         display_host = env_host if (env_host and env_host != "0.0.0.0") else "localhost"
 
-    print("\n" + "="*60)
-    print(f"🚀 Starting Antigravity OpenAI API Bridge on http://{display_host}:{args.port}")
+    print("\n" + "=" * 60)
+    print(
+        f"🚀 Starting Antigravity OpenAI API Bridge on http://{display_host}:{args.port}"
+    )
     print(f"📊 Web Dashboard: http://{display_host}:{args.port}/")
     print(f"🤖 OpenAI Endpoint: http://{display_host}:{args.port}/v1/chat/completions")
     print(f"🔐 OAuth Login: http://{display_host}:{args.port}/auth/login")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
-    uvicorn.run(
-        "main:app",
-        host=args.host,
-        port=args.port,
-        reload=False
-    )
+    uvicorn.run("main:app", host=args.host, port=args.port, reload=False)
+
 
 if __name__ == "__main__":
     main()

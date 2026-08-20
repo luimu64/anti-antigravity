@@ -15,6 +15,7 @@ from app.translator import OpenAITranslator, ChatCompletionRequest, EmbeddingReq
 logger = logging.getLogger("agy_to_api.openai")
 router = APIRouter(tags=["OpenAI"])
 
+
 async def verify_api_key(authorization: Optional[str] = Header(None)):
     """
     API Key enforcement check for incoming requests to this bridge.
@@ -31,11 +32,11 @@ async def verify_api_key(authorization: Optional[str] = Header(None)):
                     "message": "You didn't provide an API key. You need to provide your API key in an Authorization header using Bearer auth (i.e. Authorization: Bearer YOUR_KEY).",
                     "type": "invalid_request_error",
                     "param": None,
-                    "code": "missing_api_key"
+                    "code": "missing_api_key",
                 }
-            }
+            },
         )
-    
+
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not api_key_manager.validate_key(token):
         raise HTTPException(
@@ -45,11 +46,12 @@ async def verify_api_key(authorization: Optional[str] = Header(None)):
                     "message": f"Incorrect API key provided: {token[:8]}***. Please check your API key and try again.",
                     "type": "invalid_request_error",
                     "param": None,
-                    "code": "invalid_api_key"
+                    "code": "invalid_api_key",
                 }
-            }
+            },
         )
     return True
+
 
 @router.get("/v1/models", dependencies=[Depends(verify_api_key)])
 @router.get("/models", dependencies=[Depends(verify_api_key)])
@@ -71,40 +73,44 @@ async def list_models():
     # 1. Models from active backends (ordered by provider support count)
     for model_id, info in raw_models.items():
         seen_ids.add(model_id)
-        model_list.append({
-            "id": model_id,
-            "object": "model",
-            "created": created_time,
-            "owned_by": "google",
-            "permission": [],
-            "root": model_id,
-            "parent": None,
-            "display_name": info.get("displayName", model_id),
-            "max_tokens": info.get("maxTokens", 1048576),
-            "supports_thinking": info.get("supportsThinking", False),
-            "providers": info.get("providers", ["google"]),
-            "provider_count": info.get("provider_count", len(info.get("providers", ["google"])))
-        })
+        model_list.append(
+            {
+                "id": model_id,
+                "object": "model",
+                "created": created_time,
+                "owned_by": "google",
+                "permission": [],
+                "root": model_id,
+                "parent": None,
+                "display_name": info.get("displayName", model_id),
+                "max_tokens": info.get("maxTokens", 1048576),
+                "supports_thinking": info.get("supportsThinking", False),
+                "providers": info.get("providers", ["google"]),
+                "provider_count": info.get(
+                    "provider_count", len(info.get("providers", ["google"]))
+                ),
+            }
+        )
 
     # 2. Add standard OpenAI / Claude aliases
     for alias, internal_target in MODEL_ALIASES.items():
         if alias not in seen_ids:
             seen_ids.add(alias)
-            model_list.append({
-                "id": alias,
-                "object": "model",
-                "created": created_time,
-                "owned_by": "google-antigravity",
-                "permission": [],
-                "root": internal_target,
-                "parent": None,
-                "display_name": f"{alias} (-> {internal_target})"
-            })
+            model_list.append(
+                {
+                    "id": alias,
+                    "object": "model",
+                    "created": created_time,
+                    "owned_by": "google-antigravity",
+                    "permission": [],
+                    "root": internal_target,
+                    "parent": None,
+                    "display_name": f"{alias} (-> {internal_target})",
+                }
+            )
 
-    return {
-        "object": "list",
-        "data": model_list
-    }
+    return {"object": "list", "data": model_list}
+
 
 @router.get("/v1/models/{model_id:path}", dependencies=[Depends(verify_api_key)])
 @router.get("/models/{model_id:path}", dependencies=[Depends(verify_api_key)])
@@ -120,8 +126,9 @@ async def retrieve_model(model_id: str):
         "owned_by": "google",
         "permission": [],
         "root": resolved,
-        "parent": None
+        "parent": None,
     }
+
 
 @router.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 @router.post("/chat/completions", dependencies=[Depends(verify_api_key)])
@@ -132,18 +139,14 @@ async def chat_completions(request: ChatCompletionRequest):
     and reasoning/thinking models.
     """
     try:
-        (
-            internal_model,
-            contents,
-            system_instruction,
-            generation_config,
-            tools
-        ) = OpenAITranslator.openai_to_internal_request(request)
+        (internal_model, contents, system_instruction, generation_config, tools) = (
+            OpenAITranslator.openai_to_internal_request(request)
+        )
     except Exception as e:
         logger.error(f"Error translating OpenAI request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid request parameters: {str(e)}"
+            detail=f"Invalid request parameters: {str(e)}",
         )
 
     # Determine if include_usage is requested for streaming
@@ -162,12 +165,12 @@ async def chat_completions(request: ChatCompletionRequest):
                 contents=contents,
                 system_instruction=system_instruction,
                 generation_config=generation_config,
-                tools=tools
+                tools=tools,
             )
             openai_chunks = OpenAITranslator.internal_stream_to_openai_chunks(
                 event_stream=event_stream,
                 requested_model=request.model,
-                include_usage=include_usage
+                include_usage=include_usage,
             )
             return StreamingResponse(
                 openai_chunks,
@@ -176,14 +179,14 @@ async def chat_completions(request: ChatCompletionRequest):
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "Content-Type": "text/event-stream",
-                    "X-Accel-Buffering": "no"
-                }
+                    "X-Accel-Buffering": "no",
+                },
             )
         except Exception as e:
             logger.error(f"Streaming generation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Generation failed: {str(e)}"
+                detail=f"Generation failed: {str(e)}",
             )
 
     # 2. Non-streaming response
@@ -193,19 +196,19 @@ async def chat_completions(request: ChatCompletionRequest):
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
-            tools=tools
+            tools=tools,
         )
         response_json = OpenAITranslator.internal_to_openai_response(
-            result=result,
-            requested_model=request.model
+            result=result, requested_model=request.model
         )
         return JSONResponse(content=response_json)
     except Exception as e:
         logger.error(f"Non-streaming generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {str(e)}"
+            detail=f"Generation failed: {str(e)}",
         )
+
 
 @router.post("/v1/completions", dependencies=[Depends(verify_api_key)])
 @router.post("/completions", dependencies=[Depends(verify_api_key)])
@@ -218,8 +221,7 @@ async def legacy_completions(request: Request):
         body = await request.json()
     except Exception:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON request body."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON request body."
         )
 
     prompt = body.get("prompt", "")
@@ -247,22 +249,18 @@ async def legacy_completions(request: Request):
         frequency_penalty=body.get("frequency_penalty"),
         seed=body.get("seed"),
         stream=stream,
-        stream_options=stream_options
+        stream_options=stream_options,
     )
 
     try:
-        (
-            internal_model,
-            contents,
-            system_instruction,
-            generation_config,
-            tools
-        ) = OpenAITranslator.openai_to_internal_request(chat_req)
+        (internal_model, contents, system_instruction, generation_config, tools) = (
+            OpenAITranslator.openai_to_internal_request(chat_req)
+        )
     except Exception as e:
         logger.error(f"Error translating completion request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid request parameters: {str(e)}"
+            detail=f"Invalid request parameters: {str(e)}",
         )
 
     # 1. Streaming response
@@ -273,12 +271,12 @@ async def legacy_completions(request: Request):
                 contents=contents,
                 system_instruction=system_instruction,
                 generation_config=generation_config,
-                tools=tools
+                tools=tools,
             )
             openai_chunks = OpenAITranslator.internal_stream_to_openai_text_chunks(
                 event_stream=event_stream,
                 requested_model=model_name,
-                include_usage=include_usage
+                include_usage=include_usage,
             )
             return StreamingResponse(
                 openai_chunks,
@@ -287,14 +285,14 @@ async def legacy_completions(request: Request):
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "Content-Type": "text/event-stream",
-                    "X-Accel-Buffering": "no"
-                }
+                    "X-Accel-Buffering": "no",
+                },
             )
         except Exception as e:
             logger.error(f"Streaming text completion generation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Generation failed: {str(e)}"
+                detail=f"Generation failed: {str(e)}",
             )
 
     # 2. Non-streaming response
@@ -304,19 +302,19 @@ async def legacy_completions(request: Request):
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
-            tools=tools
+            tools=tools,
         )
         response_json = OpenAITranslator.internal_to_openai_text_completion(
-            result=result,
-            requested_model=model_name
+            result=result, requested_model=model_name
         )
         return JSONResponse(content=response_json)
     except Exception as e:
         logger.error(f"Non-streaming text completion generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {str(e)}"
+            detail=f"Generation failed: {str(e)}",
         )
+
 
 @router.post("/v1/embeddings", dependencies=[Depends(verify_api_key)])
 @router.post("/embeddings", dependencies=[Depends(verify_api_key)])
@@ -332,7 +330,7 @@ async def create_embeddings(request: EmbeddingRequest):
         if len(request.input) == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="input list cannot be empty"
+                detail="input list cannot be empty",
             )
         if isinstance(request.input[0], int):
             texts = [" ".join(str(tok) for tok in request.input)]
@@ -348,28 +346,26 @@ async def create_embeddings(request: EmbeddingRequest):
     if encoding_format not in ("float", "base64"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid encoding_format: {encoding_format}. Must be 'float' or 'base64'."
+            detail=f"Invalid encoding_format: {encoding_format}. Must be 'float' or 'base64'.",
         )
 
     if request.dimensions is not None and request.dimensions <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="dimensions must be a positive integer."
+            detail="dimensions must be a positive integer.",
         )
 
     resolved_model = OpenAITranslator.resolve_model(request.model)
 
     try:
         raw_result = await client.embed_contents(
-            model=resolved_model,
-            texts=texts,
-            dimensions=request.dimensions
+            model=resolved_model, texts=texts, dimensions=request.dimensions
         )
     except Exception as e:
         logger.error(f"Embedding error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Embedding failed: {str(e)}"
+            detail=f"Embedding failed: {str(e)}",
         )
 
     # 3. Extract embedding vectors from response
@@ -398,7 +394,7 @@ async def create_embeddings(request: EmbeddingRequest):
     data = []
     for i, vec in enumerate(raw_embeddings):
         if request.dimensions is not None:
-            vec = vec[:request.dimensions]
+            vec = vec[: request.dimensions]
             if len(vec) < request.dimensions:
                 vec = vec + [0.0] * (request.dimensions - len(vec))
 
@@ -408,14 +404,12 @@ async def create_embeddings(request: EmbeddingRequest):
         else:
             embedding_val = [float(v) for v in vec]
 
-        data.append({
-            "object": "embedding",
-            "index": i,
-            "embedding": embedding_val
-        })
+        data.append({"object": "embedding", "index": i, "embedding": embedding_val})
 
     # 5. Token usage calculation
-    usage_meta = raw_result.get("usageMetadata", {}) if isinstance(raw_result, dict) else {}
+    usage_meta = (
+        raw_result.get("usageMetadata", {}) if isinstance(raw_result, dict) else {}
+    )
     prompt_tokens = usage_meta.get("promptTokenCount")
     if prompt_tokens is None:
         prompt_tokens = sum(max(1, len(t) // 4) for t in texts)
@@ -424,8 +418,5 @@ async def create_embeddings(request: EmbeddingRequest):
         "object": "list",
         "data": data,
         "model": request.model,
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "total_tokens": prompt_tokens
-        }
+        "usage": {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens},
     }

@@ -1,38 +1,40 @@
-import os
-import json
-import time
 import base64
 import hashlib
-import secrets
+import json
 import logging
-from typing import Optional, Dict, Any, Tuple
+import os
+import secrets
+import time
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple
+
 import httpx
 
 from app.config import (
+    CREDENTIALS_FILE,
     DEFAULT_CLIENT_ID,
     DEFAULT_CLIENT_SECRET,
     OAUTH_AUTH_URL,
-    OAUTH_TOKEN_URL,
     OAUTH_SCOPES,
-    CREDENTIALS_FILE,
+    OAUTH_TOKEN_URL,
+    PROJECT_ID_OVERRIDE,
     REDIRECT_URI,
-    PROJECT_ID_OVERRIDE
 )
 
 logger = logging.getLogger("agy_to_api.auth")
+
 
 class OAuthManager:
     def __init__(
         self,
         client_id: str = DEFAULT_CLIENT_ID,
         client_secret: str = DEFAULT_CLIENT_SECRET,
-        credentials_file: str = str(CREDENTIALS_FILE)
+        credentials_file: str = str(CREDENTIALS_FILE),
     ):
         self.client_id = client_id
         self.client_secret = client_secret
         self.credentials_file = credentials_file
-        
+
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.token_expiry: float = 0
@@ -40,10 +42,10 @@ class OAuthManager:
         self.user_email: Optional[str] = None
         self.project_id: Optional[str] = PROJECT_ID_OVERRIDE or None
         self.tier_name: Optional[str] = None
-        
+
         # In-memory PKCE state mapping: state -> code_verifier
         self._pkce_verifier_cache: Dict[str, str] = {}
-        
+
         # Try loading credentials automatically
         self.load_credentials()
 
@@ -59,7 +61,7 @@ class OAuthManager:
         redirect_uri: str = REDIRECT_URI,
         state: Optional[str] = None,
         device_id: Optional[str] = None,
-        device_name: Optional[str] = None
+        device_name: Optional[str] = None,
     ) -> Tuple[str, str, str]:
         """
         Generate the Google OAuth2 authorization URL.
@@ -68,12 +70,15 @@ class OAuthManager:
         """
         if not state:
             state = secrets.token_urlsafe(16)
-        
+
         verifier, challenge = self.generate_pkce()
         self._pkce_verifier_cache[state] = verifier
 
         # Generate stable/friendly device_id and device_name
-        dev_id = device_id or f"agy-bridge-{hashlib.sha256((self.client_id + redirect_uri).encode()).hexdigest()[:12]}"
+        dev_id = (
+            device_id
+            or f"agy-bridge-{hashlib.sha256((self.client_id + redirect_uri).encode()).hexdigest()[:12]}"
+        )
         dev_name = device_name or "Antigravity Bridge"
 
         params = {
@@ -87,9 +92,9 @@ class OAuthManager:
             "code_challenge": challenge,
             "code_challenge_method": "S256",
             "device_id": dev_id,
-            "device_name": dev_name
+            "device_name": dev_name,
         }
-        
+
         req = httpx.Request("GET", OAUTH_AUTH_URL, params=params)
         auth_url = str(req.url)
         return auth_url, state, verifier
@@ -99,7 +104,7 @@ class OAuthManager:
         code: str,
         redirect_uri: str = REDIRECT_URI,
         state: Optional[str] = None,
-        code_verifier: Optional[str] = None
+        code_verifier: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Exchange authorization code for access and refresh tokens."""
         verifier = code_verifier
@@ -111,7 +116,7 @@ class OAuthManager:
             "client_secret": self.client_secret,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri
+            "redirect_uri": redirect_uri,
         }
         if verifier:
             data["code_verifier"] = verifier
@@ -119,9 +124,11 @@ class OAuthManager:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(OAUTH_TOKEN_URL, data=data)
             if resp.status_code != 200:
-                logger.error(f"Failed to exchange authorization code: {resp.status_code} {resp.text}")
+                logger.error(
+                    f"Failed to exchange authorization code: {resp.status_code} {resp.text}"
+                )
                 raise ValueError(f"Failed to exchange authorization code: {resp.text}")
-            
+
             token_data = resp.json()
 
         self._apply_token_response(token_data)
@@ -137,15 +144,17 @@ class OAuthManager:
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "refresh_token": self.refresh_token,
-            "grant_type": "refresh_token"
+            "grant_type": "refresh_token",
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(OAUTH_TOKEN_URL, data=data)
             if resp.status_code != 200:
-                logger.error(f"Failed to refresh access token: {resp.status_code} {resp.text}")
+                logger.error(
+                    f"Failed to refresh access token: {resp.status_code} {resp.text}"
+                )
                 raise ValueError(f"Failed to refresh access token: {resp.text}")
-            
+
             token_data = resp.json()
 
         self._apply_token_response(token_data)
@@ -156,7 +165,9 @@ class OAuthManager:
         """Get a valid access token, refreshing it automatically if expired or expiring within 2 minutes."""
         now = time.time()
         # If token is missing or expiring in less than 120 seconds
-        if not self.access_token or (self.token_expiry and (self.token_expiry - now < 120)):
+        if not self.access_token or (
+            self.token_expiry and (self.token_expiry - now < 120)
+        ):
             if self.refresh_token:
                 logger.info("Access token expired or near expiration, refreshing...")
                 return await self.refresh_access_token()
@@ -165,7 +176,7 @@ class OAuthManager:
                 return self.access_token
             else:
                 raise ValueError("Not authenticated. Please log in with Google first.")
-        
+
         return self.access_token
 
     def _apply_token_response(self, token_data: Dict[str, Any]):
@@ -173,10 +184,10 @@ class OAuthManager:
         self.access_token = token_data.get("access_token")
         if "refresh_token" in token_data and token_data["refresh_token"]:
             self.refresh_token = token_data["refresh_token"]
-        
+
         expires_in = token_data.get("expires_in", 3600)
         self.token_expiry = time.time() + float(expires_in)
-        
+
         if "id_token" in token_data:
             self.id_token = token_data["id_token"]
             self._extract_email_from_id_token(self.id_token)
@@ -212,7 +223,7 @@ class OAuthManager:
             "project_id": self.project_id,
             "tier_name": self.tier_name,
             "id_token": self.id_token,
-            "updated_at": datetime.now(timezone.utc).isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             os.makedirs(os.path.dirname(self.credentials_file), exist_ok=True)
@@ -269,11 +280,19 @@ class OAuthManager:
         # Try secret-tool CLI first
         try:
             import subprocess
+
             res = subprocess.run(
-                ["secret-tool", "lookup", "service", "gemini", "username", "antigravity"],
+                [
+                    "secret-tool",
+                    "lookup",
+                    "service",
+                    "gemini",
+                    "username",
+                    "antigravity",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=3.0
+                timeout=3.0,
             )
             if res.returncode == 0 and res.stdout.strip():
                 parsed = json.loads(res.stdout.strip())
@@ -289,7 +308,9 @@ class OAuthManager:
                             self.token_expiry = dt.timestamp()
                         except Exception:
                             self.token_expiry = time.time() + 3600
-                    logger.info("Successfully loaded antigravity credentials via secret-tool!")
+                    logger.info(
+                        "Successfully loaded antigravity credentials via secret-tool!"
+                    )
                     return True
         except Exception as e:
             logger.debug(f"secret-tool discovery skipped: {e}")
@@ -297,12 +318,17 @@ class OAuthManager:
         # Try dbus next
         try:
             import dbus
+
             bus = dbus.SessionBus()
-            service = bus.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets")
+            service = bus.get_object(
+                "org.freedesktop.secrets", "/org/freedesktop/secrets"
+            )
             iface = dbus.Interface(service, "org.freedesktop.Secret.Service")
             session_path = iface.OpenSession("plain", "")[1]
 
-            search_res = iface.SearchItems({"service": "gemini", "username": "antigravity"})
+            search_res = iface.SearchItems(
+                {"service": "gemini", "username": "antigravity"}
+            )
             items = search_res[0] + search_res[1]
             if not items:
                 return False
@@ -312,12 +338,12 @@ class OAuthManager:
             secret = item_iface.GetSecret(session_path)
             secret_bytes = bytes(secret[2])
             parsed = json.loads(secret_bytes.decode("utf-8"))
-            
+
             token_obj = parsed.get("token", {})
             if isinstance(token_obj, dict):
                 self.access_token = token_obj.get("access_token")
                 self.refresh_token = token_obj.get("refresh_token")
-                
+
                 expiry_str = token_obj.get("expiry")
                 if expiry_str:
                     try:
@@ -326,14 +352,21 @@ class OAuthManager:
                         self.token_expiry = dt.replace(tzinfo=timezone.utc).timestamp()
                     except Exception:
                         self.token_expiry = time.time() + 3600
-                
-                logger.info("Successfully discovered and imported antigravity token from System Keyring DBus!")
+
+                logger.info(
+                    "Successfully discovered and imported antigravity token from System Keyring DBus!"
+                )
                 return True
         except Exception as e:
             logger.debug(f"System keyring discovery skipped or unavailable: {e}")
         return False
 
-    def set_tokens(self, access_token: Optional[str], refresh_token: Optional[str], project_id: Optional[str] = None):
+    def set_tokens(
+        self,
+        access_token: Optional[str],
+        refresh_token: Optional[str],
+        project_id: Optional[str] = None,
+    ):
         """Manually configure tokens."""
         if access_token:
             self.access_token = access_token
@@ -364,7 +397,9 @@ class OAuthManager:
         is_authenticated = bool(self.access_token or self.refresh_token)
         now = time.time()
         is_expired = self.token_expiry > 0 and (self.token_expiry < now)
-        expires_in_seconds = max(0, int(self.token_expiry - now)) if self.token_expiry else None
+        expires_in_seconds = (
+            max(0, int(self.token_expiry - now)) if self.token_expiry else None
+        )
 
         return {
             "authenticated": is_authenticated,
@@ -374,8 +409,9 @@ class OAuthManager:
             "has_refresh_token": bool(self.refresh_token),
             "token_expired": is_expired,
             "expires_in_seconds": expires_in_seconds,
-            "credentials_file": self.credentials_file
+            "credentials_file": self.credentials_file,
         }
+
 
 # Global singleton
 auth_manager = OAuthManager()

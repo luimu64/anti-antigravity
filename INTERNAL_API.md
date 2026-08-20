@@ -325,8 +325,11 @@ Unlike the OAuth 2.0 PKCE flow used by Cloud Code / Antigravity (Section 2), Gem
 - **SAPISIDHASH Calculation**:
   ```python
   import time, hashlib
+
   timestamp = int(time.time())
-  digest = hashlib.sha1(f"{timestamp} {sapisid} https://gemini.google.com".encode()).hexdigest()
+  digest = hashlib.sha1(
+      f"{timestamp} {sapisid} https://gemini.google.com".encode()
+  ).hexdigest()
   authorization_header = f"SAPISIDHASH {timestamp}_{digest}"
   ```
 

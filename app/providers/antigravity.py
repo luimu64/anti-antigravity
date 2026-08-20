@@ -9,6 +9,7 @@ from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("agy_to_api.providers.antigravity")
 
+
 class AntigravityAdapter(BaseAdapter):
     name = "antigravity"
 
@@ -16,7 +17,7 @@ class AntigravityAdapter(BaseAdapter):
         self,
         base_url: str = CLOUD_CODE_BASE_URL,
         auth: OAuthManager = auth_manager,
-        enabled: bool = False
+        enabled: bool = False,
     ):
         super().__init__(enabled=enabled)
         self.base_url = base_url.rstrip("/")
@@ -29,7 +30,9 @@ class AntigravityAdapter(BaseAdapter):
 
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=30.0)
+            )
         return self._http_client
 
     async def _get_headers(self) -> Dict[str, str]:
@@ -38,7 +41,7 @@ class AntigravityAdapter(BaseAdapter):
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
-            "Accept-Encoding": "gzip, deflate"
+            "Accept-Encoding": "gzip, deflate",
         }
 
     async def load_code_assist(self) -> Dict[str, Any]:
@@ -49,7 +52,9 @@ class AntigravityAdapter(BaseAdapter):
         http = self.get_http_client()
         resp = await http.post(url, json=payload, headers=headers)
         if resp.status_code == 401 and self.auth.refresh_token:
-            logger.info("Received 401 on loadCodeAssist, refreshing token and retrying...")
+            logger.info(
+                "Received 401 on loadCodeAssist, refreshing token and retrying..."
+            )
             await self.auth.refresh_access_token()
             headers = await self._get_headers()
             resp = await http.post(url, json=payload, headers=headers)
@@ -85,7 +90,9 @@ class AntigravityAdapter(BaseAdapter):
             raise ValueError("Failed to retrieve project ID from Antigravity backend.")
         return project_id
 
-    async def fetch_available_models(self, force_refresh: bool = False) -> Dict[str, Any]:
+    async def fetch_available_models(
+        self, force_refresh: bool = False
+    ) -> Dict[str, Any]:
         """Call /v1internal:fetchAvailableModels to get all supported models."""
         if self._cached_models and not force_refresh:
             return self._cached_models
@@ -95,7 +102,9 @@ class AntigravityAdapter(BaseAdapter):
         http = self.get_http_client()
         resp = await http.post(url, json={}, headers=headers)
         if resp.status_code == 401 and self.auth.refresh_token:
-            logger.info("Received 401 on fetchAvailableModels, refreshing token and retrying...")
+            logger.info(
+                "Received 401 on fetchAvailableModels, refreshing token and retrying..."
+            )
             await self.auth.refresh_access_token()
             headers = await self._get_headers()
             resp = await http.post(url, json={}, headers=headers)
@@ -106,7 +115,9 @@ class AntigravityAdapter(BaseAdapter):
 
         if resp.status_code != 200:
             logger.error(f"fetchAvailableModels failed: {resp.status_code} {resp.text}")
-            raise ValueError(f"fetchAvailableModels failed: {resp.status_code} {resp.text}")
+            raise ValueError(
+                f"fetchAvailableModels failed: {resp.status_code} {resp.text}"
+            )
 
         self._cached_models = resp.json()
         return self._cached_models
@@ -118,7 +129,9 @@ class AntigravityAdapter(BaseAdapter):
         http = self.get_http_client()
         resp = await http.post(url, json={}, headers=headers)
         if resp.status_code == 401 and self.auth.refresh_token:
-            logger.info("Received 401 on retrieveUserQuotaSummary, refreshing token and retrying...")
+            logger.info(
+                "Received 401 on retrieveUserQuotaSummary, refreshing token and retrying..."
+            )
             await self.auth.refresh_access_token()
             headers = await self._get_headers()
             resp = await http.post(url, json={}, headers=headers)
@@ -128,8 +141,12 @@ class AntigravityAdapter(BaseAdapter):
             raise RateLimitError(f"Antigravity rate limited (429): {resp.text}")
 
         if resp.status_code != 200:
-            logger.error(f"retrieveUserQuotaSummary failed: {resp.status_code} {resp.text}")
-            raise ValueError(f"retrieveUserQuotaSummary failed: {resp.status_code} {resp.text}")
+            logger.error(
+                f"retrieveUserQuotaSummary failed: {resp.status_code} {resp.text}"
+            )
+            raise ValueError(
+                f"retrieveUserQuotaSummary failed: {resp.status_code} {resp.text}"
+            )
         return resp.json()
 
     async def stream_generate_content(
@@ -138,7 +155,7 @@ class AntigravityAdapter(BaseAdapter):
         contents: List[Dict[str, Any]],
         system_instruction: Optional[Dict[str, Any]] = None,
         generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Call /v1internal:streamGenerateContent?alt=sse and stream events."""
         headers = await self._get_headers()
@@ -152,11 +169,7 @@ class AntigravityAdapter(BaseAdapter):
         if tools:
             inner_request["tools"] = tools
 
-        payload = {
-            "project": project_id,
-            "model": model,
-            "request": inner_request
-        }
+        payload = {"project": project_id, "model": model, "request": inner_request}
 
         logger.info(f"[Antigravity] Sending streamGenerateContent for model={model}")
         url = f"{self.base_url}/v1internal:streamGenerateContent?alt=sse"
@@ -164,18 +177,28 @@ class AntigravityAdapter(BaseAdapter):
 
         async with http.stream("POST", url, json=payload, headers=headers) as resp:
             if resp.status_code == 401 and self.auth.refresh_token:
-                logger.info("Received 401 on streamGenerateContent, refreshing token and retrying...")
+                logger.info(
+                    "Received 401 on streamGenerateContent, refreshing token and retrying..."
+                )
                 await self.auth.refresh_access_token()
                 headers = await self._get_headers()
-                async with http.stream("POST", url, json=payload, headers=headers) as retry_resp:
+                async with http.stream(
+                    "POST", url, json=payload, headers=headers
+                ) as retry_resp:
                     if retry_resp.status_code == 429:
                         self.set_cooldown(60.0)
-                        raise RateLimitError(f"Antigravity rate limited (429): {await retry_resp.aread()}")
+                        raise RateLimitError(
+                            f"Antigravity rate limited (429): {await retry_resp.aread()}"
+                        )
                     if retry_resp.status_code != 200:
                         err_body = await retry_resp.aread()
                         err_text = err_body.decode("utf-8", errors="replace")
-                        logger.error(f"streamGenerateContent retry error: {retry_resp.status_code} - {err_text}")
-                        raise ValueError(f"Antigravity API Error ({retry_resp.status_code}): {err_text}")
+                        logger.error(
+                            f"streamGenerateContent retry error: {retry_resp.status_code} - {err_text}"
+                        )
+                        raise ValueError(
+                            f"Antigravity API Error ({retry_resp.status_code}): {err_text}"
+                        )
 
                     async for line in retry_resp.aiter_lines():
                         line = line.strip()
@@ -186,19 +209,27 @@ class AntigravityAdapter(BaseAdapter):
                                     parsed = json.loads(data_str)
                                     yield parsed
                                 except json.JSONDecodeError as e:
-                                    logger.warning(f"Failed to parse SSE JSON: {data_str} ({e})")
+                                    logger.warning(
+                                        f"Failed to parse SSE JSON: {data_str} ({e})"
+                                    )
                 return
 
             if resp.status_code == 429:
                 self.set_cooldown(60.0)
                 err_body = await resp.aread()
-                raise RateLimitError(f"Antigravity rate limited (429): {err_body.decode('utf-8', errors='replace')}")
+                raise RateLimitError(
+                    f"Antigravity rate limited (429): {err_body.decode('utf-8', errors='replace')}"
+                )
 
             if resp.status_code != 200:
                 err_body = await resp.aread()
                 err_text = err_body.decode("utf-8", errors="replace")
-                logger.error(f"streamGenerateContent error: {resp.status_code} - {err_text}")
-                raise ValueError(f"Antigravity API Error ({resp.status_code}): {err_text}")
+                logger.error(
+                    f"streamGenerateContent error: {resp.status_code} - {err_text}"
+                )
+                raise ValueError(
+                    f"Antigravity API Error ({resp.status_code}): {err_text}"
+                )
 
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -209,7 +240,9 @@ class AntigravityAdapter(BaseAdapter):
                             parsed = json.loads(data_str)
                             yield parsed
                         except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse SSE JSON: {data_str} ({e})")
+                            logger.warning(
+                                f"Failed to parse SSE JSON: {data_str} ({e})"
+                            )
 
     async def generate_content(
         self,
@@ -217,7 +250,7 @@ class AntigravityAdapter(BaseAdapter):
         contents: List[Dict[str, Any]],
         system_instruction: Optional[Dict[str, Any]] = None,
         generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Non-streaming generate content call. Merges stream chunks into complete response."""
         candidates_map: Dict[int, Dict[str, Any]] = {}
@@ -232,9 +265,13 @@ class AntigravityAdapter(BaseAdapter):
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
-            tools=tools
+            tools=tools,
         ):
-            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
+            resp_obj = (
+                event.get("response")
+                if isinstance(event.get("response"), dict)
+                else event
+            )
             if "responseId" in resp_obj:
                 response_id = resp_obj["responseId"]
             if "modelVersion" in resp_obj:
@@ -253,7 +290,7 @@ class AntigravityAdapter(BaseAdapter):
                         "thoughts": [],
                         "toolCalls": [],
                         "finishReason": "STOP",
-                        "thoughtSignature": None
+                        "thoughtSignature": None,
                     }
 
                 if cand.get("finishReason"):
@@ -276,23 +313,27 @@ class AntigravityAdapter(BaseAdapter):
         if candidates_map:
             for idx in sorted(candidates_map.keys()):
                 c = candidates_map[idx]
-                formatted_candidates.append({
-                    "index": idx,
-                    "text": "".join(c["text"]),
-                    "thoughts": "".join(c["thoughts"]),
-                    "toolCalls": c["toolCalls"],
-                    "finishReason": c["finishReason"],
-                    "thoughtSignature": c["thoughtSignature"]
-                })
+                formatted_candidates.append(
+                    {
+                        "index": idx,
+                        "text": "".join(c["text"]),
+                        "thoughts": "".join(c["thoughts"]),
+                        "toolCalls": c["toolCalls"],
+                        "finishReason": c["finishReason"],
+                        "thoughtSignature": c["thoughtSignature"],
+                    }
+                )
         else:
-            formatted_candidates.append({
-                "index": 0,
-                "text": "",
-                "thoughts": "",
-                "toolCalls": [],
-                "finishReason": finish_reason,
-                "thoughtSignature": None
-            })
+            formatted_candidates.append(
+                {
+                    "index": 0,
+                    "text": "",
+                    "thoughts": "",
+                    "toolCalls": [],
+                    "finishReason": finish_reason,
+                    "thoughtSignature": None,
+                }
+            )
 
         primary = formatted_candidates[0]
         return {
@@ -304,28 +345,23 @@ class AntigravityAdapter(BaseAdapter):
             "toolCalls": primary["toolCalls"],
             "finishReason": primary["finishReason"],
             "usageMetadata": usage_metadata,
-            "thoughtSignature": last_thought_signature
+            "thoughtSignature": last_thought_signature,
         }
 
     async def embed_contents(
-        self,
-        model: str,
-        texts: List[str],
-        dimensions: Optional[int] = None
+        self, model: str, texts: List[str], dimensions: Optional[int] = None
     ) -> Dict[str, Any]:
         """Call /v1internal:batchEmbedContents to generate text embeddings."""
         headers = await self._get_headers()
         project_id = await self.get_project_id()
 
-        internal_model = model.replace("models/", "") if model.startswith("models/") else model
+        internal_model = (
+            model.replace("models/", "") if model.startswith("models/") else model
+        )
 
         requests_payload = []
         for text in texts:
-            req_item: Dict[str, Any] = {
-                "content": {
-                    "parts": [{"text": text}]
-                }
-            }
+            req_item: Dict[str, Any] = {"content": {"parts": [{"text": text}]}}
             if dimensions is not None:
                 req_item["outputDimensionality"] = dimensions
             requests_payload.append(req_item)
@@ -333,7 +369,7 @@ class AntigravityAdapter(BaseAdapter):
         payload = {
             "project": project_id,
             "model": internal_model,
-            "requests": requests_payload
+            "requests": requests_payload,
         }
 
         url = f"{self.base_url}/v1internal:batchEmbedContents"
@@ -341,14 +377,18 @@ class AntigravityAdapter(BaseAdapter):
         resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 401 and self.auth.refresh_token:
-            logger.info("Received 401 on batchEmbedContents, refreshing token and retrying...")
+            logger.info(
+                "Received 401 on batchEmbedContents, refreshing token and retrying..."
+            )
             await self.auth.refresh_access_token()
             headers = await self._get_headers()
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
             self.set_cooldown(60.0)
-            raise RateLimitError(f"Antigravity embedding rate limited (429): {resp.text}")
+            raise RateLimitError(
+                f"Antigravity embedding rate limited (429): {resp.text}"
+            )
 
         if resp.status_code != 200:
             logger.error(f"batchEmbedContents failed: {resp.status_code} {resp.text}")

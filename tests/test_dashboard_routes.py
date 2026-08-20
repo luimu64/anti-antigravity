@@ -6,6 +6,7 @@ from main import app
 from app.client import client
 from app.keys import api_key_manager
 
+
 @pytest.mark.asyncio
 async def test_dashboard_page():
     transport = httpx.ASGITransport(app=app)
@@ -20,6 +21,7 @@ async def test_dashboard_page():
             assert resp_env.status_code == 200
             assert "192.168.1.100" in resp_env.text
 
+
 @pytest.mark.asyncio
 async def test_dashboard_health():
     transport = httpx.ASGITransport(app=app)
@@ -32,6 +34,7 @@ async def test_dashboard_health():
         assert "authenticated" in data
         assert "project_id" in data
         assert "api_key_enforcement" in data
+
 
 @pytest.mark.asyncio
 async def test_api_keys_management():
@@ -64,6 +67,7 @@ async def test_api_keys_management():
         assert resp_revoke_404.status_code == 404
         assert resp_revoke_404.json()["error"] == "Key not found"
 
+
 @pytest.mark.asyncio
 async def test_api_keys_enforcement_toggle():
     transport = httpx.ASGITransport(app=app)
@@ -80,26 +84,29 @@ async def test_api_keys_enforcement_toggle():
         assert resp_on.json()["enforce_keys"] is True
         assert api_key_manager.enforce_keys is True
 
+
 @pytest.mark.asyncio
 async def test_quotas_endpoint():
     transport = httpx.ASGITransport(app=app)
-    mock_quotas = {
-        "groups": [
-            {
-                "name": "Gemini 3.7 Pro",
-                "quota": 100,
-                "used": 42
-            }
-        ]
-    }
-    with patch.object(client, "retrieve_user_quota_summary", new_callable=AsyncMock, return_value=mock_quotas):
+    mock_quotas = {"groups": [{"name": "Gemini 3.7 Pro", "quota": 100, "used": 42}]}
+    with patch.object(
+        client,
+        "retrieve_user_quota_summary",
+        new_callable=AsyncMock,
+        return_value=mock_quotas,
+    ):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             resp = await ac.get("/api/quotas")
             assert resp.status_code == 200
             assert resp.json()["groups"][0]["name"] == "Gemini 3.7 Pro"
 
     # Quota endpoint failure -> 500 JSON
-    with patch.object(client, "retrieve_user_quota_summary", new_callable=AsyncMock, side_effect=RuntimeError("Quota service down")):
+    with patch.object(
+        client,
+        "retrieve_user_quota_summary",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("Quota service down"),
+    ):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             resp_fail = await ac.get("/api/quotas")
             assert resp_fail.status_code == 500

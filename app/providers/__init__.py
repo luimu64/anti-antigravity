@@ -10,5 +10,5 @@ __all__ = [
     "AntigravityAdapter",
     "GeminiApiAdapter",
     "GeminiWebAdapter",
-    "MultiBackendRouter"
+    "MultiBackendRouter",
 ]

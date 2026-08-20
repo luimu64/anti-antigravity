@@ -12,6 +12,7 @@ logger = logging.getLogger("agy_to_api.translator")
 # Cache to store thought signatures across turns for multi-turn function calling
 _thought_signature_cache: Dict[str, str] = {}
 
+
 class ChatMessage(BaseModel):
     role: str
     content: Optional[Any] = None
@@ -20,12 +21,15 @@ class ChatMessage(BaseModel):
     tool_call_id: Optional[str] = None
     reasoning_content: Optional[str] = None
 
+
 class StreamOptions(BaseModel):
     include_usage: Optional[bool] = None
+
 
 class ResponseFormat(BaseModel):
     type: Optional[str] = "text"
     json_schema: Optional[Dict[str, Any]] = None
+
 
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -48,6 +52,7 @@ class ChatCompletionRequest(BaseModel):
     reasoning_effort: Optional[str] = None
     user: Optional[str] = None
 
+
 class EmbeddingRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -57,13 +62,16 @@ class EmbeddingRequest(BaseModel):
     dimensions: Optional[int] = None
     user: Optional[str] = None
 
+
 class OpenAITranslator:
     @staticmethod
     def _generate_fingerprint(model: str) -> str:
-        return f"fp_agy_{abs(hash(model)) & 0xffffffff:08x}"
+        return f"fp_agy_{abs(hash(model)) & 0xFFFFFFFF:08x}"
 
     @staticmethod
-    def resolve_model(requested_model: str, reasoning_effort: Optional[str] = None) -> str:
+    def resolve_model(
+        requested_model: str, reasoning_effort: Optional[str] = None
+    ) -> str:
         """
         Map user-requested model and optional reasoning_effort to Antigravity internal model name
         using the lookup table and tier mappings.
@@ -83,33 +91,41 @@ class OpenAITranslator:
         # 2. Check direct MODEL_ALIASES lookup
         if clean in MODEL_ALIASES:
             return MODEL_ALIASES[clean]
-        
+
         # 3. Check prefix matches
         for alias, internal in MODEL_ALIASES.items():
             if clean.startswith(alias):
                 return internal
-                
+
         # Default fallback
         return requested_model
 
     @classmethod
-    def openai_to_internal_request(cls, req: ChatCompletionRequest) -> Tuple[str, List[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    def openai_to_internal_request(
+        cls, req: ChatCompletionRequest
+    ) -> Tuple[
+        str,
+        List[Dict[str, Any]],
+        Optional[Dict[str, Any]],
+        Optional[Dict[str, Any]],
+        Optional[List[Dict[str, Any]]],
+    ]:
         """
         Convert OpenAI ChatCompletionRequest into internal format:
         Returns: (internal_model, contents, system_instruction, generation_config, tools)
         """
         internal_model = cls.resolve_model(req.model, req.reasoning_effort)
-        
+
         contents: List[Dict[str, Any]] = []
         system_texts: List[str] = []
-        
+
         # Track tool names for tool_call_id -> function_name mapping
         tool_call_names: Dict[str, str] = {}
 
         for msg in req.messages:
             role = str(msg.get("role", "user")).lower()
             content = msg.get("content")
-            
+
             # Extract system / developer messages
             if role in ("system", "developer"):
                 if isinstance(content, str):
@@ -137,42 +153,60 @@ class OpenAITranslator:
                                 parts.append({"text": item.get("text", "")})
                             elif itype == "image_url":
                                 img_url_obj = item.get("image_url", {})
-                                url = img_url_obj.get("url", "") if isinstance(img_url_obj, dict) else str(img_url_obj)
+                                url = (
+                                    img_url_obj.get("url", "")
+                                    if isinstance(img_url_obj, dict)
+                                    else str(img_url_obj)
+                                )
                                 if url.startswith("data:"):
                                     # data:image/png;base64,.....
                                     header, b64_data = url.split(",", 1)
-                                    mime_type = header.split(";")[0].replace("data:", "")
-                                    parts.append({
-                                        "inlineData": {
-                                            "mimeType": mime_type,
-                                            "data": b64_data
+                                    mime_type = header.split(";")[0].replace(
+                                        "data:", ""
+                                    )
+                                    parts.append(
+                                        {
+                                            "inlineData": {
+                                                "mimeType": mime_type,
+                                                "data": b64_data,
+                                            }
                                         }
-                                    })
+                                    )
                                 else:
                                     parts.append({"text": f"[Image URL: {url}]"})
                             elif itype in ("audio", "input_audio"):
-                                audio_obj = item.get("audio") or item.get("input_audio") or {}
+                                audio_obj = (
+                                    item.get("audio") or item.get("input_audio") or {}
+                                )
                                 audio_data = audio_obj.get("data", "")
                                 audio_format = audio_obj.get("format", "wav")
                                 mime_type = f"audio/{audio_format}"
-                                parts.append({
-                                    "inlineData": {
-                                        "mimeType": mime_type,
-                                        "data": audio_data
+                                parts.append(
+                                    {
+                                        "inlineData": {
+                                            "mimeType": mime_type,
+                                            "data": audio_data,
+                                        }
                                     }
-                                })
+                                )
                             elif itype in ("file", "document"):
                                 file_obj = item.get("file") or {}
                                 if isinstance(file_obj, str):
                                     file_val = file_obj
-                                    file_mime = item.get("mime_type") or item.get("mimeType")
+                                    file_mime = item.get("mime_type") or item.get(
+                                        "mimeType"
+                                    )
                                 else:
                                     file_val = (
                                         file_obj.get("file_data")
                                         or file_obj.get("data")
                                         or file_obj.get("url")
                                         or item.get("file_data")
-                                        or (item.get("file_url", {}).get("url") if isinstance(item.get("file_url"), dict) else item.get("file_url"))
+                                        or (
+                                            item.get("file_url", {}).get("url")
+                                            if isinstance(item.get("file_url"), dict)
+                                            else item.get("file_url")
+                                        )
                                         or item.get("url")
                                         or item.get("data")
                                         or ""
@@ -184,26 +218,40 @@ class OpenAITranslator:
                                         or item.get("mimeType")
                                     )
 
-                                if isinstance(file_val, str) and file_val.startswith("data:"):
+                                if isinstance(file_val, str) and file_val.startswith(
+                                    "data:"
+                                ):
                                     header, b64_data = file_val.split(",", 1)
-                                    extracted_mime = header.split(";")[0].replace("data:", "").strip()
-                                    mime_type = extracted_mime or file_mime or "application/pdf"
-                                    parts.append({
-                                        "inlineData": {
-                                            "mimeType": mime_type,
-                                            "data": b64_data
+                                    extracted_mime = (
+                                        header.split(";")[0]
+                                        .replace("data:", "")
+                                        .strip()
+                                    )
+                                    mime_type = (
+                                        extracted_mime or file_mime or "application/pdf"
+                                    )
+                                    parts.append(
+                                        {
+                                            "inlineData": {
+                                                "mimeType": mime_type,
+                                                "data": b64_data,
+                                            }
                                         }
-                                    })
-                                elif isinstance(file_val, str) and file_val.startswith(("http://", "https://")):
+                                    )
+                                elif isinstance(file_val, str) and file_val.startswith(
+                                    ("http://", "https://")
+                                ):
                                     parts.append({"text": f"[File URL: {file_val}]"})
                                 elif isinstance(file_val, str) and file_val:
                                     mime_type = file_mime or "application/pdf"
-                                    parts.append({
-                                        "inlineData": {
-                                            "mimeType": mime_type,
-                                            "data": file_val
+                                    parts.append(
+                                        {
+                                            "inlineData": {
+                                                "mimeType": mime_type,
+                                                "data": file_val,
+                                            }
                                         }
-                                    })
+                                    )
                 if parts:
                     contents.append({"role": "user", "parts": parts})
 
@@ -213,7 +261,7 @@ class OpenAITranslator:
                 # Text content
                 if isinstance(content, str) and content:
                     parts.append({"text": content})
-                
+
                 # Tool calls
                 tool_calls = msg.get("tool_calls", [])
                 for tc in tool_calls:
@@ -221,28 +269,26 @@ class OpenAITranslator:
                     func = tc.get("function", {})
                     fn_name = func.get("name", "")
                     tool_call_names[tc_id] = fn_name
-                    
+
                     fn_args = func.get("arguments", {})
                     if isinstance(fn_args, str):
                         try:
                             fn_args = json.loads(fn_args)
                         except Exception:
                             fn_args = {"raw_args": fn_args}
-                    
+
                     part: Dict[str, Any] = {
-                        "functionCall": {
-                            "name": fn_name,
-                            "args": fn_args,
-                            "id": tc_id
-                        }
+                        "functionCall": {"name": fn_name, "args": fn_args, "id": tc_id}
                     }
-                    
+
                     # Attach thought signature if previously cached for this tool call or model
                     if tc_id in _thought_signature_cache:
                         part["thoughtSignature"] = _thought_signature_cache[tc_id]
                     elif "last_signature" in _thought_signature_cache:
-                        part["thoughtSignature"] = _thought_signature_cache["last_signature"]
-                    
+                        part["thoughtSignature"] = _thought_signature_cache[
+                            "last_signature"
+                        ]
+
                     parts.append(part)
 
                 if parts:
@@ -251,19 +297,23 @@ class OpenAITranslator:
             # Handle tool response message
             elif role in ("tool", "function"):
                 tool_call_id = msg.get("tool_call_id", "")
-                fn_name = msg.get("name") or tool_call_names.get(tool_call_id, "tool_response")
-                
+                fn_name = msg.get("name") or tool_call_names.get(
+                    tool_call_id, "tool_response"
+                )
+
                 response_val: Any = content
                 if isinstance(content, str):
                     try:
                         response_val = json.loads(content)
                     except Exception:
                         response_val = {"result": content}
-                
+
                 func_resp_part = {
                     "functionResponse": {
                         "name": fn_name,
-                        "response": {"result": response_val} if not isinstance(response_val, dict) else response_val
+                        "response": {"result": response_val}
+                        if not isinstance(response_val, dict)
+                        else response_val,
                     }
                 }
                 if tool_call_id:
@@ -274,9 +324,7 @@ class OpenAITranslator:
         # Build System Instruction
         system_instruction = None
         if system_texts:
-            system_instruction = {
-                "parts": [{"text": "\n\n".join(system_texts)}]
-            }
+            system_instruction = {"parts": [{"text": "\n\n".join(system_texts)}]}
 
         # Build Generation Config
         # Determine model limit
@@ -288,10 +336,12 @@ class OpenAITranslator:
         elif "flash" in internal_model or "pro" in internal_model:
             model_limit = 65536
 
-        max_tokens = min(req.max_tokens, model_limit) if req.max_tokens else min(8192, model_limit)
-        generation_config: Dict[str, Any] = {
-            "maxOutputTokens": max_tokens
-        }
+        max_tokens = (
+            min(req.max_tokens, model_limit)
+            if req.max_tokens
+            else min(8192, model_limit)
+        )
+        generation_config: Dict[str, Any] = {"maxOutputTokens": max_tokens}
         if req.temperature is not None:
             generation_config["temperature"] = req.temperature
         if req.top_p is not None:
@@ -332,7 +382,9 @@ class OpenAITranslator:
                 elif resp_fmt.type == "json_schema":
                     generation_config["responseMimeType"] = "application/json"
                     if resp_fmt.json_schema:
-                        generation_config["responseSchema"] = resp_fmt.json_schema.get("schema", resp_fmt.json_schema)
+                        generation_config["responseSchema"] = resp_fmt.json_schema.get(
+                            "schema", resp_fmt.json_schema
+                        )
 
         # Reasoning / Thinking config
         if "gemini-3.7" in internal_model or "gemini-3" in internal_model:
@@ -343,10 +395,10 @@ class OpenAITranslator:
                 budget = 4000
             elif req.reasoning_effort == "high":
                 budget = 16000
-                
+
             generation_config["thinkingConfig"] = {
                 "includeThoughts": True,
-                "thinkingBudget": budget
+                "thinkingBudget": budget,
             }
         elif "claude" in internal_model:
             if "thinking" in internal_model or req.reasoning_effort:
@@ -357,13 +409,13 @@ class OpenAITranslator:
                     budget = 16384
                 generation_config["thinkingConfig"] = {
                     "includeThoughts": True,
-                    "thinkingBudget": budget
+                    "thinkingBudget": budget,
                 }
         elif "gpt-oss" in internal_model:
             if req.reasoning_effort:
                 generation_config["thinkingConfig"] = {
                     "includeThoughts": True,
-                    "thinkingBudget": 8192
+                    "thinkingBudget": 8192,
                 }
 
         # Build Tools & Tool Config
@@ -376,7 +428,7 @@ class OpenAITranslator:
                     fn_decl = {
                         "name": fn.get("name"),
                         "description": fn.get("description", ""),
-                        "parameters": fn.get("parameters", {})
+                        "parameters": fn.get("parameters", {}),
                     }
                     function_declarations.append(fn_decl)
             if function_declarations:
@@ -403,7 +455,7 @@ class OpenAITranslator:
                         tool_config = {
                             "functionCallingConfig": {
                                 "mode": "ANY",
-                                "allowedFunctionNames": [fn_name]
+                                "allowedFunctionNames": [fn_name],
                             }
                         }
             if tool_config:
@@ -428,25 +480,21 @@ class OpenAITranslator:
             or usage_meta.get("cached_content_token_count")
             or 0
         )
-        total_tokens = usage_meta.get("totalTokenCount", prompt_tokens + completion_tokens)
+        total_tokens = usage_meta.get(
+            "totalTokenCount", prompt_tokens + completion_tokens
+        )
 
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
-            "prompt_tokens_details": {
-                "cached_tokens": cached_tokens
-            },
-            "completion_tokens_details": {
-                "reasoning_tokens": thoughts_tokens
-            }
+            "prompt_tokens_details": {"cached_tokens": cached_tokens},
+            "completion_tokens_details": {"reasoning_tokens": thoughts_tokens},
         }
 
     @classmethod
     def internal_to_openai_response(
-        cls,
-        result: Dict[str, Any],
-        requested_model: str
+        cls, result: Dict[str, Any], requested_model: str
     ) -> Dict[str, Any]:
         """
         Convert complete internal response into OpenAI ChatCompletion response.
@@ -461,7 +509,9 @@ class OpenAITranslator:
         if candidates:
             for cand in candidates:
                 cand_idx = cand.get("index", len(choices))
-                cand_thought_sig = cand.get("thoughtSignature") or result.get("thoughtSignature")
+                cand_thought_sig = cand.get("thoughtSignature") or result.get(
+                    "thoughtSignature"
+                )
                 if cand_thought_sig:
                     _thought_signature_cache["last_signature"] = cand_thought_sig
 
@@ -474,18 +524,20 @@ class OpenAITranslator:
 
                     args = tc.get("args", {})
                     args_str = json.dumps(args) if isinstance(args, dict) else str(args)
-                    tool_calls_openai.append({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.get("name", ""),
-                            "arguments": args_str
+                    tool_calls_openai.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name", ""),
+                                "arguments": args_str,
+                            },
                         }
-                    })
+                    )
 
                 msg: Dict[str, Any] = {
                     "role": "assistant",
-                    "content": cand.get("text", "")
+                    "content": cand.get("text", ""),
                 }
                 if cand.get("thoughts"):
                     msg["reasoning_content"] = cand["thoughts"]
@@ -499,11 +551,9 @@ class OpenAITranslator:
                 elif raw_finish == "MAX_TOKENS":
                     finish_reason = "length"
 
-                choices.append({
-                    "index": cand_idx,
-                    "message": msg,
-                    "finish_reason": finish_reason
-                })
+                choices.append(
+                    {"index": cand_idx, "message": msg, "finish_reason": finish_reason}
+                )
         else:
             # Fallback for single candidate payload without candidates list
             thought_sig = result.get("thoughtSignature")
@@ -519,19 +569,15 @@ class OpenAITranslator:
 
                 args = tc.get("args", {})
                 args_str = json.dumps(args) if isinstance(args, dict) else str(args)
-                tool_calls_openai.append({
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.get("name", ""),
-                        "arguments": args_str
+                tool_calls_openai.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": tc.get("name", ""), "arguments": args_str},
                     }
-                })
+                )
 
-            msg = {
-                "role": "assistant",
-                "content": result.get("text", "")
-            }
+            msg = {"role": "assistant", "content": result.get("text", "")}
             if result.get("thoughts"):
                 msg["reasoning_content"] = result["thoughts"]
             if tool_calls_openai:
@@ -544,11 +590,7 @@ class OpenAITranslator:
             elif raw_finish == "MAX_TOKENS":
                 finish_reason = "length"
 
-            choices.append({
-                "index": 0,
-                "message": msg,
-                "finish_reason": finish_reason
-            })
+            choices.append({"index": 0, "message": msg, "finish_reason": finish_reason})
 
         usage_meta = result.get("usageMetadata", {})
 
@@ -560,14 +602,12 @@ class OpenAITranslator:
             "system_fingerprint": cls._generate_fingerprint(requested_model),
             "service_tier": "default",
             "choices": choices,
-            "usage": cls.format_usage(usage_meta)
+            "usage": cls.format_usage(usage_meta),
         }
 
     @classmethod
     def internal_to_openai_text_completion(
-        cls,
-        result: Dict[str, Any],
-        requested_model: str
+        cls, result: Dict[str, Any], requested_model: str
     ) -> Dict[str, Any]:
         """
         Convert internal response into OpenAI /v1/completions text completion response.
@@ -585,24 +625,28 @@ class OpenAITranslator:
                 if raw_finish == "MAX_TOKENS":
                     finish_reason = "length"
 
-                choices.append({
-                    "text": cand.get("text", ""),
-                    "index": cand_idx,
-                    "logprobs": None,
-                    "finish_reason": finish_reason
-                })
+                choices.append(
+                    {
+                        "text": cand.get("text", ""),
+                        "index": cand_idx,
+                        "logprobs": None,
+                        "finish_reason": finish_reason,
+                    }
+                )
         else:
             finish_reason = "stop"
             raw_finish = result.get("finishReason", "STOP")
             if raw_finish == "MAX_TOKENS":
                 finish_reason = "length"
 
-            choices.append({
-                "text": result.get("text", ""),
-                "index": 0,
-                "logprobs": None,
-                "finish_reason": finish_reason
-            })
+            choices.append(
+                {
+                    "text": result.get("text", ""),
+                    "index": 0,
+                    "logprobs": None,
+                    "finish_reason": finish_reason,
+                }
+            )
 
         usage_meta = result.get("usageMetadata", {})
         return {
@@ -613,7 +657,7 @@ class OpenAITranslator:
             "system_fingerprint": cls._generate_fingerprint(requested_model),
             "service_tier": "default",
             "choices": choices,
-            "usage": cls.format_usage(usage_meta)
+            "usage": cls.format_usage(usage_meta),
         }
 
     @classmethod
@@ -621,7 +665,7 @@ class OpenAITranslator:
         cls,
         event_stream: AsyncGenerator[Dict[str, Any], None],
         requested_model: str,
-        include_usage: bool = False
+        include_usage: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Convert SSE stream from Antigravity internal API to standard OpenAI SSE chunk format.
@@ -636,7 +680,11 @@ class OpenAITranslator:
         fp = cls._generate_fingerprint(requested_model)
 
         async for event in event_stream:
-            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
+            resp_obj = (
+                event.get("response")
+                if isinstance(event.get("response"), dict)
+                else event
+            )
             if "responseId" in resp_obj and not completion_id.startswith("chatcmpl"):
                 completion_id = resp_obj["responseId"]
 
@@ -654,7 +702,9 @@ class OpenAITranslator:
                 for p in parts:
                     if p.get("thoughtSignature"):
                         last_thought_signature = p["thoughtSignature"]
-                        _thought_signature_cache["last_signature"] = last_thought_signature
+                        _thought_signature_cache["last_signature"] = (
+                            last_thought_signature
+                        )
 
                     # 1. Thought / Reasoning chunk
                     if p.get("thought"):
@@ -675,9 +725,9 @@ class OpenAITranslator:
                                     {
                                         "index": cand_idx,
                                         "delta": delta,
-                                        "finish_reason": None
+                                        "finish_reason": None,
                                     }
-                                ]
+                                ],
                             }
                             yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -699,9 +749,9 @@ class OpenAITranslator:
                                 {
                                     "index": cand_idx,
                                     "delta": delta,
-                                    "finish_reason": None
+                                    "finish_reason": None,
                                 }
-                            ]
+                            ],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -713,7 +763,9 @@ class OpenAITranslator:
                             _thought_signature_cache[call_id] = last_thought_signature
 
                         args = fc.get("args", {})
-                        args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                        args_str = (
+                            json.dumps(args) if isinstance(args, dict) else str(args)
+                        )
 
                         delta = {
                             "tool_calls": [
@@ -723,8 +775,8 @@ class OpenAITranslator:
                                     "type": "function",
                                     "function": {
                                         "name": fc.get("name", ""),
-                                        "arguments": args_str
-                                    }
+                                        "arguments": args_str,
+                                    },
                                 }
                             ]
                         }
@@ -742,16 +794,18 @@ class OpenAITranslator:
                                 {
                                     "index": cand_idx,
                                     "delta": delta,
-                                    "finish_reason": None
+                                    "finish_reason": None,
                                 }
-                            ]
+                            ],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
                 # If candidate has finish reason, emit final finish chunk
                 if raw_finish:
                     finish_reason = "stop"
-                    if raw_finish == "TOOL_CALL" or any("functionCall" in p for p in parts):
+                    if raw_finish == "TOOL_CALL" or any(
+                        "functionCall" in p for p in parts
+                    ):
                         finish_reason = "tool_calls"
                     elif raw_finish == "MAX_TOKENS":
                         finish_reason = "length"
@@ -766,9 +820,9 @@ class OpenAITranslator:
                             {
                                 "index": cand_idx,
                                 "delta": {},
-                                "finish_reason": finish_reason
+                                "finish_reason": finish_reason,
                             }
-                        ]
+                        ],
                     }
                     yield f"data: {json.dumps(final_chunk)}\n\n"
 
@@ -781,7 +835,7 @@ class OpenAITranslator:
                 "model": requested_model,
                 "system_fingerprint": fp,
                 "choices": [],
-                "usage": cls.format_usage(latest_usage_metadata)
+                "usage": cls.format_usage(latest_usage_metadata),
             }
             yield f"data: {json.dumps(usage_chunk)}\n\n"
 
@@ -793,7 +847,7 @@ class OpenAITranslator:
         cls,
         event_stream: AsyncGenerator[Dict[str, Any], None],
         requested_model: str,
-        include_usage: bool = False
+        include_usage: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Convert SSE stream from Antigravity internal API to OpenAI text_completion chunks.
@@ -805,7 +859,11 @@ class OpenAITranslator:
         fp = cls._generate_fingerprint(requested_model)
 
         async for event in event_stream:
-            resp_obj = event.get("response") if isinstance(event.get("response"), dict) else event
+            resp_obj = (
+                event.get("response")
+                if isinstance(event.get("response"), dict)
+                else event
+            )
             if "responseId" in resp_obj and not completion_id.startswith("cmpl-"):
                 completion_id = resp_obj["responseId"]
 
@@ -833,9 +891,9 @@ class OpenAITranslator:
                                     "text": p["text"],
                                     "index": cand_idx,
                                     "logprobs": None,
-                                    "finish_reason": None
+                                    "finish_reason": None,
                                 }
-                            ]
+                            ],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -852,9 +910,9 @@ class OpenAITranslator:
                                 "text": "",
                                 "index": cand_idx,
                                 "logprobs": None,
-                                "finish_reason": finish_reason
+                                "finish_reason": finish_reason,
                             }
-                        ]
+                        ],
                     }
                     yield f"data: {json.dumps(final_chunk)}\n\n"
 
@@ -866,7 +924,7 @@ class OpenAITranslator:
                 "model": requested_model,
                 "system_fingerprint": fp,
                 "choices": [],
-                "usage": cls.format_usage(latest_usage_metadata)
+                "usage": cls.format_usage(latest_usage_metadata),
             }
             yield f"data: {json.dumps(usage_chunk)}\n\n"
 

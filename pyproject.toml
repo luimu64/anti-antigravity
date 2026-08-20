@@ -17,3 +17,8 @@ dependencies = [
 pythonpath = ["."]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.3",
+]

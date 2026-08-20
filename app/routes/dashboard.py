@@ -18,11 +18,14 @@ router = APIRouter(tags=["Dashboard"])
 templates_dir = Path(__file__).resolve().parent.parent / "templates"
 jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)))
 
+
 class CreateKeyRequest(BaseModel):
     name: Optional[str] = "New Key"
 
+
 class ToggleEnforcementRequest(BaseModel):
     enforce: bool
+
 
 class UpdateBackendsRequest(BaseModel):
     routing_strategy: Optional[str] = None
@@ -34,14 +37,18 @@ class UpdateBackendsRequest(BaseModel):
     gemini_web_enabled: Optional[bool] = None
     antigravity_enabled: Optional[bool] = None
 
+
 class ToggleBackendRequest(BaseModel):
     enabled: bool
+
 
 class SetStrategyRequest(BaseModel):
     strategy: str
 
+
 class ClearCooldownRequest(BaseModel):
     backend: Optional[str] = None
+
 
 @router.get("/", response_class=HTMLResponse)
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -69,9 +76,10 @@ async def get_dashboard(request: Request):
         backend_status=backend_status,
         port=SERVER_PORT,
         base_url=base_url,
-        enforce_keys=api_key_manager.enforce_keys
+        enforce_keys=api_key_manager.enforce_keys,
     )
     return HTMLResponse(content=html_content)
+
 
 @router.get("/api/backends")
 @router.get("/api/providers")
@@ -83,6 +91,7 @@ async def get_backends():
         return client.get_status()
     return {"routing_strategy": "free_first", "backends": {}}
 
+
 @router.post("/api/backends")
 @router.post("/api/providers")
 async def update_backends(payload: UpdateBackendsRequest):
@@ -92,11 +101,9 @@ async def update_backends(payload: UpdateBackendsRequest):
     if hasattr(client, "update_config"):
         updates = payload.model_dump(exclude_unset=True, exclude_none=True)
         updated_status = client.update_config(updates)
-        return {
-            "status": "updated",
-            "config": updated_status
-        }
+        return {"status": "updated", "config": updated_status}
     return {"status": "error", "message": "Router not available"}
+
 
 @router.post("/api/backends/{backend_id}/toggle")
 async def toggle_backend(backend_id: str, payload: ToggleBackendRequest):
@@ -106,8 +113,10 @@ async def toggle_backend(backend_id: str, payload: ToggleBackendRequest):
     if hasattr(client, "get_adapter"):
         adapter = client.get_adapter(backend_id)
         if not adapter:
-            raise HTTPException(status_code=404, detail=f"Backend '{backend_id}' not found")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Backend '{backend_id}' not found"
+            )
+
         adapter.enabled = payload.enabled
         key_name = f"{backend_id}_enabled"
         if hasattr(client, "save_config"):
@@ -116,9 +125,10 @@ async def toggle_backend(backend_id: str, payload: ToggleBackendRequest):
             "status": "updated",
             "backend": backend_id,
             "enabled": adapter.enabled,
-            "config": client.get_status()
+            "config": client.get_status(),
         }
     raise HTTPException(status_code=500, detail="Router not available")
+
 
 @router.post("/api/backends/strategy")
 async def set_routing_strategy(payload: SetStrategyRequest):
@@ -127,13 +137,16 @@ async def set_routing_strategy(payload: SetStrategyRequest):
     """
     strategy = payload.strategy.strip().lower()
     if strategy not in ("free_first", "round_robin"):
-        raise HTTPException(status_code=400, detail="Strategy must be 'free_first' or 'round_robin'")
-    
+        raise HTTPException(
+            status_code=400, detail="Strategy must be 'free_first' or 'round_robin'"
+        )
+
     if hasattr(client, "update_config"):
         res = client.update_config({"routing_strategy": strategy})
         return {"status": "updated", "routing_strategy": strategy, "config": res}
-    
+
     raise HTTPException(status_code=500, detail="Router not available")
+
 
 @router.post("/api/backends/cooldown/clear")
 async def clear_cooldowns(payload: Optional[ClearCooldownRequest] = None):
@@ -143,8 +156,13 @@ async def clear_cooldowns(payload: Optional[ClearCooldownRequest] = None):
     backend = payload.backend if payload else None
     if hasattr(client, "clear_all_cooldowns"):
         client.clear_all_cooldowns(backend)
-        return {"status": "cleared", "backend": backend or "all", "config": client.get_status()}
+        return {
+            "status": "cleared",
+            "backend": backend or "all",
+            "config": client.get_status(),
+        }
     return {"status": "error"}
+
 
 @router.get("/api/keys")
 async def get_api_keys():
@@ -153,8 +171,9 @@ async def get_api_keys():
     """
     return {
         "enforce_keys": api_key_manager.enforce_keys,
-        "keys": api_key_manager.list_keys()
+        "keys": api_key_manager.list_keys(),
     }
+
 
 @router.post("/api/keys")
 async def create_api_key(payload: CreateKeyRequest):
@@ -162,10 +181,8 @@ async def create_api_key(payload: CreateKeyRequest):
     Generate a new API key.
     """
     new_key = api_key_manager.create_key(name=payload.name or "New Key")
-    return {
-        "status": "created",
-        "key": new_key
-    }
+    return {"status": "created", "key": new_key}
+
 
 @router.delete("/api/keys/{key_id}")
 async def revoke_api_key(key_id: str):
@@ -177,6 +194,7 @@ async def revoke_api_key(key_id: str):
         return JSONResponse(status_code=404, content={"error": "Key not found"})
     return {"status": "revoked", "key_id": key_id}
 
+
 @router.post("/api/keys/enforcement")
 async def toggle_key_enforcement(payload: ToggleEnforcementRequest):
     """
@@ -184,10 +202,8 @@ async def toggle_key_enforcement(payload: ToggleEnforcementRequest):
     """
     api_key_manager.enforce_keys = payload.enforce
     api_key_manager.save_keys()
-    return {
-        "status": "updated",
-        "enforce_keys": api_key_manager.enforce_keys
-    }
+    return {"status": "updated", "enforce_keys": api_key_manager.enforce_keys}
+
 
 @router.get("/api/quotas")
 async def get_quotas():
@@ -199,10 +215,8 @@ async def get_quotas():
         return JSONResponse(content=data)
     except Exception as e:
         logger.warning(f"Failed to fetch quotas: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e), "groups": []}
-        )
+        return JSONResponse(status_code=500, content={"error": str(e), "groups": []})
+
 
 @router.get("/api/models")
 async def get_dashboard_models():
@@ -216,29 +230,34 @@ async def get_dashboard_models():
             models_dict = raw.get("models", {})
         else:
             models_dict = {}
-        
+
         result = []
         for model_id, info in models_dict.items():
-            result.append({
-                "id": model_id,
-                "displayName": info.get("displayName", model_id),
-                "maxTokens": info.get("maxTokens", 1048576),
-                "supportsThinking": info.get("supportsThinking", False),
-                "supportsTools": info.get("supportsTools", True),
-                "supportsVision": info.get("supportsVision", True),
-                "isEmbedding": info.get("isEmbedding", False),
-                "capabilities": info.get("capabilities", []),
-                "hidden": bool(info.get("hidden", False)),
-                "providers": info.get("providers", []),
-                "provider_count": info.get("provider_count", len(info.get("providers", [])))
-            })
+            result.append(
+                {
+                    "id": model_id,
+                    "displayName": info.get("displayName", model_id),
+                    "maxTokens": info.get("maxTokens", 1048576),
+                    "supportsThinking": info.get("supportsThinking", False),
+                    "supportsTools": info.get("supportsTools", True),
+                    "supportsVision": info.get("supportsVision", True),
+                    "isEmbedding": info.get("isEmbedding", False),
+                    "capabilities": info.get("capabilities", []),
+                    "hidden": bool(info.get("hidden", False)),
+                    "providers": info.get("providers", []),
+                    "provider_count": info.get(
+                        "provider_count", len(info.get("providers", []))
+                    ),
+                }
+            )
         return {"status": "ok", "models": result, "total": len(result)}
     except Exception as e:
         logger.warning(f"Failed to fetch models for dashboard: {e}")
         return JSONResponse(
             status_code=500,
-            content={"status": "error", "error": str(e), "models": [], "total": 0}
+            content={"status": "error", "error": str(e), "models": [], "total": 0},
         )
+
 
 @router.get("/health")
 async def health_check():
@@ -254,5 +273,5 @@ async def health_check():
         "project_id": status["project_id"],
         "api_key_enforcement": api_key_manager.enforce_keys,
         "routing_strategy": backend_status.get("routing_strategy", "free_first"),
-        "backends": backend_status.get("backends", {})
+        "backends": backend_status.get("backends", {}),
     }

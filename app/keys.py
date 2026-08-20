@@ -13,20 +13,26 @@ from app.config import DATA_DIR
 logger = logging.getLogger("agy_to_api.keys")
 API_KEYS_FILE = Path(os.getenv("API_KEYS_FILE", str(DATA_DIR / "api_keys.json")))
 
+
 class APIKeyItem(BaseModel):
     id: str
     name: str
-    key: str # hashed or raw for storage
+    key: str  # hashed or raw for storage
     key_preview: str
     created_at: int
     last_used_at: Optional[int] = None
     is_active: bool = True
 
+
 class APIKeyManager:
     def __init__(self, storage_file: Path = API_KEYS_FILE):
         self.storage_file = storage_file
         self.keys: Dict[str, Dict[str, Any]] = {}
-        self.enforce_keys: bool = os.getenv("ENFORCE_API_KEY", "true").lower() in ("true", "1", "yes")
+        self.enforce_keys: bool = os.getenv("ENFORCE_API_KEY", "true").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
         self.load_keys()
 
     def load_keys(self):
@@ -37,7 +43,9 @@ class APIKeyManager:
                     data = json.load(f)
                 self.keys = data.get("keys", {})
                 self.enforce_keys = data.get("enforce_keys", self.enforce_keys)
-                logger.info(f"Loaded {len(self.keys)} API keys from {self.storage_file}")
+                logger.info(
+                    f"Loaded {len(self.keys)} API keys from {self.storage_file}"
+                )
             except Exception as e:
                 logger.error(f"Failed to load API keys: {e}")
                 self.keys = {}
@@ -52,7 +60,7 @@ class APIKeyManager:
                 "key_preview": initial_key[:10] + "..." + initial_key[-4:],
                 "created_at": int(time.time()),
                 "last_used_at": None,
-                "is_active": True
+                "is_active": True,
             }
             self.save_keys()
             logger.info(f"Initialized default API key: {initial_key[:10]}...")
@@ -62,10 +70,9 @@ class APIKeyManager:
         try:
             os.makedirs(self.storage_file.parent, exist_ok=True)
             with open(self.storage_file, "w") as f:
-                json.dump({
-                    "keys": self.keys,
-                    "enforce_keys": self.enforce_keys
-                }, f, indent=2)
+                json.dump(
+                    {"keys": self.keys, "enforce_keys": self.enforce_keys}, f, indent=2
+                )
         except Exception as e:
             logger.error(f"Failed to save API keys to {self.storage_file}: {e}")
 
@@ -74,7 +81,7 @@ class APIKeyManager:
         raw_key = f"sk-agy-{secrets.token_hex(20)}"
         key_id = f"key_{uuid.uuid4().hex[:8]}"
         created_at = int(time.time())
-        
+
         item = {
             "id": key_id,
             "name": name or "Unnamed Key",
@@ -82,7 +89,7 @@ class APIKeyManager:
             "key_preview": raw_key[:10] + "..." + raw_key[-4:],
             "created_at": created_at,
             "last_used_at": None,
-            "is_active": True
+            "is_active": True,
         }
         self.keys[key_id] = item
         self.save_keys()
@@ -100,14 +107,16 @@ class APIKeyManager:
         """List all keys (with masked values)."""
         result = []
         for k in self.keys.values():
-            result.append({
-                "id": k["id"],
-                "name": k["name"],
-                "key_preview": k["key_preview"],
-                "created_at": k["created_at"],
-                "last_used_at": k.get("last_used_at"),
-                "is_active": k.get("is_active", True)
-            })
+            result.append(
+                {
+                    "id": k["id"],
+                    "name": k["name"],
+                    "key_preview": k["key_preview"],
+                    "created_at": k["created_at"],
+                    "last_used_at": k.get("last_used_at"),
+                    "is_active": k.get("is_active", True),
+                }
+            )
         return sorted(result, key=lambda x: x["created_at"], reverse=True)
 
     def validate_key(self, token: str) -> bool:
@@ -117,12 +126,12 @@ class APIKeyManager:
         """
         if not self.enforce_keys:
             return True
-        
+
         if not token:
             return False
 
         clean_token = token.strip()
-        
+
         # Check against env var API_KEY if set
         env_key = os.getenv("API_KEY")
         if env_key and clean_token == env_key:
@@ -144,6 +153,7 @@ class APIKeyManager:
             if k.get("is_active", True):
                 return k.get("key")
         return os.getenv("API_KEY")
+
 
 # Global singleton
 api_key_manager = APIKeyManager()
