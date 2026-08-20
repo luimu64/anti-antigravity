@@ -4,14 +4,14 @@ import asyncio
 from app.translator import OpenAITranslator, ChatCompletionRequest
 
 def test_resolve_model():
-    assert OpenAITranslator.resolve_model("gpt-4o") == "gemini-3.7-flash-high"
-    assert OpenAITranslator.resolve_model("claude-3-7-sonnet") == "claude-sonnet-4-6"
-    assert OpenAITranslator.resolve_model("claude-opus-4-6-thinking") == "claude-opus-4-6-thinking"
+    assert OpenAITranslator.resolve_model("models/gemini-3.7-flash-high") == "gemini-3.7-flash-high"
     assert OpenAITranslator.resolve_model("gemini-3.7-flash-high") == "gemini-3.7-flash-high"
+    assert OpenAITranslator.resolve_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
+    assert OpenAITranslator.resolve_model("") == "gemini-3.7-flash-high"
 
 def test_openai_to_internal_simple_messages():
     req = ChatCompletionRequest(
-        model="gpt-4o",
+        model="gemini-3.7-flash-high",
         messages=[
             {"role": "system", "content": "System instructions here"},
             {"role": "user", "content": "Hello assistant"},
@@ -61,7 +61,7 @@ def test_openai_to_internal_tools():
 
 def test_openai_to_internal_advanced_spec_features():
     req = ChatCompletionRequest(
-        model="gpt-4o",
+        model="gemini-3.7-flash-high",
         messages=[
             {"role": "developer", "content": "Developer instructions"},
             {

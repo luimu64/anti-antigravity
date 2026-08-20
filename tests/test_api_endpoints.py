@@ -60,10 +60,10 @@ async def test_models_endpoint():
             assert response.status_code == 200
             data = response.json()
             assert data["object"] == "list"
-            assert len(data["data"]) > 0
+            assert len(data["data"]) == 2
             model_map = {m["id"]: m for m in data["data"]}
             assert "gemini-3.7-flash-high" in model_map
-            assert "gpt-4o" in model_map
+            assert "claude-sonnet-4-6" in model_map
 
             # Check 3.7 flash context window is 1M (1048576) and not defaulted to 256k
             flash_model = model_map["gemini-3.7-flash-high"]
@@ -72,13 +72,7 @@ async def test_models_endpoint():
             assert flash_model["max_tokens"] == 65536
             assert flash_model["max_output_tokens"] == 65536
             assert flash_model["supports_thinking"] is True
-
-            # Check alias model inherits proper context window and specs
-            gpt4o_model = model_map["gpt-4o"]
-            assert gpt4o_model["context_window"] == 1048576
-            assert gpt4o_model["context_length"] == 1048576
-            assert gpt4o_model["max_tokens"] == 65536
-            assert gpt4o_model["root"] == "gemini-3.7-flash-high"
+            assert flash_model["name"] == "Gemini 3.7 Flash (High)"
 
             # Check Claude model context window and output token limit
             claude_model = model_map["claude-sonnet-4-6"]
@@ -101,43 +95,54 @@ async def test_models_endpoint_backend_failure_fallback():
             assert response.status_code == 200
             data = response.json()
             assert data["object"] == "list"
-            model_map = {m["id"]: m for m in data["data"]}
-            assert "gpt-4o" in model_map
-            assert "gemini-3.7-flash-high" in model_map
-            # Even in fallback, context_window must be accurate (1M for 3.7 flash)
-            assert model_map["gemini-3.7-flash-high"]["context_window"] == 1048576
-            assert model_map["gemini-3.7-flash-high"]["context_length"] == 1048576
-            assert model_map["gemini-3.7-flash-high"]["max_tokens"] == 65536
-            assert model_map["gpt-4o"]["context_window"] == 1048576
+            assert data["data"] == []
 
 @pytest.mark.asyncio
 async def test_retrieve_model_endpoint():
     transport = httpx.ASGITransport(app=app)
     key = api_key_manager.get_first_active_key() or "test-key"
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        # Test /v1/models/{model_id}
-        response = await ac.get("/v1/models/gpt-4o", headers={"Authorization": f"Bearer {key}"})
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == "gpt-4o"
-        assert data["object"] == "model"
-        assert data["owned_by"] == "google"
-        assert data["root"] == "gemini-3.7-flash-high"
-        assert data["context_window"] == 1048576
-        assert data["context_length"] == 1048576
-        assert data["max_tokens"] == 65536
-        assert data["max_output_tokens"] == 65536
+    mock_models = {
+        "models": {
+            "gemini-3.7-flash-high": {
+                "displayName": "Gemini 3.7 Flash (High)",
+                "maxTokens": 1048576,
+                "maxOutputTokens": 65536,
+                "supportsThinking": True
+            },
+            "claude-sonnet-4-6": {
+                "displayName": "Claude Sonnet 4.6",
+                "maxTokens": 250000,
+                "maxOutputTokens": 64000,
+                "supportsThinking": True
+            }
+        }
+    }
+    with patch.object(client, "fetch_available_models", new_callable=AsyncMock, return_value=mock_models):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            # Test /v1/models/{model_id}
+            response = await ac.get("/v1/models/gemini-3.7-flash-high", headers={"Authorization": f"Bearer {key}"})
+            assert response.status_code == 200
+            data = response.json()
+            assert data["id"] == "gemini-3.7-flash-high"
+            assert data["object"] == "model"
+            assert data["owned_by"] == "google"
+            assert data["root"] == "gemini-3.7-flash-high"
+            assert data["context_window"] == 1048576
+            assert data["context_length"] == 1048576
+            assert data["max_tokens"] == 65536
+            assert data["max_output_tokens"] == 65536
+            assert data["supports_thinking"] is True
 
-        # Test unprefixed /models/{model_id}
-        response_unpref = await ac.get("/models/claude-3-7-sonnet", headers={"Authorization": f"Bearer {key}"})
-        assert response_unpref.status_code == 200
-        data_claude = response_unpref.json()
-        assert data_claude["id"] == "claude-3-7-sonnet"
-        assert data_claude["root"] == "claude-sonnet-4-6"
-        assert data_claude["context_window"] == 250000
-        assert data_claude["context_length"] == 250000
-        assert data_claude["max_tokens"] == 64000
-        assert data_claude["max_output_tokens"] == 64000
+            # Test unprefixed /models/{model_id}
+            response_unpref = await ac.get("/models/claude-sonnet-4-6", headers={"Authorization": f"Bearer {key}"})
+            assert response_unpref.status_code == 200
+            data_claude = response_unpref.json()
+            assert data_claude["id"] == "claude-sonnet-4-6"
+            assert data_claude["root"] == "claude-sonnet-4-6"
+            assert data_claude["context_window"] == 250000
+            assert data_claude["context_length"] == 250000
+            assert data_claude["max_tokens"] == 64000
+            assert data_claude["max_output_tokens"] == 64000
 
 @pytest.mark.asyncio
 async def test_chat_completions_non_streaming():
@@ -745,42 +750,56 @@ async def test_all_models_broadcast_accurate_context_windows():
     """Verify all models in /v1/models advertise correct context windows and token limits."""
     transport = httpx.ASGITransport(app=app)
     key = api_key_manager.get_first_active_key() or "test-key"
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        res = await ac.get("/v1/models", headers={"Authorization": f"Bearer {key}"})
-        assert res.status_code == 200
-        payload = res.json()
-        assert payload["object"] == "list"
-        models = {m["id"]: m for m in payload["data"]}
+    mock_models = {
+        "models": {
+            "gemini-3.7-flash-high": {
+                "displayName": "Gemini 3.7 Flash (High)",
+                "maxTokens": 1048576,
+                "maxOutputTokens": 65536,
+                "supportsThinking": True
+            },
+            "claude-sonnet-4-6": {
+                "displayName": "Claude Sonnet 4.6",
+                "maxTokens": 250000,
+                "maxOutputTokens": 64000,
+                "supportsThinking": True
+            },
+            "gpt-oss-120b-medium": {
+                "displayName": "GPT-OSS 120B",
+                "maxTokens": 131072,
+                "maxOutputTokens": 32768,
+                "supportsThinking": False
+            }
+        }
+    }
+    with patch.object(client, "fetch_available_models", new_callable=AsyncMock, return_value=mock_models):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/v1/models", headers={"Authorization": f"Bearer {key}"})
+            assert res.status_code == 200
+            payload = res.json()
+            assert payload["object"] == "list"
+            models = {m["id"]: m for m in payload["data"]}
 
-        # All models must expose context_window and max_output_tokens
-        for m_id, m in models.items():
-            assert "context_window" in m, f"Model {m_id} missing context_window"
-            assert "context_length" in m, f"Model {m_id} missing context_length"
-            assert "max_tokens" in m, f"Model {m_id} missing max_tokens"
-            assert "max_output_tokens" in m, f"Model {m_id} missing max_output_tokens"
-            assert m["context_window"] > 0, f"Model {m_id} context_window not positive"
-            assert m["context_window"] == m["context_length"]
-            assert m["max_tokens"] == m["max_output_tokens"]
+            # All models must expose context_window and max_output_tokens
+            for m_id, m in models.items():
+                assert "context_window" in m, f"Model {m_id} missing context_window"
+                assert "context_length" in m, f"Model {m_id} missing context_length"
+                assert "max_tokens" in m, f"Model {m_id} missing max_tokens"
+                assert "max_output_tokens" in m, f"Model {m_id} missing max_output_tokens"
+                assert m["context_window"] > 0, f"Model {m_id} context_window not positive"
+                assert m["context_window"] == m["context_length"]
+                assert m["max_tokens"] == m["max_output_tokens"]
 
-        # Gemini 3.7 models have 1M context window
-        for gemini_37 in ["gemini-3.7-flash", "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low"]:
-            if gemini_37 in models:
-                assert models[gemini_37]["context_window"] == 1048576, f"{gemini_37} has incorrect context window"
-                assert models[gemini_37]["max_output_tokens"] == 65536
+            # Gemini 3.7 Flash has 1M context window
+            assert models["gemini-3.7-flash-high"]["context_window"] == 1048576
+            assert models["gemini-3.7-flash-high"]["max_output_tokens"] == 65536
 
-        # Claude models have 250k / 200k context window and 64k max output
-        for claude_model in ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "claude-3-7-sonnet"]:
-            if claude_model in models:
-                assert models[claude_model]["context_window"] in (200000, 250000)
-                assert models[claude_model]["max_output_tokens"] == 64000
+            # Claude Sonnet has 250k context window and 64k max output
+            assert models["claude-sonnet-4-6"]["context_window"] == 250000
+            assert models["claude-sonnet-4-6"]["max_output_tokens"] == 64000
 
-        # GPT-OSS has 131k context window and 32k max output
-        if "gpt-oss-120b-medium" in models:
+            # GPT-OSS has 131k context window and 32k max output
             assert models["gpt-oss-120b-medium"]["context_window"] == 131072
             assert models["gpt-oss-120b-medium"]["max_output_tokens"] == 32768
-
-        # Embeddings have 2048 context window
-        if "text-embedding-004" in models:
-            assert models["text-embedding-004"]["context_window"] == 2048
 
 

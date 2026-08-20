@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from app.config import MODEL_ALIASES, get_model_metadata
+from app.config import translate_model_to_openai
 from app.auth import auth_manager
 from app.keys import api_key_manager
 from app.client import client
@@ -55,30 +55,19 @@ async def verify_api_key(authorization: Optional[str] = Header(None)):
 @router.get("/models", dependencies=[Depends(verify_api_key)])
 async def list_models():
     """
-    List all available models in standard OpenAI format with accurate context window and max output limits.
+    List all available models dynamically fetched from backend and translated to OpenAI format.
     """
     try:
         raw_models_data = await client.fetch_available_models()
         raw_models = raw_models_data.get("models", {})
     except Exception as e:
-        logger.warning(f"Could not fetch live models, returning defaults: {e}")
+        logger.warning(f"Could not fetch live models: {e}")
         raw_models = {}
 
-    model_list = []
-    created_time = 1700000000
-    seen_ids = set()
-
-    # 1. Models from Antigravity backend
-    for model_id, info in raw_models.items():
-        seen_ids.add(model_id)
-        model_list.append(get_model_metadata(model_id, raw_info=info, created_time=created_time))
-
-    # 2. Add standard OpenAI / Claude aliases and predefined models
-    for alias, internal_target in MODEL_ALIASES.items():
-        if alias not in seen_ids:
-            seen_ids.add(alias)
-            target_info = raw_models.get(internal_target)
-            model_list.append(get_model_metadata(alias, raw_info=target_info, created_time=created_time))
+    model_list = [
+        translate_model_to_openai(model_id, info=info)
+        for model_id, info in raw_models.items()
+    ]
 
     return {
         "object": "list",
@@ -89,7 +78,7 @@ async def list_models():
 @router.get("/models/{model_id:path}", dependencies=[Depends(verify_api_key)])
 async def retrieve_model(model_id: str):
     """
-    Retrieve single model info in standard OpenAI format with context window and token limits.
+    Retrieve single model info dynamically fetched and translated to OpenAI format.
     """
     try:
         raw_models_data = await client.fetch_available_models()
@@ -97,12 +86,9 @@ async def retrieve_model(model_id: str):
     except Exception:
         raw_models = {}
 
-    resolved = OpenAITranslator.resolve_model(model_id)
-    raw_info = raw_models.get(model_id) or raw_models.get(resolved)
-    metadata = get_model_metadata(model_id, raw_info=raw_info)
-    metadata["root"] = resolved
-    metadata["owned_by"] = "google"
-    return metadata
+    clean_id = OpenAITranslator.resolve_model(model_id)
+    info = raw_models.get(clean_id) or raw_models.get(model_id)
+    return translate_model_to_openai(clean_id, info=info)
 
 @router.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 @router.post("/chat/completions", dependencies=[Depends(verify_api_key)])

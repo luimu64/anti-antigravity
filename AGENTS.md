@@ -189,6 +189,6 @@ docker stop agy-dev
 ## 6. How to Add a New Model
 
 1. Check available models via `POST /v1internal:fetchAvailableModels` or review [`INTERNAL_API.md`](INTERNAL_API.md).
-2. Add the internal model name and desired aliases to `MODEL_ALIASES` in [`app/config.py`](app/config.py).
-3. If the model has specific `maxOutputTokens` or `thinkingBudget` limits, add them to `build_internal_request` in [`app/translator.py`](app/translator.py).
+2. Models are fetched dynamically on demand from upstream and translated to standard OpenAI model schema with `context_window` (from `maxTokens`) and `max_output_tokens` (from `maxOutputTokens`).
+3. If the model has specific `maxOutputTokens` or `thinkingBudget` limits, ensure they are handled in `build_internal_request` in [`app/translator.py`](app/translator.py).
 4. Run `.venv/bin/pytest -v` to ensure test suite passes.

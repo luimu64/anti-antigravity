@@ -6,8 +6,6 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Union
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.config import MODEL_ALIASES
-
 logger = logging.getLogger("agy_to_api.translator")
 
 # Cache to store thought signatures across turns for multi-turn function calling
@@ -65,18 +63,13 @@ class OpenAITranslator:
 
     @staticmethod
     def resolve_model(requested_model: str) -> str:
-        """Map user-requested model to Antigravity internal model name."""
-        clean = requested_model.lower().strip()
-        if clean in MODEL_ALIASES:
-            return MODEL_ALIASES[clean]
-        
-        # Check prefix matches
-        for alias, internal in MODEL_ALIASES.items():
-            if clean.startswith(alias):
-                return internal
-                
-        # Default fallback to gemini-3.7-flash-high if unknown
-        return requested_model
+        """Normalize user-requested model identifier."""
+        if not requested_model:
+            return "gemini-3.7-flash-high"
+        clean = requested_model.strip()
+        if clean.startswith("models/"):
+            return clean[7:]
+        return clean
 
     @classmethod
     def dereference_schema(cls, schema: Any, root_schema: Optional[Dict[str, Any]] = None, seen_refs: Optional[set] = None) -> Any:
