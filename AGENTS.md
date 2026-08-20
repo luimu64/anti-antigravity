@@ -110,10 +110,12 @@ agy-to-api/
 - **Tool Calling & Thought Signatures**: Caches and restores `thoughtSignature` across multi-turn function calls to satisfy Gemini's strict signature requirement.
 
 ### 3.5 Web Dashboard & UI (`app/templates/dashboard.html`, `app/routes/dashboard.py`)
-- **Header Layout**: Top navbar displays the service identity, a center interactive Base URL button (copies the endpoint URL to clipboard on click), and connection status.
-- **Auth Card**: Displays account metadata, project ID, tier, and remaining token lifetime. Features an inline "Refresh Token" action next to the expiration timer and dedicated Login/Logout in the footer.
+- **Header Layout**: Top navbar displays the service identity and a center interactive Base URL button (copies the endpoint URL to clipboard on click).
+- **Multi-Backend Providers Card Grid**: Integrates controls, toggles, and status for Google Cloud Code / Antigravity OAuth, official Google Gemini AI Studio API keys, and Gemini Web session cookies. All backends are disabled by default.
+- **Available Models Catalog**: Displays available models from currently enabled backends in an API-key-styled dense table with clickable Model IDs (click to copy), context window sizes, designated capability emojis (`🧠` Reasoning, `🛠️` Tools, `👁️` Multimodal, `🔢` Embeddings with a capability legend), and provider availability checkmarks.
 - **Quota Monitoring & Key Management**: Visual gauges for quota usage and full UI for generating, inspecting, revoking bridge API keys, and toggling enforcement.
-- **Toast Feedback System**: Non-blocking animated pill toasts for clipboard copying, token refresh events, and status updates without disruptive browser alerts.
+- **Toast Feedback System**: Non-blocking animated pill toasts for clipboard copying, token refresh events, and status updates.
+- **Consistent Roundness & Styling**: All UI elements (cards, buttons, inputs, tables, badges, toast notifications, code snippets, dialogs) must strictly follow consistent roundness using PicoCSS baseline variables (`var(--pico-border-radius)`). Avoid hardcoded border-radius values (e.g. `9999px`, `8px`, `0.5rem`, `0.25rem`).
 
 ---
 

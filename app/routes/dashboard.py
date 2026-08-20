@@ -203,6 +203,41 @@ async def get_quotas():
             content={"error": str(e), "groups": []}
         )
 
+@router.get("/api/models")
+async def get_dashboard_models():
+    """
+    Get aggregated list of models available from currently enabled backends,
+    ranked by redundancy (descending) and newness (descending).
+    """
+    try:
+        if hasattr(client, "fetch_available_models"):
+            raw = await client.fetch_available_models()
+            models_dict = raw.get("models", {})
+        else:
+            models_dict = {}
+        
+        result = []
+        for model_id, info in models_dict.items():
+            result.append({
+                "id": model_id,
+                "displayName": info.get("displayName", model_id),
+                "maxTokens": info.get("maxTokens", 1048576),
+                "supportsThinking": info.get("supportsThinking", False),
+                "supportsTools": info.get("supportsTools", True),
+                "supportsVision": info.get("supportsVision", True),
+                "isEmbedding": info.get("isEmbedding", False),
+                "capabilities": info.get("capabilities", []),
+                "providers": info.get("providers", []),
+                "provider_count": info.get("provider_count", len(info.get("providers", [])))
+            })
+        return {"status": "ok", "models": result, "total": len(result)}
+    except Exception as e:
+        logger.warning(f"Failed to fetch models for dashboard: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "error": str(e), "models": [], "total": 0}
+        )
+
 @router.get("/health")
 async def health_check():
     """

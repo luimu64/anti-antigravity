@@ -60,7 +60,7 @@
       background: var(--pico-card-background-color, #1b232c);
       color: var(--pico-color, #e2e8f0);
       border: 1px solid var(--pico-border-color, #334155);
-      border-radius: 9999px;
+      border-radius: var(--pico-border-radius);
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
       font-size: 0.85rem;
       font-weight: 500;
@@ -91,21 +91,20 @@
     /* Header Responsive Layout */
     .header-nav {
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
+      gap: 1rem;
     }
     @media (max-width: 767px) {
-      .header-brand {
-        order: 1;
-        margin: 0;
+      .header-nav {
+        flex-direction: column;
+        align-items: stretch;
       }
-      .header-status {
-        order: 2;
+      .header-brand {
         margin: 0;
+        text-align: center;
       }
       .header-endpoint {
-        order: 3;
         width: 100%;
         margin: 0.25rem 0 0 0;
         padding: 0;
@@ -124,17 +123,6 @@
         justify-content: center;
       }
     }
-    @media (min-width: 768px) {
-      .header-brand {
-        order: 1;
-      }
-      .header-endpoint {
-        order: 2;
-      }
-      .header-status {
-        order: 3;
-      }
-    }
 
     /* Header Endpoint Button */
     .header-endpoint-btn {
@@ -143,7 +131,7 @@
       gap: 0.65rem;
       padding: 0.65rem 1.25rem;
       margin: 0;
-      border-radius: var(--pico-border-radius, 0.5rem);
+      border-radius: var(--pico-border-radius);
       cursor: pointer;
       background: var(--pico-card-background-color, rgba(255, 255, 255, 0.05));
       border: 1px solid var(--card-subtle-border);
@@ -181,6 +169,7 @@
       color: #ffffff !important;
       margin: 0;
       cursor: pointer;
+      border-radius: var(--pico-border-radius);
       transition: background-color 0.15s ease, border-color 0.15s ease;
       display: inline-flex;
       align-items: center;
@@ -204,23 +193,7 @@
       flex: 1 1 0;
       margin: 0;
       height: 2.75rem;
-    }
-
-    /* Auth Table Base */
-    .auth-table {
-      width: 100%;
-      margin-bottom: 0.5rem;
-      border-collapse: collapse;
-    }
-    .auth-table th {
-      width: 28%;
-      min-width: 6.5rem;
-      white-space: nowrap;
-      vertical-align: middle;
-    }
-    .auth-table td {
-      vertical-align: middle;
-      word-break: break-all;
+      border-radius: var(--pico-border-radius);
     }
 
     /* Dense Keys Table Styling for Desktop */
@@ -296,7 +269,7 @@
       border-color: #dc2626 !important;
       color: #ffffff !important;
       cursor: pointer;
-      border-radius: var(--pico-border-radius, 0.25rem);
+      border-radius: var(--pico-border-radius);
       transition: background-color 0.15s ease, border-color 0.15s ease;
       display: inline-flex;
       align-items: center;
@@ -309,93 +282,7 @@
       color: #ffffff !important;
     }
 
-    /* Mobile Responsive Styles (< 768px) */
-    @media (max-width: 767px) {
-      .hide-desktop {
-        display: inline !important;
-      }
-
-      /* Full Width Toasts on Mobile */
-      #toast-container {
-        top: 0.75rem;
-        left: 0.75rem;
-        right: 0.75rem;
-        transform: none;
-        width: auto;
-        align-items: stretch;
-      }
-      .toast {
-        width: 100%;
-        display: flex;
-        justify-content: flex-start;
-        box-sizing: border-box;
-        border-radius: var(--pico-border-radius, 0.5rem);
-        padding: 0.65rem 1rem;
-      }
-
-      /* Auth Items as Cards on Mobile */
-      #auth-card figure {
-        overflow-x: visible !important;
-        margin-bottom: 0.85rem !important;
-      }
-      .auth-table,
-      .auth-table tbody {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 0.65rem !important;
-        width: 100% !important;
-      }
-      .auth-table tr {
-        display: flex !important;
-        flex-direction: column !important;
-        width: 100% !important;
-        padding: 0.75rem 1rem !important;
-        background-color: var(--pico-card-background-color) !important;
-        border: 1px solid var(--card-subtle-border) !important;
-        border-radius: var(--pico-border-radius) !important;
-        box-shadow: var(--pico-card-box-shadow) !important;
-        gap: 0.25rem !important;
-        box-sizing: border-box !important;
-      }
-      .auth-table th {
-        width: 100% !important;
-        min-width: 0 !important;
-        font-size: 0.72rem !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.06em !important;
-        opacity: 0.7 !important;
-        padding: 0 !important;
-        border: none !important;
-        font-weight: 600 !important;
-        background: transparent !important;
-        background-color: transparent !important;
-      }
-      .auth-table td {
-        width: 100% !important;
-        padding: 0 !important;
-        border: none !important;
-        font-size: 0.95rem !important;
-        font-weight: 500 !important;
-        word-break: break-all !important;
-        background: transparent !important;
-        background-color: transparent !important;
-      }
-      .auth-table small,
-      .auth-table span {
-        background: transparent !important;
-        background-color: transparent !important;
-      }
-      .auth-action-row {
-        flex-direction: column !important;
-        gap: 0.6rem !important;
-        width: 100%;
-      }
-      .auth-action-row button {
-        width: 100% !important;
-        flex: 1 1 auto;
-      }
-
-      /* Provider Cards Grid */
+    /* Provider Cards Grid */
     .provider-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -428,6 +315,186 @@
     .badge-unconfigured {
       color: #e74c3c;
     }
+
+    /* Dense Models Table Styling for Desktop (matching keys-table) */
+    .models-table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      margin: 0;
+    }
+    .models-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0.5rem;
+    }
+    .models-table tr {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid var(--pico-border-color, #1e293b);
+      gap: 0.75rem;
+    }
+    .models-table thead tr {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      opacity: 0.75;
+      padding: 0.25rem 0.5rem;
+    }
+    .models-table th,
+    .models-table td {
+      padding: 0;
+      border: none;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
+    }
+    .models-col-name {
+      flex: 2.2 1 11rem;
+      min-width: 9rem;
+    }
+    .models-col-id {
+      flex: 2.5 1 12rem;
+      min-width: 10rem;
+    }
+    .models-col-context {
+      flex: 1.3 1 6rem;
+      min-width: 5rem;
+      justify-content: flex-start;
+    }
+    .models-col-caps {
+      flex: 1.4 1 6.5rem;
+      min-width: 5.5rem;
+      justify-content: flex-start;
+      letter-spacing: 0.12em;
+      font-size: 0.95rem;
+    }
+    .models-col-agy {
+      flex: 1 1 4.5rem;
+      min-width: 3.5rem;
+      justify-content: center;
+      text-align: center;
+    }
+    .models-col-api {
+      flex: 1 1 4.5rem;
+      min-width: 3.5rem;
+      justify-content: center;
+      text-align: center;
+    }
+    .models-col-web {
+      flex: 1 1 4.5rem;
+      min-width: 3.5rem;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .model-id-clickable {
+      font-size: 0.82rem;
+      padding: 0.2rem 0.55rem;
+      background: var(--pico-code-background-color, rgba(0, 0, 0, 0.25));
+      border: 1px solid var(--pico-border-color, rgba(255, 255, 255, 0.15));
+      border-radius: var(--pico-border-radius);
+      font-family: monospace;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.15s ease;
+      color: var(--pico-primary, #2ecc71);
+      user-select: all;
+    }
+    .model-id-clickable:hover {
+      background: rgba(46, 204, 113, 0.15);
+      border-color: var(--pico-primary, #2ecc71);
+      transform: translateY(-1px);
+    }
+    .check-yes {
+      color: #2ecc71;
+      font-weight: bold;
+      font-size: 1.15rem;
+      line-height: 1;
+    }
+    .check-no {
+      color: var(--pico-muted-color, #64748b);
+      font-size: 1.1rem;
+      opacity: 0.35;
+      line-height: 1;
+    }
+
+    .models-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+      align-items: center;
+      margin-top: 0.75rem;
+      padding: 0.55rem 0.85rem;
+      background: var(--pico-card-background-color);
+      border: 1px solid var(--card-subtle-border);
+      border-radius: var(--pico-border-radius);
+      font-size: 0.78rem;
+    }
+
+    .badge-redundancy {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: bold;
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--pico-border-radius);
+      white-space: nowrap;
+    }
+    .badge-redundancy-high {
+      background: rgba(46, 204, 113, 0.15);
+      color: #2ecc71;
+      border: 1px solid rgba(46, 204, 113, 0.4);
+    }
+    .badge-redundancy-med {
+      background: rgba(52, 152, 219, 0.15);
+      color: #3498db;
+      border: 1px solid rgba(52, 152, 219, 0.4);
+    }
+    .badge-redundancy-low {
+      background: rgba(149, 165, 166, 0.15);
+      color: #95a5a6;
+      border: 1px solid rgba(149, 165, 166, 0.3);
+    }
+
+    /* Mobile Responsive Styles (< 768px) */
+    @media (max-width: 767px) {
+      .hide-desktop {
+        display: inline !important;
+      }
+
+      /* Full Width Toasts on Mobile */
+      #toast-container {
+        top: 0.75rem;
+        left: 0.75rem;
+        right: 0.75rem;
+        transform: none;
+        width: auto;
+        align-items: stretch;
+      }
+      .toast {
+        width: 100%;
+        display: flex;
+        justify-content: flex-start;
+        box-sizing: border-box;
+        border-radius: var(--pico-border-radius);
+        padding: 0.65rem 1rem;
+      }
+
+      .auth-action-row {
+        flex-direction: column !important;
+        gap: 0.6rem !important;
+        width: 100%;
+      }
+      .auth-action-row button {
+        width: 100% !important;
+        flex: 1 1 auto;
+      }
+
+      /* Mobile Keys Table */
       .keys-table-wrapper {
         overflow-x: visible;
       }
@@ -507,10 +574,91 @@
         opacity: 0.8;
         justify-content: flex-end;
       }
+
+      /* Mobile Models Table */
+      .models-table-wrapper {
+        overflow-x: visible;
+      }
+      .models-table thead {
+        display: none;
+      }
+      .models-table,
+      .models-table tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        width: 100%;
+      }
+      .models-table tr {
+        display: grid !important;
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+          "name caps"
+          "id id"
+          "context context"
+          "providers providers";
+        gap: 0.4rem 0.6rem;
+        padding: 0.75rem 1rem;
+        background-color: var(--pico-card-background-color) !important;
+        border: 1px solid var(--card-subtle-border) !important;
+        border-radius: var(--pico-border-radius) !important;
+        box-shadow: var(--pico-card-box-shadow) !important;
+        align-items: center;
+      }
+      .models-table th,
+      .models-table td,
+      .models-table small,
+      .models-table span {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      .models-col-name {
+        grid-area: name;
+        min-width: 0;
+        font-size: 0.95rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .models-col-caps {
+        grid-area: caps;
+        min-width: 0;
+        font-size: 0.9rem;
+        justify-content: flex-end;
+      }
+      .models-col-id {
+        grid-area: id;
+        min-width: 0;
+        width: 100%;
+      }
+      .models-col-id .model-id-clickable {
+        width: 100%;
+        box-sizing: border-box;
+        justify-content: space-between;
+      }
+      .models-col-context {
+        grid-area: context;
+        min-width: 0;
+        font-size: 0.78rem;
+      }
+      .models-col-agy,
+      .models-col-api,
+      .models-col-web {
+        display: none !important;
+      }
+      .models-mobile-providers {
+        grid-area: providers;
+        display: flex !important;
+        gap: 0.75rem;
+        align-items: center;
+        font-size: 0.78rem;
+        padding-top: 0.3rem;
+        border-top: 1px dashed var(--pico-border-color, rgba(255, 255, 255, 0.1));
+      }
     }
 
     @media (min-width: 768px) {
-      .hide-desktop {
+      .hide-desktop,
+      .models-mobile-providers {
         display: none !important;
       }
     }
@@ -523,6 +671,7 @@
         width: calc(100% - 2rem);
         max-width: 100%;
         box-sizing: border-box;
+        border-radius: var(--pico-border-radius) !important;
       }
       form[role="group"] {
         flex-direction: column !important;
@@ -531,7 +680,7 @@
       form[role="group"] input,
       form[role="group"] button {
         width: 100% !important;
-        border-radius: var(--pico-border-radius, 0.25rem) !important;
+        border-radius: var(--pico-border-radius) !important;
       }
     }
 
@@ -553,53 +702,42 @@
     }
     form[role="group"] button,
     [role="group"] button {
+      padding: 0 1.5rem !important;
       white-space: nowrap !important;
-      flex-shrink: 0 !important;
-      padding: 0 1.25rem !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
+      flex-shrink: 0;
     }
   </style>
 </head>
-<body>
+<body class="container" style="padding-top: 2rem; padding-bottom: 4rem;">
 
   <!-- Toast Notification Container -->
-  <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+  <div id="toast-container" aria-live="polite"></div>
 
-  <!-- Navigation Header -->
-  <header class="container">
+  <!-- Header -->
+  <header style="margin-bottom: 2rem;">
     <nav class="header-nav">
       <ul class="header-brand">
-        <li><strong>Antigravity API</strong></li>
+        <li><strong>🚀 Antigravity API Bridge</strong></li>
       </ul>
       <ul class="header-endpoint">
         <li>
-          <button type="button" class="header-endpoint-btn" onclick="copyText('{{ base_url }}', 'Base URL copied to clipboard!')" title="Click to copy OpenAI Base URL">
-            <code>{{ base_url }}</code>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          <button type="button" class="header-endpoint-btn" onclick="copyBaseUrl()" title="Click to copy base URL">
+            <code>{{ base_url or 'http://localhost:8000/v1' }}</code>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
             </svg>
           </button>
-        </li>
-      </ul>
-      <ul class="header-status">
-        <li>
-          {% if auth_status.authenticated %}
-            <ins>● Google Connected</ins>
-          {% else %}
-            <del>● Not Logged In</del>
-          {% endif %}
         </li>
       </ul>
     </nav>
   </header>
 
-  <!-- Main Container -->
-  <main class="container">
-
-    <!-- 0. Multi-Backend Routing & Providers (Full Width) -->
+  <main>
+    <!-- Multi-Backend Management Widget (Top) -->
     <article id="backends-card">
       <header>
         <nav>
@@ -673,7 +811,7 @@
           </form>
         </article>
 
-        <!-- 3. Antigravity OAuth Backend Card -->
+        <!-- 3. Antigravity OAuth Backend Card (Combined) -->
         <article class="provider-card" id="card-antigravity">
           <header>
             <nav>
@@ -689,13 +827,67 @@
             </nav>
           </header>
           <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-antigravity">Loading...</span></small></p>
-          <p style="margin-bottom: 0.5rem;"><small>Account: <strong id="antigravity-account-display">{{ auth_status.user_email or 'Not logged in' }}</strong></small></p>
-          <a href="#auth-card" role="button" class="secondary outline" style="width: 100%; text-align: center; margin-top: 0.5rem;">Manage Google OAuth</a>
+          <div style="font-size: 0.82rem; margin-bottom: 0.6rem; display: flex; flex-direction: column; gap: 0.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="opacity: 0.75;">Account:</span>
+              <strong id="antigravity-account-display" style="word-break: break-all; font-size: 0.82rem;">{{ auth_status.user_email or 'Not logged in' }}</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="opacity: 0.75;">Project ID:</span>
+              <span><small>{{ auth_status.project_id or 'Auto' }}</small></span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="opacity: 0.75;">Tier:</span>
+              <span><small>{{ auth_status.tier_name or 'Antigravity' }}</small></span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="opacity: 0.75;">Token Expires:</span>
+              <span id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></span>
+            </div>
+          </div>
+
+          {% if auth_status.authenticated %}
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+              <button type="button" onclick="refreshToken(this)" class="secondary outline refresh-token-btn" style="flex: 1; margin: 0; padding: 0.35rem 0.5rem; font-size: 0.78rem;">Refresh Token</button>
+              <button type="button" onclick="logout()" class="btn-logout" style="flex: 1; margin: 0; padding: 0.35rem 0.5rem; font-size: 0.78rem;">Logout</button>
+            </div>
+          {% else %}
+            <a href="/auth/login" role="button" style="width: 100%; text-align: center; margin-top: 0.5rem; padding: 0.45rem 0.75rem; font-size: 0.85rem;">Sign in with Google</a>
+          {% endif %}
         </article>
       </div>
     </article>
 
-    <!-- 1. Usage & Quotas Widget (Full Width) -->
+    <!-- 1. Available Models Catalog (Full Width) -->
+    <article id="models-card">
+      <header>
+        <nav>
+          <ul>
+            <li><strong>✨ Available Models</strong> <span id="models-count-badge" class="badge-redundancy badge-redundancy-med" style="margin-left: 0.5rem; display: none;"></span></li>
+          </ul>
+          <ul>
+            <li>
+              <button type="button" onclick="loadModels()" class="secondary outline" style="margin: 0; padding: 0.25rem 0.75rem; font-size: 0.8rem;" title="Refresh models list">Refresh Models</button>
+            </li>
+          </ul>
+        </nav>
+      </header>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+        <div style="flex: 1; min-width: 260px;">
+          <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" style="margin: 0;">
+        </div>
+        <div>
+          <small style="opacity: 0.8;">Click any <strong>Model ID</strong> to copy it to clipboard.</small>
+        </div>
+      </div>
+
+      <div id="models-container">
+        <p><small aria-busy="true">Loading available models...</small></p>
+      </div>
+    </article>
+
+    <!-- 2. Usage & Quotas Widget (Full Width) -->
     <article id="quotas-card">
       <header>
         <nav>
@@ -731,119 +923,30 @@
       
       <form onsubmit="event.preventDefault(); createNewKey();" role="group">
         <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)">
-        <button type="submit">Generate</button>
+        <button type="submit">Create Key</button>
       </form>
 
-      <!-- New Key Modal Dialog -->
-      <dialog id="new-key-dialog">
-        <article>
-          <header>
-            <button aria-label="Close" rel="prev" onclick="document.getElementById('new-key-dialog').removeAttribute('open')"></button>
-            <strong>New API Key Generated</strong>
-          </header>
-          <p>Save your key now! It will not be displayed in full again:</p>
-          <form onsubmit="event.preventDefault(); copyText(document.getElementById('raw-key-value').value, 'API Key copied to clipboard!');" role="group">
-            <input type="text" id="raw-key-value" readonly>
-            <button type="submit">Copy</button>
-          </form>
-          <footer>
-            <button type="button" class="secondary" onclick="document.getElementById('new-key-dialog').removeAttribute('open')">Done</button>
-          </footer>
-        </article>
-      </dialog>
-
-      <!-- Confirmation Modal Dialog -->
-      <dialog id="confirm-dialog">
-        <article>
-          <header>
-            <button aria-label="Close" rel="prev" onclick="closeConfirmDialog()"></button>
-            <strong id="confirm-dialog-title">Confirm Action</strong>
-          </header>
-          <p id="confirm-dialog-message">Are you sure you want to proceed?</p>
-          <footer style="display: flex; justify-content: flex-end; gap: 0.75rem;">
-            <button type="button" class="secondary outline" onclick="closeConfirmDialog()" style="width: auto; margin: 0; padding: 0.5rem 1.25rem;">Cancel</button>
-            <button type="button" id="confirm-dialog-btn" class="contrast" style="width: auto; margin: 0; padding: 0.5rem 1.25rem;">Confirm</button>
-          </footer>
-        </article>
-      </dialog>
-
-      <!-- Keys table container -->
-      <div id="keys-table-container">
+      <div id="keys-container">
         <p><small aria-busy="true">Loading API keys...</small></p>
       </div>
-    </article>
-
-    <!-- 3. Auth Status Widget (Full Width at Bottom) -->
-    <article id="auth-card">
-      <header>
-        <nav>
-          <ul><li><strong>Antigravity Backend</strong></li></ul>
-          <ul><li><small>OAuth 2.0</small></li></ul>
-        </nav>
-      </header>
-
-      <figure style="margin-bottom: 1rem; overflow-x: auto;">
-        <table class="auth-table">
-          <tbody>
-            <tr>
-              <th scope="row">Account</th>
-              <td><small>{{ auth_status.user_email or 'None' }}</small></td>
-            </tr>
-            <tr>
-              <th scope="row">Project ID</th>
-              <td><small>{{ auth_status.project_id or 'Auto' }}</small></td>
-            </tr>
-            <tr>
-              <th scope="row">Tier</th>
-              <td><small>{{ auth_status.tier_name or 'Antigravity' }}</small></td>
-            </tr>
-            <tr>
-              <th scope="row">Token Expires</th>
-              <td id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></td>
-            </tr>
-          </tbody>
-        </table>
-      </figure>
-
-      <footer>
-        {% if auth_status.authenticated %}
-          <div class="auth-action-row">
-            <button type="button" onclick="refreshToken(this)" class="secondary outline refresh-token-btn">Refresh Token</button>
-            <button type="button" onclick="logout()" class="btn-logout">Logout</button>
-          </div>
-        {% else %}
-          <a href="/auth/login" role="button" style="width: 100%; text-align: center; margin: 0;">Sign in with Google</a>
-          <details style="margin-top: 0.75rem; margin-bottom: 0;">
-            <summary role="button" class="secondary outline">Manual / Remote Auth</summary>
-            <form onsubmit="event.preventDefault(); submitManualCode();" role="group" style="margin-top: 0.5rem; margin-bottom: 0;">
-              <input type="text" id="manual-code-input" placeholder="Paste Callback URL, Code or Token">
-              <button type="submit">Submit</button>
-            </form>
-          </details>
-        {% endif %}
-      </footer>
     </article>
 
   </main>
 
   <script>
-    // Toast helper
+    // Utility: Toast feedback system
     function showToast(message, type = 'success') {
       const container = document.getElementById('toast-container');
       if (!container) return;
 
       const toast = document.createElement('div');
       toast.className = `toast ${type === 'error' ? 'toast-error' : ''}`;
-      const iconHtml = type === 'error'
-        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`
-        : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      
+      const icon = type === 'error' 
+        ? '<span class="toast-icon toast-icon-error"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>'
+        : '<span class="toast-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
 
-      toast.innerHTML = `
-        <span class="toast-icon ${type === 'error' ? 'toast-icon-error' : ''}">
-          ${iconHtml}
-        </span>
-        <span>${escapeHtml(message)}</span>
-      `;
+      toast.innerHTML = `${icon}<span>${escapeHtml(message)}</span>`;
       container.appendChild(toast);
 
       requestAnimationFrame(() => {
@@ -853,55 +956,28 @@
       setTimeout(() => {
         toast.classList.remove('show');
         toast.classList.add('hide');
-        setTimeout(() => {
-          toast.remove();
-        }, 250);
-      }, 2400);
+        setTimeout(() => toast.remove(), 250);
+      }, 3000);
     }
 
-    // Copy helper
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function copyBaseUrl() {
+      const url = `http://${window.location.host}/v1`;
+      copyText(url, 'Base URL copied to clipboard!');
+    }
+
     function copyText(text, message = 'Copied to clipboard!') {
       navigator.clipboard.writeText(text);
       showToast(message);
-    }
-
-    // Submit manual code / token
-    async function submitManualCode() {
-      const input = document.getElementById('manual-code-input').value.trim();
-      if (!input) return;
-
-      try {
-        if (input.startsWith('1//') || input.startsWith('ya29.')) {
-          // Direct token
-          const res = await fetch('/auth/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: input })
-          });
-          if (res.ok) {
-            showToast('Connected successfully via token!');
-            setTimeout(() => window.location.reload(), 1000);
-          } else {
-            showToast('Failed to set token', 'error');
-          }
-        } else {
-          // Authorization code or URL
-          const res = await fetch('/auth/exchange', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code_or_url: input })
-          });
-          const data = await res.json();
-          if (res.ok) {
-            showToast('Authentication successful!');
-            setTimeout(() => window.location.reload(), 1000);
-          } else {
-            showToast('Authentication failed: ' + (data.detail || JSON.stringify(data)), 'error');
-          }
-        }
-      } catch (err) {
-        showToast('Error: ' + err.message, 'error');
-      }
     }
 
     // Refresh token
@@ -912,12 +988,9 @@
         const data = await res.json();
         if (res.ok) {
           showToast('Token refreshed successfully!');
-          const timerEl = document.getElementById('token-timer');
-          if (timerEl && data.expires_in) {
-            timerEl.innerHTML = `<small>${data.expires_in}s</small>`;
-          }
+          setTimeout(() => window.location.reload(), 1000);
         } else {
-          showToast('Failed to refresh token: ' + (data.detail || JSON.stringify(data)), 'error');
+          showToast('Refresh failed: ' + (data.detail || 'Unknown error'), 'error');
         }
       } catch (err) {
         showToast('Error: ' + err.message, 'error');
@@ -926,57 +999,95 @@
       }
     }
 
-    // Custom Confirmation Dialog Helper
-    function openConfirmDialog({ title, message, confirmText, confirmClass, onConfirm }) {
-      document.getElementById('confirm-dialog-title').textContent = title || 'Confirm Action';
-      document.getElementById('confirm-dialog-message').textContent = message || 'Are you sure?';
-      const btn = document.getElementById('confirm-dialog-btn');
-      btn.textContent = confirmText || 'Confirm';
-      btn.className = confirmClass || 'contrast';
-      
-      const actionToRun = onConfirm;
-      btn.onclick = async () => {
-        closeConfirmDialog();
-        if (actionToRun) {
-          try {
-            await actionToRun();
-          } catch (e) {
-            console.error('Confirmation action error:', e);
-          }
-        }
-      };
-
-      document.getElementById('confirm-dialog').setAttribute('open', 'true');
-    }
-
-    function closeConfirmDialog() {
-      document.getElementById('confirm-dialog').removeAttribute('open');
-    }
-
     // Logout
-    function logout() {
-      openConfirmDialog({
-        title: 'Confirm Logout',
-        message: 'Are you sure you want to log out of Google Antigravity? Your local credentials will be cleared.',
-        confirmText: 'Logout',
-        confirmClass: 'btn-logout',
-        onConfirm: async () => {
-          await fetch('/auth/logout', { method: 'POST' });
-          window.location.reload();
+    async function logout() {
+      if (!confirm('Are you sure you want to disconnect your Google Account?')) return;
+      try {
+        const res = await fetch('/auth/logout', { method: 'POST' });
+        if (res.ok) {
+          showToast('Logged out successfully');
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          showToast('Logout failed', 'error');
         }
-      });
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
     }
 
-    // Load API Keys
+    // Toggle API Key Enforcement
+    async function toggleEnforcement(enabled) {
+      try {
+        const res = await fetch('/api/keys/enforce', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enforce: enabled })
+        });
+        if (res.ok) {
+          showToast(`API key enforcement ${enabled ? 'enabled' : 'disabled'}`);
+        } else {
+          showToast('Failed to update enforcement setting', 'error');
+          document.getElementById('enforce-toggle').checked = !enabled;
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+        document.getElementById('enforce-toggle').checked = !enabled;
+      }
+    }
+
+    // Create New Key
+    async function createNewKey() {
+      const nameInput = document.getElementById('new-key-name');
+      const name = nameInput.value.trim();
+      if (!name) return;
+
+      try {
+        const res = await fetch('/api/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          nameInput.value = '';
+          showToast('API Key generated!');
+          loadKeys();
+          showKeyModal(data.key, data.name);
+        } else {
+          showToast('Failed to create key', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    // Revoke Key
+    async function revokeKey(keyId, name) {
+      if (!confirm(`Revoke key "${name}"? Any client using this key will immediately fail.`)) return;
+
+      try {
+        const res = await fetch(`/api/keys/${keyId}`, { method: 'DELETE' });
+        if (res.ok) {
+          showToast('Key revoked');
+          loadKeys();
+        } else {
+          showToast('Failed to revoke key', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    // Load Keys
     async function loadKeys() {
-      const container = document.getElementById('keys-table-container');
+      const container = document.getElementById('keys-container');
       try {
         const res = await fetch('/api/keys');
         const data = await res.json();
         const keys = data.keys || [];
 
-        if (!keys.length) {
-          container.innerHTML = '<p><small>No API keys generated yet. Click "Generate" above.</small></p>';
+        if (keys.length === 0) {
+          container.innerHTML = '<p><small>No API keys created yet. Create one above to secure your endpoint.</small></p>';
           return;
         }
 
@@ -986,7 +1097,7 @@
               <thead>
                 <tr>
                   <th class="keys-col-name">Name</th>
-                  <th class="keys-col-preview">Key Preview</th>
+                  <th class="keys-col-preview">Key</th>
                   <th class="keys-col-created">Created</th>
                   <th class="keys-col-lastused">Last Used</th>
                   <th class="keys-col-action">Action</th>
@@ -996,16 +1107,19 @@
         `;
 
         keys.forEach(k => {
-          const createdDate = new Date(k.created_at * 1000).toLocaleDateString();
-          const lastUsed = k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Never';
+          const created = new Date(k.created_at * 1000).toLocaleDateString();
+          const lastUsed = k.last_used_at 
+            ? new Date(k.last_used_at * 1000).toLocaleDateString()
+            : 'Never';
+
           html += `
             <tr>
               <td class="keys-col-name"><strong>${escapeHtml(k.name)}</strong></td>
               <td class="keys-col-preview"><code>${escapeHtml(k.key_preview)}</code></td>
-              <td class="keys-col-created"><small><span class="hide-desktop">Created: </span>${createdDate}</small></td>
+              <td class="keys-col-created"><small><span class="hide-desktop">Created: </span>${created}</small></td>
               <td class="keys-col-lastused"><small><span class="hide-desktop">Used: </span>${lastUsed}</small></td>
               <td class="keys-col-action">
-                <button type="button" onclick="revokeKey('${k.id}')" class="btn-revoke">Revoke</button>
+                <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn-revoke" title="Revoke key">Revoke</button>
               </td>
             </tr>
           `;
@@ -1013,116 +1127,87 @@
 
         html += '</tbody></table></div>';
         container.innerHTML = html;
-
       } catch (err) {
-        container.innerHTML = '<p><del>Failed to load keys</del></p>';
+        container.innerHTML = '<p><del>Failed to load keys.</del></p>';
       }
     }
 
-    // Create New Key
-    async function createNewKey() {
-      const nameInput = document.getElementById('new-key-name');
-      const name = nameInput.value.trim() || 'New Key';
-
-      try {
-        const res = await fetch('/api/keys', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          nameInput.value = '';
-          const rawKey = data.key.key;
-          
-          document.getElementById('raw-key-value').value = rawKey;
-          document.getElementById('new-key-dialog').setAttribute('open', 'true');
-          showToast('API key generated successfully!');
-          loadKeys();
-        } else {
-          showToast('Failed to create key: ' + (data.detail || JSON.stringify(data)), 'error');
-        }
-      } catch (err) {
-        showToast('Error: ' + err.message, 'error');
+    // Show Created Key Modal Dialog
+    function showKeyModal(rawKey, name) {
+      let modal = document.getElementById('key-modal');
+      if (!modal) {
+        modal = document.createElement('dialog');
+        modal.id = 'key-modal';
+        document.body.appendChild(modal);
       }
+
+      modal.innerHTML = `
+        <article>
+          <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('key-modal').close()"></button>
+            <h3>Save Your API Key</h3>
+          </header>
+          <p>Key for <strong>${escapeHtml(name)}</strong> created. Copy it now; you won't be able to see the full key again!</p>
+          <div role="group">
+            <input type="text" id="raw-key-input" value="${escapeHtml(rawKey)}" readonly style="font-family: monospace;">
+            <button type="button" onclick="copyText('${escapeHtml(rawKey)}', 'Key copied!')">Copy</button>
+          </div>
+          <footer>
+            <button type="button" class="secondary" onclick="document.getElementById('key-modal').close()">Done</button>
+          </footer>
+        </article>
+      `;
+
+      modal.showModal();
     }
 
-    // Revoke Key
-    function revokeKey(keyId) {
-      openConfirmDialog({
-        title: 'Revoke API Key',
-        message: 'Are you sure you want to revoke this API key? Any client using it will immediately be denied.',
-        confirmText: 'Revoke',
-        confirmClass: 'btn-logout',
-        onConfirm: async () => {
-          try {
-            const res = await fetch('/api/keys/' + keyId, { method: 'DELETE' });
-            if (res.ok) {
-              showToast('API key revoked.');
-              loadKeys();
-            } else {
-              showToast('Failed to revoke key', 'error');
-            }
-          } catch (err) {
-            showToast('Error: ' + err.message, 'error');
-          }
-        }
-      });
-    }
-
-    // Toggle Enforcement
-    async function toggleEnforcement(enforce) {
-      try {
-        const res = await fetch('/api/keys/enforcement', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enforce: enforce })
-        });
-        if (res.ok) {
-          showToast(enforce ? 'API key enforcement enabled' : 'API key enforcement disabled');
-        } else {
-          showToast('Failed to update enforcement', 'error');
-        }
-      } catch (err) {
-        showToast('Error updating enforcement: ' + err.message, 'error');
-      }
-    }
-
-    // Quotas Loader
+    // Load Quotas
     async function loadQuotas() {
       const container = document.getElementById('quotas-container');
       try {
         const res = await fetch('/api/quotas');
         const data = await res.json();
-        const groups = data.groups || [];
-        if (!groups.length) {
-          container.innerHTML = '<p><small>No quota data available.</small></p>';
+        
+        if (!res.ok) {
+          container.innerHTML = `<p><small style="color: #e74c3c;">${escapeHtml(data.error || 'Failed to load quotas')}</small></p>`;
           return;
         }
-        let html = '';
+
+        const groups = data.groups || [];
+        if (groups.length === 0) {
+          container.innerHTML = '<p><small>No active quota buckets reported by backend.</small></p>';
+          return;
+        }
+
+        let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">';
         groups.forEach(g => {
-          (g.buckets || []).forEach(b => {
-            const pct = Math.round((b.remainingFraction || 0) * 100);
-            html += `
-              <article>
-                <nav>
-                  <ul><li><strong>${escapeHtml(b.displayName || b.bucketId)}</strong></li></ul>
-                  <ul><li><small>${pct}% remaining</small></li></ul>
-                </nav>
-                <progress value="${pct}" max="100"></progress>
-                <small>${escapeHtml(b.description || '')}</small>
-              </article>
-            `;
-          });
+          const frac = g.fraction_used != null ? g.fraction_used : 0;
+          const pct = Math.round(frac * 100);
+          const resetSecs = g.reset_time_seconds ? `${Math.round(g.reset_time_seconds)}s` : 'N/A';
+          
+          let progressClass = '';
+          if (pct >= 90) progressClass = 'style="--pico-progress-color: #e74c3c;"';
+          else if (pct >= 70) progressClass = 'style="--pico-progress-color: #f39c12;"';
+
+          html += `
+            <div style="padding: 0.75rem; background: var(--pico-card-background-color); border: 1px solid var(--card-subtle-border); border-radius: var(--pico-border-radius);">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                <strong>${escapeHtml(g.display_name)}</strong>
+                <small>${pct}% used</small>
+              </div>
+              <progress value="${pct}" max="100" ${progressClass} style="margin-bottom: 0.4rem;"></progress>
+              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; opacity: 0.8;">
+                <span>Reset: ${resetSecs}</span>
+                <span>${escapeHtml(g.model_id || '')}</span>
+              </div>
+            </div>
+          `;
         });
+        html += '</div>';
         container.innerHTML = html;
       } catch (err) {
-        container.innerHTML = '<p><del>Failed to load quotas</del></p>';
+        container.innerHTML = '<p><del>Failed to load quotas.</del></p>';
       }
-    }
-
-    function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // Multi-Backend Management
@@ -1130,84 +1215,51 @@
       try {
         const res = await fetch('/api/backends');
         const data = await res.json();
-        const strategy = data.routing_strategy || 'free_first';
         const backends = data.backends || {};
 
-        // Update Strategy selector
+        // 1. Routing Strategy
         const stratSelect = document.getElementById('routing-strategy-select');
-        if (stratSelect) stratSelect.value = strategy;
+        if (stratSelect && data.routing_strategy) {
+          stratSelect.value = data.routing_strategy;
+        }
 
-        // 1. Gemini API
+        // 2. Gemini API Backend
         const gApi = backends.gemini_api || {};
-        const toggleGApi = document.getElementById('toggle-gemini-api');
-        const statusGApi = document.getElementById('status-gemini-api');
-        if (toggleGApi) toggleGApi.checked = !!gApi.enabled;
-        if (statusGApi) {
-          if (!gApi.enabled) {
-            statusGApi.innerHTML = '<span class="badge-disabled">Disabled</span>';
-          } else if (gApi.cooldown_remaining > 0) {
-            statusGApi.innerHTML = `<span class="badge-cooldown">Cooldown (${gApi.cooldown_remaining}s)</span>`;
-          } else if (gApi.configured) {
-            statusGApi.innerHTML = `<span class="badge-active">Active (${gApi.masked_key || 'Configured'})</span>`;
-          } else {
-            statusGApi.innerHTML = '<span class="badge-unconfigured">No API Key</span>';
-          }
+        const toggleApi = document.getElementById('toggle-gemini-api');
+        if (toggleApi) toggleApi.checked = !!gApi.enabled;
+        const statusApi = document.getElementById('status-gemini-api');
+        if (statusApi) {
+          if (!gApi.enabled) statusApi.innerHTML = '<span class="badge-disabled">Disabled</span>';
+          else if (!gApi.configured) statusApi.innerHTML = '<span class="badge-unconfigured">Key Required</span>';
+          else if (gApi.cooldown_remaining > 0) statusApi.innerHTML = `<span class="badge-cooldown">Cooldown (${Math.round(gApi.cooldown_remaining)}s)</span>`;
+          else statusApi.innerHTML = '<span class="badge-active">● Active</span>';
         }
 
-        // 2. Gemini Web
+        // 3. Gemini Web Backend
         const gWeb = backends.gemini_web || {};
-        const toggleGWeb = document.getElementById('toggle-gemini-web');
-        const statusGWeb = document.getElementById('status-gemini-web');
-        if (toggleGWeb) toggleGWeb.checked = !!gWeb.enabled;
-        if (statusGWeb) {
-          if (!gWeb.enabled) {
-            statusGWeb.innerHTML = '<span class="badge-disabled">Disabled</span>';
-          } else if (gWeb.cooldown_remaining > 0) {
-            statusGWeb.innerHTML = `<span class="badge-cooldown">Cooldown (${gWeb.cooldown_remaining}s)</span>`;
-          } else if (gWeb.configured) {
-            statusGWeb.innerHTML = `<span class="badge-active">Active (${gWeb.masked_psid || 'Cookies Set'})</span>`;
-          } else {
-            statusGWeb.innerHTML = '<span class="badge-unconfigured">No Cookies</span>';
-          }
+        const toggleWeb = document.getElementById('toggle-gemini-web');
+        if (toggleWeb) toggleWeb.checked = !!gWeb.enabled;
+        const statusWeb = document.getElementById('status-gemini-web');
+        if (statusWeb) {
+          if (!gWeb.enabled) statusWeb.innerHTML = '<span class="badge-disabled">Disabled</span>';
+          else if (!gWeb.configured) statusWeb.innerHTML = '<span class="badge-unconfigured">Cookies Required</span>';
+          else if (gWeb.cooldown_remaining > 0) statusWeb.innerHTML = `<span class="badge-cooldown">Cooldown (${Math.round(gWeb.cooldown_remaining)}s)</span>`;
+          else statusWeb.innerHTML = '<span class="badge-active">● Active</span>';
         }
 
-        // 3. Antigravity
+        // 4. Antigravity Backend
         const agy = backends.antigravity || {};
         const toggleAgy = document.getElementById('toggle-antigravity');
-        const statusAgy = document.getElementById('status-antigravity');
         if (toggleAgy) toggleAgy.checked = !!agy.enabled;
+        const statusAgy = document.getElementById('status-antigravity');
         if (statusAgy) {
-          if (!agy.enabled) {
-            statusAgy.innerHTML = '<span class="badge-disabled">Disabled</span>';
-          } else if (agy.cooldown_remaining > 0) {
-            statusAgy.innerHTML = `<span class="badge-cooldown">Cooldown (${agy.cooldown_remaining}s)</span>`;
-          } else if (agy.authenticated) {
-            statusAgy.innerHTML = '<span class="badge-active">Active (Connected)</span>';
-          } else {
-            statusAgy.innerHTML = '<span class="badge-unconfigured">Not Authenticated</span>';
-          }
+          if (!agy.enabled) statusAgy.innerHTML = '<span class="badge-disabled">Disabled</span>';
+          else if (!agy.configured) statusAgy.innerHTML = '<span class="badge-unconfigured">Auth Required</span>';
+          else if (agy.cooldown_remaining > 0) statusAgy.innerHTML = `<span class="badge-cooldown">Cooldown (${Math.round(agy.cooldown_remaining)}s)</span>`;
+          else statusAgy.innerHTML = '<span class="badge-active">● Active</span>';
         }
-
       } catch (err) {
         console.error('Failed to load backend status:', err);
-      }
-    }
-
-    async function toggleBackend(backendId, enabled) {
-      try {
-        const res = await fetch(`/api/backends/${backendId}/toggle`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: enabled })
-        });
-        if (res.ok) {
-          showToast(`Backend ${backendId} ${enabled ? 'enabled' : 'disabled'}`);
-          loadBackends();
-        } else {
-          showToast(`Failed to update backend ${backendId}`, 'error');
-        }
-      } catch (err) {
-        showToast('Error: ' + err.message, 'error');
       }
     }
 
@@ -1216,10 +1268,10 @@
         const res = await fetch('/api/backends/strategy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ strategy: strategy })
+          body: JSON.stringify({ strategy })
         });
         if (res.ok) {
-          showToast(`Routing strategy set to: ${strategy}`);
+          showToast(`Routing strategy set to ${strategy}`);
           loadBackends();
         } else {
           showToast('Failed to update routing strategy', 'error');
@@ -1229,21 +1281,44 @@
       }
     }
 
+    async function toggleBackend(backendId, enabled) {
+      try {
+        const res = await fetch(`/api/backends/${backendId}/toggle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        if (res.ok) {
+          showToast(`Backend ${backendId} ${enabled ? 'enabled' : 'disabled'}`);
+          loadBackends();
+          loadModels();
+        } else {
+          showToast(`Failed to update backend ${backendId}`, 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
     async function saveGeminiApiKey() {
       const keyInput = document.getElementById('gemini-api-key-input');
-      const key = keyInput ? keyInput.value.trim() : '';
-      if (!key) return;
+      const apiKey = keyInput ? keyInput.value.trim() : '';
+      if (!apiKey) return;
 
       try {
         const res = await fetch('/api/backends', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gemini_api_key: key, gemini_api_enabled: true })
+          body: JSON.stringify({
+            gemini_api_key: apiKey,
+            gemini_api_enabled: true
+          })
         });
         if (res.ok) {
           showToast('Gemini API key saved!');
           keyInput.value = '';
           loadBackends();
+          loadModels();
         } else {
           showToast('Failed to save API key', 'error');
         }
@@ -1257,8 +1332,9 @@
       const psidtsInput = document.getElementById('gemini-web-psidts-input');
       const psid = psidInput ? psidInput.value.trim() : '';
       const psidts = psidtsInput ? psidtsInput.value.trim() : '';
+
       if (!psid) {
-        showToast('Please enter at least __Secure-1PSID', 'error');
+        showToast('__Secure-1PSID cookie is required', 'error');
         return;
       }
 
@@ -1277,6 +1353,7 @@
           if (psidInput) psidInput.value = '';
           if (psidtsInput) psidtsInput.value = '';
           loadBackends();
+          loadModels();
         } else {
           showToast('Failed to save cookies', 'error');
         }
@@ -1295,6 +1372,7 @@
         if (res.ok) {
           showToast('Cooldown timers cleared!');
           loadBackends();
+          loadModels();
         } else {
           showToast('Failed to clear cooldowns', 'error');
         }
@@ -1303,9 +1381,170 @@
       }
     }
 
+    // Available Models Management
+    window._allAvailableModels = [];
+
+    async function loadModels() {
+      const container = document.getElementById('models-container');
+      const countBadge = document.getElementById('models-count-badge');
+      if (!container) return;
+
+      try {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        const models = data.models || [];
+        window._allAvailableModels = models;
+
+        if (countBadge) {
+          if (models.length > 0) {
+            countBadge.innerText = `${models.length} Model${models.length === 1 ? '' : 's'}`;
+            countBadge.style.display = 'inline-block';
+          } else {
+            countBadge.style.display = 'none';
+          }
+        }
+
+        const searchInput = document.getElementById('models-search-input');
+        const query = searchInput ? searchInput.value.trim() : '';
+        if (query) {
+          filterModels(query);
+        } else {
+          renderModels(models);
+        }
+      } catch (err) {
+        console.error('Failed to load models:', err);
+        container.innerHTML = '<p><del>Failed to load available models.</del></p>';
+      }
+    }
+
+    function renderModels(models) {
+      const container = document.getElementById('models-container');
+      if (!container) return;
+
+      if (!models || models.length === 0) {
+        container.innerHTML = '<p><small style="opacity: 0.8;">No models found from currently enabled backends. Enable and configure at least one backend above to see available models.</small></p>';
+        return;
+      }
+
+      let html = `
+        <div class="models-table-wrapper">
+          <table class="models-table">
+            <thead>
+              <tr>
+                <th class="models-col-name">Model</th>
+                <th class="models-col-id">Model ID</th>
+                <th class="models-col-context">Context</th>
+                <th class="models-col-caps">Capabilities</th>
+                <th class="models-col-agy">Antigravity</th>
+                <th class="models-col-api">Gemini API</th>
+                <th class="models-col-web">Gemini Web</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+      models.forEach(model => {
+        const hasAgy = model.providers && model.providers.includes('antigravity');
+        const hasApi = model.providers && model.providers.includes('gemini_api');
+        const hasWeb = model.providers && model.providers.includes('gemini_web');
+
+        // Context Window formatting
+        let contextText = '1M tokens';
+        if (model.maxTokens) {
+          if (model.maxTokens >= 1048576) {
+            const mVal = model.maxTokens / 1048576;
+            contextText = `${mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1)}M tokens`;
+          } else if (model.maxTokens >= 1024) {
+            contextText = `${Math.round(model.maxTokens / 1024)}k tokens`;
+          } else {
+            contextText = `${model.maxTokens} tokens`;
+          }
+        }
+
+        // Capabilities emojis
+        let emojis = '';
+        const isEmbed = model.isEmbedding || (model.id && model.id.includes('embedding'));
+        const isThinking = model.supportsThinking || (model.id && (model.id.includes('thinking') || model.id.includes('3.7')));
+        
+        if (isThinking) emojis += '🧠 ';
+        if (!isEmbed && (model.supportsTools !== false)) emojis += '🛠️ ';
+        if (!isEmbed && (model.supportsVision !== false)) emojis += '👁️ ';
+        if (isEmbed) emojis += '🔢 ';
+        emojis = emojis.trim();
+
+        html += `
+          <tr>
+            <td class="models-col-name">
+              <strong>${escapeHtml(model.displayName || model.id)}</strong>
+            </td>
+            <td class="models-col-id">
+              <code class="model-id-clickable" onclick="copyText('${escapeHtml(model.id)}', 'Model ID copied to clipboard!')" title="Click to copy model ID">
+                <span>${escapeHtml(model.id)}</span>
+                <small style="opacity: 0.6; font-size: 0.72rem;">📋</small>
+              </code>
+            </td>
+            <td class="models-col-context">
+              <span class="hide-desktop" style="opacity: 0.75; font-size: 0.75rem; margin-right: 0.25rem;">Context: </span>
+              <small>${contextText}</small>
+            </td>
+            <td class="models-col-caps" title="Model capabilities">
+              <span class="hide-desktop" style="opacity: 0.75; font-size: 0.75rem; margin-right: 0.25rem;">Capabilities: </span>
+              <span>${emojis || '—'}</span>
+            </td>
+            <td class="models-col-agy">
+              ${hasAgy ? '<span class="check-yes" title="Supported by Antigravity">✓</span>' : '<span class="check-no">-</span>'}
+            </td>
+            <td class="models-col-api">
+              ${hasApi ? '<span class="check-yes" title="Supported by Gemini API">✓</span>' : '<span class="check-no">-</span>'}
+            </td>
+            <td class="models-col-web">
+              ${hasWeb ? '<span class="check-yes" title="Supported by Gemini Web">✓</span>' : '<span class="check-no">-</span>'}
+            </td>
+            <td class="models-mobile-providers hide-desktop">
+              <span style="opacity: 0.75;">Providers:</span>
+              <span>Agy: ${hasAgy ? '<strong style="color:#2ecc71;">✓</strong>' : '<span style="opacity:0.4;">-</span>'}</span>
+              <span>API: ${hasApi ? '<strong style="color:#2ecc71;">✓</strong>' : '<span style="opacity:0.4;">-</span>'}</span>
+              <span>Web: ${hasWeb ? '<strong style="color:#2ecc71;">✓</strong>' : '<span style="opacity:0.4;">-</span>'}</span>
+            </td>
+          </tr>
+        `;
+      });
+      html += `
+            </tbody>
+          </table>
+        </div>
+        <div class="models-legend">
+          <span><strong style="opacity: 0.85;">Capabilities Legend:</strong></span>
+          <span>🧠 Reasoning / Thinking</span>
+          <span>🛠️ Tool Calling</span>
+          <span>👁️ Multimodal / Vision</span>
+          <span>🔢 Text Embeddings</span>
+        </div>
+      `;
+      container.innerHTML = html;
+    }
+
+    function filterModels(query) {
+      if (!window._allAvailableModels) return;
+      const q = (query || '').toLowerCase().trim();
+      if (!q) {
+        renderModels(window._allAvailableModels);
+        return;
+      }
+
+      const filtered = window._allAvailableModels.filter(m => {
+        const idMatch = (m.id || '').toLowerCase().includes(q);
+        const nameMatch = (m.displayName || '').toLowerCase().includes(q);
+        const providerMatch = m.providers && m.providers.some(p => p.toLowerCase().includes(q));
+        return idMatch || nameMatch || providerMatch;
+      });
+
+      renderModels(filtered);
+    }
+
     // Auto-load on start
     window.addEventListener('DOMContentLoaded', () => {
       loadBackends();
+      loadModels();
       loadQuotas();
       loadKeys();
     });

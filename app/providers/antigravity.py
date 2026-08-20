@@ -16,7 +16,7 @@ class AntigravityAdapter(BaseAdapter):
         self,
         base_url: str = CLOUD_CODE_BASE_URL,
         auth: OAuthManager = auth_manager,
-        enabled: bool = True
+        enabled: bool = False
     ):
         super().__init__(enabled=enabled)
         self.base_url = base_url.rstrip("/")

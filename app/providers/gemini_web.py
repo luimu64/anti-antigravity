@@ -16,7 +16,7 @@ class GeminiWebAdapter(BaseAdapter):
         self,
         psid: Optional[str] = None,
         psidts: Optional[str] = None,
-        enabled: bool = True
+        enabled: bool = False
     ):
         super().__init__(enabled=enabled)
         self.psid = psid or os.getenv("GEMINI_WEB_PSID") or os.getenv("SECURE_1PSID", "")

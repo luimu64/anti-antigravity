@@ -17,7 +17,7 @@ class BaseAdapter(ABC):
     name: str = "base"
     default_cooldown: float = 60.0
 
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = False):
         self.enabled: bool = enabled
         self.cooldown_until: float = 0.0
 

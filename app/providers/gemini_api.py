@@ -15,7 +15,7 @@ class GeminiApiAdapter(BaseAdapter):
         self,
         api_key: Optional[str] = None,
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
-        enabled: bool = True
+        enabled: bool = False
     ):
         super().__init__(enabled=enabled)
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")

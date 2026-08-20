@@ -1,8 +1,9 @@
 import os
+import re
 import json
 import time
 import logging
-from typing import AsyncGenerator, Dict, Any, List, Optional
+from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 import httpx
 
 from app.config import CLOUD_CODE_BASE_URL, CREDENTIALS_FILE
@@ -13,6 +14,39 @@ from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
 
 logger = logging.getLogger("agy_to_api.providers.router")
+
+def _extract_model_version(model_id: str) -> Tuple[int, ...]:
+    """
+    Extract major/minor version numbers from a model ID string for semantic sorting.
+    Examples:
+      'gemini-3.7-flash' -> (3, 7, 0, 0)
+      'gemini-3.5-pro' -> (3, 5, 0, 0)
+      'gemini-2.5-flash-thinking' -> (2, 5, 0, 0)
+      'claude-sonnet-4-6' -> (4, 6, 0, 0)
+      'gpt-oss-120b-medium' -> (120, 0, 0, 0)
+    """
+    # 1. Look for patterns like '3.7', '2.5', '1.5'
+    match_dot = re.search(r'(\d+)\.(\d+)(?:\.(\d+))?', model_id)
+    if match_dot:
+        major = int(match_dot.group(1))
+        minor = int(match_dot.group(2))
+        patch = int(match_dot.group(3)) if match_dot.group(3) else 0
+        return (major, minor, patch, 0)
+
+    # 2. Look for dash version patterns like '4-6', '3-5' (Claude/GPT style)
+    match_dash = re.search(r'(?:sonnet|opus|haiku|gpt)[^\d]*(\d+)-(\d+)', model_id, re.IGNORECASE)
+    if match_dash:
+        return (int(match_dash.group(1)), int(match_dash.group(2)), 0, 0)
+
+    # 3. Look for number prefixes or standalone numbers like '120b', '3'
+    match_num = re.search(r'(\d+)', model_id)
+    if match_num:
+        try:
+            return (int(match_num.group(1)), 0, 0, 0)
+        except Exception:
+            pass
+
+    return (0, 0, 0, 0)
 
 class MultiBackendRouter(BaseAdapter):
     name = "router"
@@ -58,6 +92,13 @@ class MultiBackendRouter(BaseAdapter):
         env_api_key = os.getenv("GEMINI_API_KEY")
         if env_api_key:
             self.gemini_api.api_key = env_api_key
+
+        if os.getenv("ANTIGRAVITY_ENABLED"):
+            self.antigravity.enabled = os.getenv("ANTIGRAVITY_ENABLED", "").lower() in ("true", "1")
+        if os.getenv("GEMINI_API_ENABLED"):
+            self.gemini_api.enabled = os.getenv("GEMINI_API_ENABLED", "").lower() in ("true", "1")
+        if os.getenv("GEMINI_WEB_ENABLED"):
+            self.gemini_web.enabled = os.getenv("GEMINI_WEB_ENABLED", "").lower() in ("true", "1")
 
         env_psid = os.getenv("GEMINI_WEB_PSID") or os.getenv("SECURE_1PSID") or os.getenv("__Secure-1PSID")
         if env_psid:
@@ -377,11 +418,30 @@ class MultiBackendRouter(BaseAdapter):
                 models_dict = res.get("models", {})
                 for m_id, m_info in models_dict.items():
                     canon_id = m_id.replace("models/", "")
+                    is_embedding = "embedding" in canon_id.lower()
+                    supports_thinking = bool(m_info.get("supportsThinking", False) or "thinking" in canon_id.lower() or "3.7" in canon_id)
+                    supports_tools = not is_embedding and any(k in canon_id.lower() for k in ("gemini", "claude", "gpt"))
+                    supports_vision = not is_embedding and any(k in canon_id.lower() for k in ("gemini", "claude", "gpt-4"))
+
+                    capabilities = []
+                    if supports_thinking:
+                        capabilities.append("thinking")
+                    if supports_tools:
+                        capabilities.append("tools")
+                    if supports_vision:
+                        capabilities.append("vision")
+                    if is_embedding:
+                        capabilities.append("embeddings")
+
                     if canon_id not in aggregated_models:
                         aggregated_models[canon_id] = {
                             "displayName": m_info.get("displayName", canon_id),
                             "maxTokens": m_info.get("maxTokens", 1048576),
-                            "supportsThinking": m_info.get("supportsThinking", False),
+                            "supportsThinking": supports_thinking,
+                            "supportsTools": supports_tools,
+                            "supportsVision": supports_vision,
+                            "isEmbedding": is_embedding,
+                            "capabilities": capabilities,
                             "providers": []
                         }
                     if name not in aggregated_models[canon_id]["providers"]:
@@ -395,18 +455,36 @@ class MultiBackendRouter(BaseAdapter):
             res = await self.antigravity.fetch_available_models(force_refresh=force_refresh)
             for m_id, m_info in res.get("models", {}).items():
                 canon_id = m_id.replace("models/", "")
+                is_embedding = "embedding" in canon_id.lower()
+                supports_thinking = bool(m_info.get("supportsThinking", False) or "thinking" in canon_id.lower() or "3.7" in canon_id)
+                supports_tools = not is_embedding and any(k in canon_id.lower() for k in ("gemini", "claude", "gpt"))
+                supports_vision = not is_embedding and any(k in canon_id.lower() for k in ("gemini", "claude", "gpt-4"))
+                capabilities = []
+                if supports_thinking:
+                    capabilities.append("thinking")
+                if supports_tools:
+                    capabilities.append("tools")
+                if supports_vision:
+                    capabilities.append("vision")
+                if is_embedding:
+                    capabilities.append("embeddings")
+
                 aggregated_models[canon_id] = {
                     "displayName": m_info.get("displayName", canon_id),
                     "maxTokens": m_info.get("maxTokens", 1048576),
-                    "supportsThinking": m_info.get("supportsThinking", False),
+                    "supportsThinking": supports_thinking,
+                    "supportsTools": supports_tools,
+                    "supportsVision": supports_vision,
+                    "isEmbedding": is_embedding,
+                    "capabilities": capabilities,
                     "providers": ["antigravity"]
                 }
                 provider_counts[canon_id] = 1
 
-        # Sort models descending by provider support count, then by model ID
+        # Sort models descending by provider support count (redundancy), then by version (newness), then by model ID
         sorted_model_keys = sorted(
             aggregated_models.keys(),
-            key=lambda m: (-provider_counts.get(m, 0), m)
+            key=lambda m: (-provider_counts.get(m, 0), tuple(-x for x in _extract_model_version(m)), m)
         )
 
         sorted_models = {
