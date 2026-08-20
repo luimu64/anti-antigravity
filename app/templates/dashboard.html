@@ -142,7 +142,13 @@
               <h2 class="card-title text-lg font-bold">✨ Available Models</h2>
               <span id="models-count-badge" class="badge badge-info badge-sm hidden"></span>
             </div>
-            <button type="button" onclick="loadModels()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm" title="Refresh models list">Refresh Models</button>
+            <div class="flex items-center gap-3">
+              <label class="label cursor-pointer p-0 gap-1.5 text-xs text-base-content/70 hover:text-base-content" title="Show/hide internal and tab completion models">
+                <span>Show Hidden</span>
+                <input type="checkbox" id="toggle-hidden-models" class="checkbox checkbox-xs checkbox-primary" onchange="toggleHiddenModels(this.checked)">
+              </label>
+              <button type="button" onclick="loadModels()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm" title="Refresh models list">Refresh Models</button>
+            </div>
           </div>
 
           <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
@@ -672,6 +678,18 @@
 
     // Available Models Management
     window._allAvailableModels = [];
+    window._showHiddenModels = false;
+
+    function toggleHiddenModels(show) {
+      window._showHiddenModels = !!show;
+      const searchInput = document.getElementById('models-search-input');
+      const query = searchInput ? searchInput.value.trim() : '';
+      if (query) {
+        filterModels(query);
+      } else {
+        renderModels(window._allAvailableModels);
+      }
+    }
 
     async function loadModels() {
       const container = document.getElementById('models-container');
@@ -684,9 +702,11 @@
         const models = data.models || [];
         window._allAvailableModels = models;
 
+        const visibleModels = window._showHiddenModels ? models : models.filter(m => !m.hidden);
+
         if (countBadge) {
-          if (models.length > 0) {
-            countBadge.innerText = `${models.length} Model${models.length === 1 ? '' : 's'}`;
+          if (visibleModels.length > 0) {
+            countBadge.innerText = `${visibleModels.length} Model${visibleModels.length === 1 ? '' : 's'}`;
             countBadge.classList.remove('hidden');
           } else {
             countBadge.classList.add('hidden');
@@ -710,7 +730,9 @@
       const container = document.getElementById('models-container');
       if (!container) return;
 
-      if (!models || models.length === 0) {
+      const activeList = (models || []).filter(m => window._showHiddenModels || !m.hidden);
+
+      if (!activeList || activeList.length === 0) {
         container.innerHTML = '<p class="text-xs text-base-content/70">No models found from currently enabled backends. Enable and configure at least one backend above to see available models.</p>';
         return;
       }
@@ -731,7 +753,7 @@
             </thead>
             <tbody>
       `;
-      models.forEach(model => {
+      activeList.forEach(model => {
         const hasAgy = model.providers && model.providers.includes('antigravity');
         const hasApi = model.providers && model.providers.includes('gemini_api');
         const hasWeb = model.providers && model.providers.includes('gemini_web');
@@ -760,9 +782,14 @@
         if (isEmbed) emojis += '🔢 ';
         emojis = emojis.trim();
 
+        const hiddenBadge = model.hidden ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Hidden</span>' : '';
+
         html += `
           <tr class="hover">
-            <td class="font-bold">${escapeHtml(model.displayName || model.id)}</td>
+            <td class="font-bold flex items-center">
+              <span>${escapeHtml(model.displayName || model.id)}</span>
+              ${hiddenBadge}
+            </td>
             <td>
               <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-center gap-1" onclick="copyText('${escapeHtml(model.id)}', 'Model ID copied to clipboard!')" title="Click to copy model ID">
                 <span>${escapeHtml(model.id)}</span>
@@ -795,12 +822,14 @@
     function filterModels(query) {
       if (!window._allAvailableModels) return;
       const q = (query || '').toLowerCase().trim();
+      const baseList = window._allAvailableModels.filter(m => window._showHiddenModels || !m.hidden);
+
       if (!q) {
-        renderModels(window._allAvailableModels);
+        renderModels(baseList);
         return;
       }
 
-      const filtered = window._allAvailableModels.filter(m => {
+      const filtered = baseList.filter(m => {
         const idMatch = (m.id || '').toLowerCase().includes(q);
         const nameMatch = (m.displayName || '').toLowerCase().includes(q);
         const providerMatch = m.providers && m.providers.some(p => p.toLowerCase().includes(q));

@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Union
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.config import MODEL_ALIASES
+from app.config import MODEL_ALIASES, ANTIGRAVITY_TIER_MAP, CANONICAL_MODEL_MAP
 
 logger = logging.getLogger("agy_to_api.translator")
 
@@ -63,18 +63,33 @@ class OpenAITranslator:
         return f"fp_agy_{abs(hash(model)) & 0xffffffff:08x}"
 
     @staticmethod
-    def resolve_model(requested_model: str) -> str:
-        """Map user-requested model to Antigravity internal model name."""
+    def resolve_model(requested_model: str, reasoning_effort: Optional[str] = None) -> str:
+        """
+        Map user-requested model and optional reasoning_effort to Antigravity internal model name
+        using the lookup table and tier mappings.
+        """
         clean = requested_model.lower().strip()
+
+        # 1. Check if model or its canonical alias has reasoning tier mappings in ANTIGRAVITY_TIER_MAP
+        base_name = CANONICAL_MODEL_MAP.get(clean, clean)
+        if base_name in ANTIGRAVITY_TIER_MAP:
+            tiers = ANTIGRAVITY_TIER_MAP[base_name]
+            effort = (reasoning_effort or "").lower().strip()
+            if effort in tiers:
+                return tiers[effort]
+            if "default" in tiers:
+                return tiers["default"]
+
+        # 2. Check direct MODEL_ALIASES lookup
         if clean in MODEL_ALIASES:
             return MODEL_ALIASES[clean]
         
-        # Check prefix matches
+        # 3. Check prefix matches
         for alias, internal in MODEL_ALIASES.items():
             if clean.startswith(alias):
                 return internal
                 
-        # Default fallback to gemini-3.7-flash-high if unknown
+        # Default fallback
         return requested_model
 
     @classmethod
@@ -83,7 +98,7 @@ class OpenAITranslator:
         Convert OpenAI ChatCompletionRequest into internal format:
         Returns: (internal_model, contents, system_instruction, generation_config, tools)
         """
-        internal_model = cls.resolve_model(req.model)
+        internal_model = cls.resolve_model(req.model, req.reasoning_effort)
         
         contents: List[Dict[str, Any]] = []
         system_texts: List[str] = []

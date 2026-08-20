@@ -228,6 +228,7 @@ async def get_dashboard_models():
                 "supportsVision": info.get("supportsVision", True),
                 "isEmbedding": info.get("isEmbedding", False),
                 "capabilities": info.get("capabilities", []),
+                "hidden": bool(info.get("hidden", False)),
                 "providers": info.get("providers", []),
                 "provider_count": info.get("provider_count", len(info.get("providers", [])))
             })

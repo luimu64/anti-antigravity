@@ -6,7 +6,7 @@ import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 import httpx
 
-from app.config import CLOUD_CODE_BASE_URL, CREDENTIALS_FILE
+from app.config import CLOUD_CODE_BASE_URL, CREDENTIALS_FILE, CANONICAL_MODEL_MAP, HIDDEN_MODELS
 from app.auth import auth_manager, OAuthManager
 from app.providers.base import BaseAdapter, RateLimitError
 from app.providers.antigravity import AntigravityAdapter
@@ -426,7 +426,20 @@ class MultiBackendRouter(BaseAdapter):
                 res = await adapter.fetch_available_models(force_refresh=force_refresh)
                 models_dict = res.get("models", {})
                 for m_id, m_info in models_dict.items():
-                    canon_id = m_id.replace("models/", "")
+                    raw_id = m_id.replace("models/", "")
+                    
+                    # Consolidate Antigravity reasoning tiers into clean base models
+                    canon_id = raw_id
+                    if adapter.name == "antigravity" and raw_id in CANONICAL_MODEL_MAP:
+                        canon_id = CANONICAL_MODEL_MAP[raw_id]
+
+                    is_hidden = bool(
+                        raw_id in HIDDEN_MODELS or
+                        canon_id in HIDDEN_MODELS or
+                        raw_id.startswith("tab_") or
+                        canon_id.startswith("tab_")
+                    )
+
                     is_embedding = "embedding" in canon_id.lower()
                     supports_thinking = bool(m_info.get("supportsThinking", False) or "thinking" in canon_id.lower() or "3.7" in canon_id)
                     supports_tools = not is_embedding and any(k in canon_id.lower() for k in ("gemini", "claude", "gpt"))
@@ -442,17 +455,39 @@ class MultiBackendRouter(BaseAdapter):
                     if is_embedding:
                         capabilities.append("embeddings")
 
+                    # Friendly display name
+                    disp_name = m_info.get("displayName", canon_id)
+                    if canon_id == "gemini-3.7-flash":
+                        disp_name = "Gemini 3.7 Flash"
+                    elif canon_id == "gemini-3.6-flash":
+                        disp_name = "Gemini 3.6 Flash"
+                    elif canon_id == "gemini-3.5-flash":
+                        disp_name = "Gemini 3.5 Flash"
+                    elif canon_id == "gemini-3.1-pro":
+                        disp_name = "Gemini 3.1 Pro"
+                    elif canon_id == "gpt-oss-120b":
+                        disp_name = "GPT-OSS 120B"
+                    elif canon_id == "claude-3.7-sonnet":
+                        disp_name = "Claude 3.7 Sonnet"
+                    elif canon_id == "claude-3-opus":
+                        disp_name = "Claude 3 Opus"
+
                     if canon_id not in aggregated_models:
                         aggregated_models[canon_id] = {
-                            "displayName": m_info.get("displayName", canon_id),
+                            "displayName": disp_name,
                             "maxTokens": m_info.get("maxTokens", 1048576),
                             "supportsThinking": supports_thinking,
                             "supportsTools": supports_tools,
                             "supportsVision": supports_vision,
                             "isEmbedding": is_embedding,
                             "capabilities": capabilities,
+                            "hidden": is_hidden,
                             "providers": []
                         }
+                    
+                    if not is_hidden:
+                        aggregated_models[canon_id]["hidden"] = False
+
                     if name not in aggregated_models[canon_id]["providers"]:
                         aggregated_models[canon_id]["providers"].append(name)
                         provider_counts[canon_id] = provider_counts.get(canon_id, 0) + 1
@@ -463,7 +498,14 @@ class MultiBackendRouter(BaseAdapter):
         if not aggregated_models:
             res = await self.antigravity.fetch_available_models(force_refresh=force_refresh)
             for m_id, m_info in res.get("models", {}).items():
-                canon_id = m_id.replace("models/", "")
+                raw_id = m_id.replace("models/", "")
+                canon_id = CANONICAL_MODEL_MAP.get(raw_id, raw_id)
+                is_hidden = bool(
+                    raw_id in HIDDEN_MODELS or
+                    canon_id in HIDDEN_MODELS or
+                    raw_id.startswith("tab_") or
+                    canon_id.startswith("tab_")
+                )
                 is_embedding = "embedding" in canon_id.lower()
                 supports_thinking = bool(m_info.get("supportsThinking", False) or "thinking" in canon_id.lower() or "3.7" in canon_id)
                 supports_tools = not is_embedding and any(k in canon_id.lower() for k in ("gemini", "claude", "gpt"))
@@ -478,14 +520,27 @@ class MultiBackendRouter(BaseAdapter):
                 if is_embedding:
                     capabilities.append("embeddings")
 
+                disp_name = m_info.get("displayName", canon_id)
+                if canon_id == "gemini-3.7-flash":
+                    disp_name = "Gemini 3.7 Flash"
+                elif canon_id == "gemini-3.6-flash":
+                    disp_name = "Gemini 3.6 Flash"
+                elif canon_id == "gemini-3.5-flash":
+                    disp_name = "Gemini 3.5 Flash"
+                elif canon_id == "gemini-3.1-pro":
+                    disp_name = "Gemini 3.1 Pro"
+                elif canon_id == "gpt-oss-120b":
+                    disp_name = "GPT-OSS 120B"
+
                 aggregated_models[canon_id] = {
-                    "displayName": m_info.get("displayName", canon_id),
+                    "displayName": disp_name,
                     "maxTokens": m_info.get("maxTokens", 1048576),
                     "supportsThinking": supports_thinking,
                     "supportsTools": supports_tools,
                     "supportsVision": supports_vision,
                     "isEmbedding": is_embedding,
                     "capabilities": capabilities,
+                    "hidden": is_hidden,
                     "providers": ["antigravity"]
                 }
                 provider_counts[canon_id] = 1

@@ -287,8 +287,9 @@ async def test_models_aggregation_and_ranking():
     # gemini-2.5-pro is present in 2 providers -> ranked next
     assert models_dict["gemini-2.5-pro"]["provider_count"] == 2
 
-    # gemini-3.7-flash-high is present in 1 provider
-    assert models_dict["gemini-3.7-flash-high"]["provider_count"] == 1
+    # gemini-3.7-flash-high is consolidated to canonical gemini-3.7-flash with provider_count = 1
+    assert "gemini-3.7-flash" in models_dict
+    assert models_dict["gemini-3.7-flash"]["provider_count"] == 1
 
 @pytest.mark.asyncio
 async def test_models_redundancy_and_newness_sorting():
@@ -365,6 +366,56 @@ async def test_models_disabled_backend_exclusion():
     assert "gemini-api-exclusive" not in models_dict
     assert "gemini-2.5-flash" in models_dict
     assert models_dict["gemini-2.5-flash"]["providers"] == ["antigravity"]
+
+@pytest.mark.asyncio
+async def test_models_hidden_and_reasoning_tier_mapping():
+    """Verify unusable models are marked as hidden and reasoning tiers are mapped under the hood."""
+    from app.translator import OpenAITranslator, ChatCompletionRequest
+
+    # 1. Verify reasoning tiers map silently under the hood
+    assert OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="low") == "gemini-3.7-flash-low"
+    assert OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="medium") == "gemini-3.7-flash-medium"
+    assert OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="high") == "gemini-3.7-flash-high"
+    assert OpenAITranslator.resolve_model("gemini-3.7-flash") == "gemini-3.7-flash-high"
+
+    assert OpenAITranslator.resolve_model("gemini-3.6-flash", reasoning_effort="low") == "gemini-3.6-flash-low"
+    assert OpenAITranslator.resolve_model("gemini-3.1-pro", reasoning_effort="low") == "gemini-3.1-pro-low"
+    assert OpenAITranslator.resolve_model("gemini-3.5-flash") == "gemini-3-flash-agent"
+    assert OpenAITranslator.resolve_model("claude-3.7-sonnet") == "claude-sonnet-4-6"
+    assert OpenAITranslator.resolve_model("claude-3-opus") == "claude-opus-4-6-thinking"
+    assert OpenAITranslator.resolve_model("gpt-oss-120b") == "gpt-oss-120b-medium"
+
+    # 2. Verify hidden model detection
+    mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.name = "antigravity"
+    mock_agy.enabled = True
+    mock_agy.fetch_available_models = AsyncMock(return_value={
+        "models": {
+            "gemini-3.7-flash-high": {"displayName": "Gemini 3.7 Flash High"},
+            "tab_flash_lite_preview": {"displayName": "Tab Flash Lite Preview"},
+        }
+    })
+
+    mock_api = MagicMock(spec=GeminiApiAdapter)
+    mock_api.name = "gemini_api"
+    mock_api.enabled = False
+
+    mock_web = MagicMock(spec=GeminiWebAdapter)
+    mock_web.name = "gemini_web"
+    mock_web.enabled = False
+
+    router = MultiBackendRouter(
+        antigravity=mock_agy,
+        gemini_api=mock_api,
+        gemini_web=mock_web
+    )
+
+    models_data = await router.fetch_available_models()
+    models_dict = models_data["models"]
+
+    assert "tab_flash_lite_preview" in models_dict
+    assert models_dict["tab_flash_lite_preview"]["hidden"] is True
+    assert models_dict["gemini-3.7-flash"]["hidden"] is False
 
 @pytest.mark.asyncio
 async def test_dashboard_backend_api_and_persistence(mock_credentials_file):

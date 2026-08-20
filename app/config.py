@@ -94,3 +94,69 @@ MODEL_ALIASES = {
     "text-embedding-ada-002": "text-embedding-004",
     "text-embedding-004": "text-embedding-004"
 }
+
+# Lookup table mapping base canonical models to Antigravity internal reasoning tiers
+ANTIGRAVITY_TIER_MAP = {
+    "gemini-3.7-flash": {
+        "low": "gemini-3.7-flash-low",
+        "medium": "gemini-3.7-flash-medium",
+        "high": "gemini-3.7-flash-high",
+        "default": "gemini-3.7-flash-high"
+    },
+    "gemini-3.6-flash": {
+        "low": "gemini-3.6-flash-low",
+        "medium": "gemini-3.6-flash-medium",
+        "high": "gemini-3.6-flash-high",
+        "default": "gemini-3.6-flash-high"
+    },
+    "gemini-3.1-pro": {
+        "low": "gemini-3.1-pro-low",
+        "medium": "gemini-3.1-pro-high",
+        "high": "gemini-3.1-pro-high",
+        "default": "gemini-3.1-pro-high"
+    },
+    "gemini-3.5-flash": {
+        "default": "gemini-3-flash-agent"
+    },
+    "gpt-oss-120b": {
+        "default": "gpt-oss-120b-medium"
+    },
+    "claude-3.7-sonnet": {
+        "default": "claude-sonnet-4-6"
+    },
+    "claude-3.5-sonnet": {
+        "default": "claude-sonnet-4-6"
+    },
+    "claude-3-opus": {
+        "default": "claude-opus-4-6-thinking"
+    }
+}
+
+# Canonical model consolidation mapping (Antigravity quirk -> Public clean name)
+CANONICAL_MODEL_MAP = {
+    "gemini-3.7-flash-high": "gemini-3.7-flash",
+    "gemini-3.7-flash-medium": "gemini-3.7-flash",
+    "gemini-3.7-flash-low": "gemini-3.7-flash",
+    "gemini-3.6-flash-high": "gemini-3.6-flash",
+    "gemini-3.6-flash-medium": "gemini-3.6-flash",
+    "gemini-3.6-flash-low": "gemini-3.6-flash",
+    "gemini-3.1-pro-high": "gemini-3.1-pro",
+    "gemini-3.1-pro-low": "gemini-3.1-pro",
+    "gemini-3-flash-agent": "gemini-3.5-flash",
+    "gpt-oss-120b-medium": "gpt-oss-120b",
+    "claude-sonnet-4-6": "claude-3.7-sonnet",
+    "claude-opus-4-6-thinking": "claude-3-opus",
+}
+
+# Internal or unusable models hidden by default in the catalog
+HIDDEN_MODELS = {
+    "tab_flash_lite_preview",
+    "tab_flash_preview",
+    "tab_pro_preview",
+    "tab_flash_lite",
+    "gemini-3.6-flash-low",
+    "gemini-3.6-flash-medium",
+    "gemini-3.7-flash-low",
+    "gemini-3.7-flash-medium",
+    "gemini-3.1-pro-low"
+}
