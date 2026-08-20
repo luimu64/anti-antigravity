@@ -382,3 +382,239 @@ async def test_streaming_text_chunks():
     assert finish_chunk["choices"][0]["finish_reason"] == "stop"
 
 
+def test_schema_sanitization_deepseek_harness_const_and_oneof():
+    """
+    Test deepseek harness tool format with const, oneOf, title, additionalProperties.
+    Ensures 'const' is converted to 'enum' + 'type', 'oneOf' to 'anyOf',
+    and unsupported fields are completely stripped.
+    """
+    deepseek_tool_schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "execute_code",
+        "type": "object",
+        "properties": {
+            "action": {
+                "title": "Action",
+                "description": "Code execution action",
+                "oneOf": [
+                    {
+                        "title": "PythonAction",
+                        "type": "object",
+                        "properties": {
+                            "language": {"const": "python", "title": "Language"},
+                            "code": {"type": "string", "title": "Code", "default": "print('hello')"}
+                        },
+                        "required": ["language", "code"],
+                        "additionalProperties": False
+                    },
+                    {
+                        "title": "BashAction",
+                        "type": "object",
+                        "properties": {
+                            "language": {"const": "bash", "title": "Language"},
+                            "command": {"type": "string", "title": "Command"}
+                        },
+                        "required": ["language", "command"],
+                        "additionalProperties": False
+                    }
+                ]
+            }
+        },
+        "required": ["action"],
+        "additionalProperties": False
+    }
+
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Run python code"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_code",
+                    "description": "Execute code snippet",
+                    "parameters": deepseek_tool_schema
+                }
+            }
+        ]
+    )
+
+    _, _, _, _, tools = OpenAITranslator.openai_to_internal_request(req)
+    assert tools is not None
+    decl = tools[0]["functionDeclarations"][0]
+    params = decl["parameters"]
+
+    # 1. Top level
+    assert params["type"] == "object"
+    assert "action" in params["properties"]
+    assert "additionalProperties" not in params
+    assert "$schema" not in params
+    assert "title" not in params
+
+    # 2. oneOf converted to anyOf
+    action_prop = params["properties"]["action"]
+    assert "anyOf" in action_prop
+    assert "oneOf" not in action_prop
+    assert "title" not in action_prop
+    assert len(action_prop["anyOf"]) == 2
+
+    # 3. const converted to enum and type
+    py_branch = action_prop["anyOf"][0]
+    assert py_branch["type"] == "object"
+    assert "title" not in py_branch
+    assert "additionalProperties" not in py_branch
+    assert py_branch["properties"]["language"]["type"] == "string"
+    assert py_branch["properties"]["language"]["enum"] == ["python"]
+    assert "const" not in py_branch["properties"]["language"]
+    assert "default" not in py_branch["properties"]["code"]
+    assert "print('hello')" in py_branch["properties"]["code"]["description"]
+
+    bash_branch = action_prop["anyOf"][1]
+    assert bash_branch["properties"]["language"]["type"] == "string"
+    assert bash_branch["properties"]["language"]["enum"] == ["bash"]
+    assert "const" not in bash_branch["properties"]["language"]
+
+
+def test_schema_dereference_defs_and_ref():
+    """
+    Test $defs / definitions with $ref pointer expansion.
+    """
+    raw_schema = {
+        "$defs": {
+            "Coordinate": {
+                "title": "Coordinate",
+                "type": "object",
+                "properties": {
+                    "lat": {"type": "number", "title": "Latitude"},
+                    "lng": {"type": "number", "title": "Longitude"}
+                },
+                "required": ["lat", "lng"],
+                "additionalProperties": False
+            }
+        },
+        "type": "object",
+        "properties": {
+            "location": {
+                "$ref": "#/$defs/Coordinate",
+                "description": "Target GPS coordinates"
+            }
+        },
+        "required": ["location"]
+    }
+
+    sanitized = OpenAITranslator.sanitize_schema(raw_schema, is_top_level_params=True)
+    assert "$defs" not in sanitized
+    assert "location" in sanitized["properties"]
+    loc_prop = sanitized["properties"]["location"]
+    assert loc_prop["type"] == "object"
+    assert "lat" in loc_prop["properties"]
+    assert "lng" in loc_prop["properties"]
+    assert loc_prop["properties"]["lat"]["type"] == "number"
+    assert loc_prop["properties"]["lng"]["type"] == "number"
+    assert loc_prop["required"] == ["lat", "lng"]
+    assert loc_prop["description"] == "Target GPS coordinates"
+    assert "title" not in loc_prop
+    assert "additionalProperties" not in loc_prop
+
+
+def test_schema_sanitization_edge_cases():
+    """
+    Test nullable types, exclusive bounds, allOf merge, and enums.
+    """
+    raw_schema = {
+        "type": "object",
+        "properties": {
+            "optional_text": {
+                "type": ["string", "null"],
+                "title": "Optional Text"
+            },
+            "bounded_int": {
+                "type": "integer",
+                "exclusiveMinimum": 10,
+                "exclusiveMaximum": 100
+            },
+            "merged_obj": {
+                "allOf": [
+                    {
+                        "type": "object",
+                        "properties": {"field_a": {"type": "string"}},
+                        "required": ["field_a"]
+                    },
+                    {
+                        "type": "object",
+                        "properties": {"field_b": {"type": "integer"}},
+                        "required": ["field_b"]
+                    }
+                ]
+            },
+            "status": {
+                "enum": ["active", 1, True]
+            }
+        }
+    }
+
+    sanitized = OpenAITranslator.sanitize_schema(raw_schema, is_top_level_params=True)
+    
+    # Nullable
+    assert sanitized["properties"]["optional_text"]["type"] == "string"
+    assert sanitized["properties"]["optional_text"]["nullable"] is True
+    
+    # Exclusive min/max mapped to min/max
+    assert sanitized["properties"]["bounded_int"]["minimum"] == 10
+    assert sanitized["properties"]["bounded_int"]["maximum"] == 100
+    assert "exclusiveMinimum" not in sanitized["properties"]["bounded_int"]
+    assert "exclusiveMaximum" not in sanitized["properties"]["bounded_int"]
+
+    # allOf merged
+    merged = sanitized["properties"]["merged_obj"]
+    assert "field_a" in merged["properties"]
+    assert "field_b" in merged["properties"]
+    assert set(merged["required"]) == {"field_a", "field_b"}
+    assert "allOf" not in merged
+
+    # enum normalized to strings
+    assert sanitized["properties"]["status"]["type"] == "string"
+    assert sanitized["properties"]["status"]["enum"] == ["active", "1", "True"]
+
+
+def test_structured_outputs_response_format_sanitization():
+    """
+    Test response_format json_schema sanitization.
+    """
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Extract data"}],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "DataExtraction",
+                "strict": True,
+                "schema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "title": "DataExtraction",
+                    "type": "object",
+                    "properties": {
+                        "category": {"const": "financial", "title": "Category"},
+                        "score": {"type": ["number", "null"], "title": "Score", "default": 0.0}
+                    },
+                    "required": ["category"],
+                    "additionalProperties": False
+                }
+            }
+        }
+    )
+
+    _, _, _, gen_cfg, _ = OpenAITranslator.openai_to_internal_request(req)
+    assert gen_cfg["responseMimeType"] == "application/json"
+    schema = gen_cfg["responseSchema"]
+    assert "$schema" not in schema
+    assert "title" not in schema
+    assert "additionalProperties" not in schema
+    assert schema["properties"]["category"]["type"] == "string"
+    assert schema["properties"]["category"]["enum"] == ["financial"]
+    assert schema["properties"]["score"]["type"] == "number"
+    assert schema["properties"]["score"]["nullable"] is True
+    assert "default" not in schema["properties"]["score"]
+
+
+

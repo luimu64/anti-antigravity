@@ -1,6 +1,7 @@
 import time
 import uuid
 import json
+import copy
 import logging
 from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Union
 from pydantic import BaseModel, Field, ConfigDict
@@ -76,6 +77,273 @@ class OpenAITranslator:
                 
         # Default fallback to gemini-3.7-flash-high if unknown
         return requested_model
+
+    @classmethod
+    def dereference_schema(cls, schema: Any, root_schema: Optional[Dict[str, Any]] = None, seen_refs: Optional[set] = None) -> Any:
+        """
+        Recursively resolve $ref pointers within a JSON schema against root_schema definitions.
+        Supports $defs, definitions, components/schemas, and JSON pointer paths.
+        Prevents infinite loops on circular references.
+        """
+        if root_schema is None:
+            root_schema = schema if isinstance(schema, dict) else {}
+        if seen_refs is None:
+            seen_refs = set()
+
+        if not isinstance(schema, dict):
+            if isinstance(schema, list):
+                return [cls.dereference_schema(item, root_schema, seen_refs) for item in schema]
+            return schema
+
+        # Check if this node is a $ref
+        if "$ref" in schema and isinstance(schema["$ref"], str):
+            ref_path = schema["$ref"]
+            if ref_path in seen_refs:
+                return {"type": "object", "description": f"Circular reference to {ref_path}"}
+
+            resolved = None
+            if ref_path.startswith("#/"):
+                parts = ref_path[2:].split("/")
+                curr = root_schema
+                found = True
+                for p in parts:
+                    p = p.replace("~1", "/").replace("~0", "~")
+                    if isinstance(curr, dict) and p in curr:
+                        curr = curr[p]
+                    else:
+                        found = False
+                        break
+                if found and isinstance(curr, dict):
+                    resolved = curr
+
+            if resolved is not None:
+                new_seen = set(seen_refs)
+                new_seen.add(ref_path)
+                dereferenced_target = cls.dereference_schema(copy.deepcopy(resolved), root_schema, new_seen)
+                if isinstance(dereferenced_target, dict):
+                    merged = dict(dereferenced_target)
+                    for k, v in schema.items():
+                        if k != "$ref":
+                            merged[k] = cls.dereference_schema(v, root_schema, new_seen)
+                    return merged
+                return dereferenced_target
+
+        result = {}
+        for k, v in schema.items():
+            result[k] = cls.dereference_schema(v, root_schema, seen_refs)
+        return result
+
+    @classmethod
+    def sanitize_schema(cls, schema: Any, is_top_level_params: bool = False) -> Any:
+        """
+        Recursively converts a JSON Schema (OpenAI / Pydantic / DeepSeek harness)
+        into Google Gemini / Cloud Code Schema protobuf compatible representation:
+        - Resolves and inlines all $ref references
+        - Converts `const: "val"` to `type: "string", enum: ["val"]`
+        - Converts `oneOf` to `anyOf`
+        - Merges `allOf` into parent schema
+        - Normalizes `type: ["type", "null"]` into `type: "type", nullable: true`
+        - Converts/strips `exclusiveMinimum` / `exclusiveMaximum` to `minimum` / `maximum`
+        - Moves `default` into `description` (preserving context without violating schema)
+        - Normalizes enums (ensures list of strings if type is string)
+        - Strips unsupported fields ($schema, $defs, definitions, title, additionalProperties, examples, etc.)
+        - Ensures top-level tool parameters have valid type="object" and properties dict.
+        """
+        if not isinstance(schema, dict):
+            if is_top_level_params:
+                return {"type": "object", "properties": {}}
+            return schema
+
+        # First, ensure all $refs are dereferenced
+        schema = cls.dereference_schema(schema)
+        if not isinstance(schema, dict):
+            return schema
+
+        schema = copy.deepcopy(schema)
+
+        def _clean_node(node: Any) -> Any:
+            if not isinstance(node, dict):
+                if isinstance(node, list):
+                    return [_clean_node(item) for item in node]
+                return node
+
+            node = dict(node)
+
+            # 1. Convert const -> enum and infer type
+            if "const" in node:
+                const_val = node.pop("const")
+                if "enum" not in node:
+                    if isinstance(const_val, (str, int, float, bool)):
+                        node["enum"] = [str(const_val)] if not isinstance(const_val, str) else [const_val]
+                    else:
+                        node["enum"] = [json.dumps(const_val)]
+                if "type" not in node:
+                    if isinstance(const_val, bool):
+                        node["type"] = "boolean"
+                    elif isinstance(const_val, int):
+                        node["type"] = "integer"
+                    elif isinstance(const_val, float):
+                        node["type"] = "number"
+                    elif isinstance(const_val, str):
+                        node["type"] = "string"
+                    elif isinstance(const_val, list):
+                        node["type"] = "array"
+                    elif isinstance(const_val, dict):
+                        node["type"] = "object"
+                    else:
+                        node["type"] = "string"
+
+            # 2. Normalize multi-types / nullability e.g. type: ["string", "null"]
+            if "type" in node:
+                t_val = node["type"]
+                if isinstance(t_val, list):
+                    types = [t.lower() for t in t_val if isinstance(t, str)]
+                    if "null" in types:
+                        node["nullable"] = True
+                        non_null = [t for t in types if t != "null"]
+                        node["type"] = non_null[0] if non_null else "string"
+                    elif types:
+                        node["type"] = types[0]
+                    else:
+                        node["type"] = "string"
+                elif isinstance(t_val, str):
+                    node["type"] = t_val.lower()
+                elif t_val is None:
+                    node.pop("type", None)
+
+            # 3. Handle default -> append to description to avoid schema rejection while keeping semantic info
+            if "default" in node:
+                default_val = node.pop("default")
+                if default_val is not None:
+                    desc = node.get("description", "")
+                    def_str = json.dumps(default_val) if isinstance(default_val, (dict, list)) else str(default_val)
+                    if def_str and "default" not in desc.lower():
+                        if desc:
+                            node["description"] = f"{desc} (default: {def_str})"
+                        else:
+                            node["description"] = f"Default: {def_str}"
+
+            # 4. Handle exclusiveMinimum / exclusiveMaximum
+            if "exclusiveMinimum" in node:
+                ex_min = node.pop("exclusiveMinimum")
+                if "minimum" not in node and isinstance(ex_min, (int, float)):
+                    node["minimum"] = ex_min
+            if "exclusiveMaximum" in node:
+                ex_max = node.pop("exclusiveMaximum")
+                if "maximum" not in node and isinstance(ex_max, (int, float)):
+                    node["maximum"] = ex_max
+
+            # 5. Convert oneOf -> anyOf
+            if "oneOf" in node:
+                one_of_list = node.pop("oneOf")
+                if isinstance(one_of_list, list):
+                    if "anyOf" not in node:
+                        node["anyOf"] = one_of_list
+                    elif isinstance(node["anyOf"], list):
+                        node["anyOf"].extend(one_of_list)
+
+            # 6. Merge allOf
+            if "allOf" in node:
+                all_of_list = node.pop("allOf")
+                if isinstance(all_of_list, list):
+                    for sub in all_of_list:
+                        if isinstance(sub, dict):
+                            sub_clean = _clean_node(sub)
+                            if isinstance(sub_clean, dict):
+                                if "properties" in sub_clean and isinstance(sub_clean["properties"], dict):
+                                    if "properties" not in node or not isinstance(node["properties"], dict):
+                                        node["properties"] = {}
+                                    node["properties"].update(sub_clean["properties"])
+                                if "required" in sub_clean and isinstance(sub_clean["required"], list):
+                                    if "required" not in node or not isinstance(node["required"], list):
+                                        node["required"] = []
+                                    for r in sub_clean["required"]:
+                                        if r not in node["required"]:
+                                            node["required"].append(r)
+                                if "description" in sub_clean and "description" not in node:
+                                    node["description"] = sub_clean["description"]
+                                if "type" in sub_clean and "type" not in node:
+                                    node["type"] = sub_clean["type"]
+
+            # 7. Clean and recursively sanitize properties
+            if "properties" in node and isinstance(node["properties"], dict):
+                node["properties"] = {
+                    k: _clean_node(v) for k, v in node["properties"].items() if isinstance(v, (dict, list, str, int, float, bool))
+                }
+                if "type" not in node:
+                    node["type"] = "object"
+
+            # 8. Clean and recursively sanitize items
+            if "items" in node:
+                if isinstance(node["items"], dict):
+                    node["items"] = _clean_node(node["items"])
+                elif isinstance(node["items"], list) and node["items"]:
+                    node["items"] = _clean_node(node["items"][0])
+                else:
+                    node.pop("items", None)
+                if "type" not in node:
+                    node["type"] = "array"
+
+            # 9. Clean and recursively sanitize anyOf
+            if "anyOf" in node and isinstance(node["anyOf"], list):
+                node["anyOf"] = [_clean_node(s) for s in node["anyOf"] if isinstance(s, dict)]
+                if not node["anyOf"]:
+                    node.pop("anyOf", None)
+
+            # 10. Normalize enum
+            if "enum" in node and isinstance(node["enum"], list):
+                if node.get("type") in ("string", None):
+                    node["enum"] = [str(x) if not isinstance(x, str) else x for x in node["enum"]]
+                    node["type"] = "string"
+
+            # 11. Normalize required list
+            if "required" in node:
+                if isinstance(node["required"], list):
+                    node["required"] = [str(r) for r in node["required"] if isinstance(r, (str, int))]
+                    if not node["required"]:
+                        node.pop("required", None)
+                else:
+                    node.pop("required", None)
+
+            # 12. Retain ONLY allowed schema keys
+            ALLOWED_SCHEMA_KEYS = {
+                "type",
+                "format",
+                "description",
+                "nullable",
+                "enum",
+                "maxItems",
+                "minItems",
+                "properties",
+                "required",
+                "items",
+                "minProperties",
+                "maxProperties",
+                "minimum",
+                "maximum",
+                "pattern",
+                "anyOf",
+                "propertyOrdering"
+            }
+
+            keys_to_remove = [k for k in node if k not in ALLOWED_SCHEMA_KEYS]
+            for k in keys_to_remove:
+                node.pop(k, None)
+
+            return node
+
+        sanitized = _clean_node(schema)
+
+        if is_top_level_params:
+            if not isinstance(sanitized, dict):
+                sanitized = {"type": "object", "properties": {}}
+            else:
+                if "type" not in sanitized:
+                    sanitized["type"] = "object"
+                if "properties" not in sanitized or not isinstance(sanitized["properties"], dict):
+                    sanitized["properties"] = {}
+
+        return sanitized
 
     @classmethod
     def openai_to_internal_request(cls, req: ChatCompletionRequest) -> Tuple[str, List[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
@@ -307,17 +575,18 @@ class OpenAITranslator:
                 elif fmt_type == "json_schema":
                     generation_config["responseMimeType"] = "application/json"
                     schema_def = resp_fmt.get("json_schema", {})
-                    if "schema" in schema_def:
-                        generation_config["responseSchema"] = schema_def["schema"]
-                    elif schema_def:
-                        generation_config["responseSchema"] = schema_def
+                    raw_schema = schema_def.get("schema", schema_def) if isinstance(schema_def, dict) else schema_def
+                    if raw_schema:
+                        generation_config["responseSchema"] = cls.sanitize_schema(raw_schema)
             elif hasattr(resp_fmt, "type"):
                 if resp_fmt.type in ("json_object", "json"):
                     generation_config["responseMimeType"] = "application/json"
                 elif resp_fmt.type == "json_schema":
                     generation_config["responseMimeType"] = "application/json"
                     if resp_fmt.json_schema:
-                        generation_config["responseSchema"] = resp_fmt.json_schema.get("schema", resp_fmt.json_schema)
+                        raw_schema = resp_fmt.json_schema.get("schema", resp_fmt.json_schema) if isinstance(resp_fmt.json_schema, dict) else resp_fmt.json_schema
+                        if raw_schema:
+                            generation_config["responseSchema"] = cls.sanitize_schema(raw_schema)
 
         # Reasoning / Thinking config
         if "gemini-3.7" in internal_model or "gemini-3" in internal_model:
@@ -361,7 +630,7 @@ class OpenAITranslator:
                     fn_decl = {
                         "name": fn.get("name"),
                         "description": fn.get("description", ""),
-                        "parameters": fn.get("parameters", {})
+                        "parameters": cls.sanitize_schema(fn.get("parameters", {}), is_top_level_params=True)
                     }
                     function_declarations.append(fn_decl)
             if function_declarations:

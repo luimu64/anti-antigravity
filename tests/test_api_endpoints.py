@@ -611,3 +611,89 @@ async def test_standardized_error_envelope():
         assert "error" in data_400
         assert data_400["error"]["type"] == "invalid_request_error"
         assert "messages" in data_400["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_deepseek_tool_sanitization_endpoint():
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+    mock_resp = {
+        "responseId": "chatcmpl-deepseek-tools",
+        "text": "",
+        "thoughts": "Running python code.",
+        "toolCalls": [
+            {
+                "name": "deepseek_code",
+                "args": {"action": {"language": "python", "code": "print('hello')"}}
+            }
+        ],
+        "finishReason": "STOP",
+        "usageMetadata": {"promptTokenCount": 50, "candidatesTokenCount": 20, "totalTokenCount": 70}
+    }
+
+    captured_kwargs = {}
+    async def mock_generate_content(*args, **kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+        return mock_resp
+
+    with patch.object(client, "generate_content", side_effect=mock_generate_content):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": "Execute python code"}],
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "deepseek_code",
+                                "description": "Execute code",
+                                "parameters": {
+                                    "$schema": "http://json-schema.org/draft-07/schema#",
+                                    "title": "CodeParams",
+                                    "type": "object",
+                                    "properties": {
+                                        "action": {
+                                            "title": "Action",
+                                            "oneOf": [
+                                                {
+                                                    "title": "PyAction",
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "language": {"const": "python", "title": "Lang"},
+                                                        "code": {"type": "string", "title": "Code"}
+                                                    },
+                                                    "required": ["language", "code"],
+                                                    "additionalProperties": False
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "required": ["action"],
+                                    "additionalProperties": False
+                                }
+                            }
+                        }
+                    ]
+                }
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["choices"][0]["finish_reason"] == "tool_calls"
+            
+            # Verify that sanitized tools were passed to backend
+            passed_tools = captured_kwargs.get("tools", [])
+            assert len(passed_tools) == 1
+            decl = passed_tools[0]["functionDeclarations"][0]
+            params = decl["parameters"]
+            assert "const" not in str(params)
+            assert "title" not in str(params)
+            assert "additionalProperties" not in str(params)
+            assert "$schema" not in str(params)
+            assert "oneOf" not in str(params)
+            assert "anyOf" in params["properties"]["action"]
+            assert params["properties"]["action"]["anyOf"][0]["properties"]["language"]["enum"] == ["python"]
+
