@@ -1,10 +1,12 @@
 import json
 import logging
-from typing import AsyncGenerator, Dict, Any, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import httpx
 
+from app.auth import OAuthManager, auth_manager
 from app.config import CLOUD_CODE_BASE_URL, USER_AGENT
-from app.auth import auth_manager, OAuthManager
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("agy_to_api.providers.antigravity")
@@ -22,8 +24,8 @@ class AntigravityAdapter(BaseAdapter):
         super().__init__(enabled=enabled)
         self.base_url = base_url.rstrip("/")
         self.auth = auth
-        self._cached_models: Optional[Dict[str, Any]] = None
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._cached_models: dict[str, Any] | None = None
+        self._http_client: httpx.AsyncClient | None = None
 
     def is_configured(self) -> bool:
         return bool(self.auth.refresh_token or self.auth.access_token)
@@ -35,7 +37,7 @@ class AntigravityAdapter(BaseAdapter):
             )
         return self._http_client
 
-    async def _get_headers(self) -> Dict[str, str]:
+    async def _get_headers(self) -> dict[str, str]:
         token = await self.auth.get_valid_access_token()
         return {
             "Authorization": f"Bearer {token}",
@@ -44,7 +46,7 @@ class AntigravityAdapter(BaseAdapter):
             "Accept-Encoding": "gzip, deflate",
         }
 
-    async def load_code_assist(self) -> Dict[str, Any]:
+    async def load_code_assist(self) -> dict[str, Any]:
         """Call /v1internal:loadCodeAssist to retrieve project ID and tier metadata."""
         headers = await self._get_headers()
         payload = {"metadata": {"ideType": "ANTIGRAVITY"}}
@@ -92,7 +94,7 @@ class AntigravityAdapter(BaseAdapter):
 
     async def fetch_available_models(
         self, force_refresh: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Call /v1internal:fetchAvailableModels to get all supported models."""
         if self._cached_models and not force_refresh:
             return self._cached_models
@@ -122,7 +124,7 @@ class AntigravityAdapter(BaseAdapter):
         self._cached_models = resp.json()
         return self._cached_models
 
-    async def retrieve_user_quota_summary(self) -> Dict[str, Any]:
+    async def retrieve_user_quota_summary(self) -> dict[str, Any]:
         """Call /v1internal:retrieveUserQuotaSummary to get quota details."""
         headers = await self._get_headers()
         url = f"{self.base_url}/v1internal:retrieveUserQuotaSummary"
@@ -152,16 +154,16 @@ class AntigravityAdapter(BaseAdapter):
     async def stream_generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Call /v1internal:streamGenerateContent?alt=sse and stream events."""
         headers = await self._get_headers()
         project_id = await self.get_project_id()
 
-        inner_request: Dict[str, Any] = {"contents": contents}
+        inner_request: dict[str, Any] = {"contents": contents}
         if system_instruction:
             inner_request["systemInstruction"] = system_instruction
         if generation_config:
@@ -247,14 +249,14 @@ class AntigravityAdapter(BaseAdapter):
     async def generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Non-streaming generate content call. Merges stream chunks into complete response."""
-        candidates_map: Dict[int, Dict[str, Any]] = {}
-        usage_metadata: Dict[str, Any] = {}
+        candidates_map: dict[int, dict[str, Any]] = {}
+        usage_metadata: dict[str, Any] = {}
         finish_reason = "STOP"
         response_id = None
         model_version = model
@@ -349,8 +351,8 @@ class AntigravityAdapter(BaseAdapter):
         }
 
     async def embed_contents(
-        self, model: str, texts: List[str], dimensions: Optional[int] = None
-    ) -> Dict[str, Any]:
+        self, model: str, texts: list[str], dimensions: int | None = None
+    ) -> dict[str, Any]:
         """Call /v1internal:batchEmbedContents to generate text embeddings."""
         headers = await self._get_headers()
         project_id = await self.get_project_id()
@@ -361,7 +363,7 @@ class AntigravityAdapter(BaseAdapter):
 
         requests_payload = []
         for text in texts:
-            req_item: Dict[str, Any] = {"content": {"parts": [{"text": text}]}}
+            req_item: dict[str, Any] = {"content": {"parts": [{"text": text}]}}
             if dimensions is not None:
                 req_item["outputDimensionality"] = dimensions
             requests_payload.append(req_item)

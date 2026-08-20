@@ -1,66 +1,68 @@
-import time
-import uuid
 import json
 import logging
-from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Union
-from pydantic import BaseModel, Field, ConfigDict
+import time
+import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from app.config import MODEL_ALIASES, ANTIGRAVITY_TIER_MAP, CANONICAL_MODEL_MAP
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.config import ANTIGRAVITY_TIER_MAP, CANONICAL_MODEL_MAP, MODEL_ALIASES
 
 logger = logging.getLogger("agy_to_api.translator")
 
 # Cache to store thought signatures across turns for multi-turn function calling
-_thought_signature_cache: Dict[str, str] = {}
+_thought_signature_cache: dict[str, str] = {}
 
 
 class ChatMessage(BaseModel):
     role: str
-    content: Optional[Any] = None
-    name: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_call_id: Optional[str] = None
-    reasoning_content: Optional[str] = None
+    content: Any | None = None
+    name: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+    reasoning_content: str | None = None
 
 
 class StreamOptions(BaseModel):
-    include_usage: Optional[bool] = None
+    include_usage: bool | None = None
 
 
 class ResponseFormat(BaseModel):
-    type: Optional[str] = "text"
-    json_schema: Optional[Dict[str, Any]] = None
+    type: str | None = "text"
+    json_schema: dict[str, Any] | None = None
 
 
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     model: str
-    messages: List[Dict[str, Any]]
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    n: Optional[int] = None
-    stop: Optional[Union[str, List[str]]] = None
-    max_tokens: Optional[int] = Field(default=None, alias="max_completion_tokens")
-    presence_penalty: Optional[float] = None
-    frequency_penalty: Optional[float] = None
-    seed: Optional[int] = None
-    response_format: Optional[Union[ResponseFormat, Dict[str, Any]]] = None
-    stream: Optional[bool] = False
-    stream_options: Optional[Union[StreamOptions, Dict[str, Any]]] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    reasoning_effort: Optional[str] = None
-    user: Optional[str] = None
+    messages: list[dict[str, Any]]
+    temperature: float | None = None
+    top_p: float | None = None
+    n: int | None = None
+    stop: str | list[str] | None = None
+    max_tokens: int | None = Field(default=None, alias="max_completion_tokens")
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    seed: int | None = None
+    response_format: ResponseFormat | dict[str, Any] | None = None
+    stream: bool | None = False
+    stream_options: StreamOptions | dict[str, Any] | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    reasoning_effort: str | None = None
+    user: str | None = None
 
 
 class EmbeddingRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    input: Union[str, List[str], List[int], List[List[int]]]
+    input: str | list[str] | list[int] | list[list[int]]
     model: str = "text-embedding-004"
-    encoding_format: Optional[str] = "float"
-    dimensions: Optional[int] = None
-    user: Optional[str] = None
+    encoding_format: str | None = "float"
+    dimensions: int | None = None
+    user: str | None = None
 
 
 class OpenAITranslator:
@@ -70,7 +72,7 @@ class OpenAITranslator:
 
     @staticmethod
     def resolve_model(
-        requested_model: str, reasoning_effort: Optional[str] = None
+        requested_model: str, reasoning_effort: str | None = None
     ) -> str:
         """
         Map user-requested model and optional reasoning_effort to Antigravity internal model name
@@ -103,12 +105,12 @@ class OpenAITranslator:
     @classmethod
     def openai_to_internal_request(
         cls, req: ChatCompletionRequest
-    ) -> Tuple[
+    ) -> tuple[
         str,
-        List[Dict[str, Any]],
-        Optional[Dict[str, Any]],
-        Optional[Dict[str, Any]],
-        Optional[List[Dict[str, Any]]],
+        list[dict[str, Any]],
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        list[dict[str, Any]] | None,
     ]:
         """
         Convert OpenAI ChatCompletionRequest into internal format:
@@ -116,11 +118,11 @@ class OpenAITranslator:
         """
         internal_model = cls.resolve_model(req.model, req.reasoning_effort)
 
-        contents: List[Dict[str, Any]] = []
-        system_texts: List[str] = []
+        contents: list[dict[str, Any]] = []
+        system_texts: list[str] = []
 
         # Track tool names for tool_call_id -> function_name mapping
-        tool_call_names: Dict[str, str] = {}
+        tool_call_names: dict[str, str] = {}
 
         for msg in req.messages:
             role = str(msg.get("role", "user")).lower()
@@ -277,7 +279,7 @@ class OpenAITranslator:
                         except Exception:
                             fn_args = {"raw_args": fn_args}
 
-                    part: Dict[str, Any] = {
+                    part: dict[str, Any] = {
                         "functionCall": {"name": fn_name, "args": fn_args, "id": tc_id}
                     }
 
@@ -341,7 +343,7 @@ class OpenAITranslator:
             if req.max_tokens
             else min(8192, model_limit)
         )
-        generation_config: Dict[str, Any] = {"maxOutputTokens": max_tokens}
+        generation_config: dict[str, Any] = {"maxOutputTokens": max_tokens}
         if req.temperature is not None:
             generation_config["temperature"] = req.temperature
         if req.top_p is not None:
@@ -437,7 +439,7 @@ class OpenAITranslator:
         # Tool choice handling
         if req.tool_choice and tools:
             # Map tool_choice to toolConfig / functionCallingConfig
-            tool_config: Dict[str, Any] = {}
+            tool_config: dict[str, Any] = {}
             if isinstance(req.tool_choice, str):
                 tc_lower = req.tool_choice.lower()
                 if tc_lower == "none":
@@ -464,7 +466,7 @@ class OpenAITranslator:
         return internal_model, contents, system_instruction, generation_config, tools
 
     @staticmethod
-    def format_usage(usage_meta: Dict[str, Any]) -> Dict[str, Any]:
+    def format_usage(usage_meta: dict[str, Any]) -> dict[str, Any]:
         """
         Format upstream usage metadata into OpenAI standard usage dict.
         Accurately reports prompt tokens, completion tokens, total tokens,
@@ -494,8 +496,8 @@ class OpenAITranslator:
 
     @classmethod
     def internal_to_openai_response(
-        cls, result: Dict[str, Any], requested_model: str
-    ) -> Dict[str, Any]:
+        cls, result: dict[str, Any], requested_model: str
+    ) -> dict[str, Any]:
         """
         Convert complete internal response into OpenAI ChatCompletion response.
         Supports single and multi-candidate (n > 1) responses.
@@ -535,7 +537,7 @@ class OpenAITranslator:
                         }
                     )
 
-                msg: Dict[str, Any] = {
+                msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": cand.get("text", ""),
                 }
@@ -607,8 +609,8 @@ class OpenAITranslator:
 
     @classmethod
     def internal_to_openai_text_completion(
-        cls, result: Dict[str, Any], requested_model: str
-    ) -> Dict[str, Any]:
+        cls, result: dict[str, Any], requested_model: str
+    ) -> dict[str, Any]:
         """
         Convert internal response into OpenAI /v1/completions text completion response.
         """
@@ -663,7 +665,7 @@ class OpenAITranslator:
     @classmethod
     async def internal_stream_to_openai_chunks(
         cls,
-        event_stream: AsyncGenerator[Dict[str, Any], None],
+        event_stream: AsyncGenerator[dict[str, Any], None],
         requested_model: str,
         include_usage: bool = False,
     ) -> AsyncGenerator[str, None]:
@@ -676,7 +678,7 @@ class OpenAITranslator:
         created_time = int(time.time())
         seen_cand_indexes = set()
         last_thought_signature = None
-        latest_usage_metadata: Dict[str, Any] = {}
+        latest_usage_metadata: dict[str, Any] = {}
         fp = cls._generate_fingerprint(requested_model)
 
         async for event in event_stream:
@@ -710,7 +712,7 @@ class OpenAITranslator:
                     if p.get("thought"):
                         thought_text = p.get("text", "")
                         if thought_text:
-                            delta: Dict[str, Any] = {"reasoning_content": thought_text}
+                            delta: dict[str, Any] = {"reasoning_content": thought_text}
                             if cand_idx not in seen_cand_indexes:
                                 delta["role"] = "assistant"
                                 seen_cand_indexes.add(cand_idx)
@@ -845,7 +847,7 @@ class OpenAITranslator:
     @classmethod
     async def internal_stream_to_openai_text_chunks(
         cls,
-        event_stream: AsyncGenerator[Dict[str, Any], None],
+        event_stream: AsyncGenerator[dict[str, Any], None],
         requested_model: str,
         include_usage: bool = False,
     ) -> AsyncGenerator[str, None]:
@@ -855,7 +857,7 @@ class OpenAITranslator:
         """
         completion_id = f"cmpl-{uuid.uuid4().hex[:12]}"
         created_time = int(time.time())
-        latest_usage_metadata: Dict[str, Any] = {}
+        latest_usage_metadata: dict[str, Any] = {}
         fp = cls._generate_fingerprint(requested_model)
 
         async for event in event_stream:

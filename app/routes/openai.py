@@ -1,22 +1,20 @@
-import time
-import struct
 import base64
 import logging
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
-from fastapi.responses import StreamingResponse, JSONResponse
+import struct
 
-from app.config import MODEL_ALIASES
-from app.auth import auth_manager
-from app.keys import api_key_manager
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
+
 from app.client import client
-from app.translator import OpenAITranslator, ChatCompletionRequest, EmbeddingRequest
+from app.config import MODEL_ALIASES
+from app.keys import api_key_manager
+from app.translator import ChatCompletionRequest, EmbeddingRequest, OpenAITranslator
 
 logger = logging.getLogger("agy_to_api.openai")
 router = APIRouter(tags=["OpenAI"])
 
 
-async def verify_api_key(authorization: Optional[str] = Header(None)):
+async def verify_api_key(authorization: str | None = Header(None)):
     """
     API Key enforcement check for incoming requests to this bridge.
     Validates against registered bridge API keys.
@@ -146,7 +144,7 @@ async def chat_completions(request: ChatCompletionRequest):
         logger.error(f"Error translating OpenAI request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid request parameters: {str(e)}",
+            detail=f"Invalid request parameters: {e!s}",
         )
 
     # Determine if include_usage is requested for streaming
@@ -186,7 +184,7 @@ async def chat_completions(request: ChatCompletionRequest):
             logger.error(f"Streaming generation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Generation failed: {str(e)}",
+                detail=f"Generation failed: {e!s}",
             )
 
     # 2. Non-streaming response
@@ -206,7 +204,7 @@ async def chat_completions(request: ChatCompletionRequest):
         logger.error(f"Non-streaming generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {str(e)}",
+            detail=f"Generation failed: {e!s}",
         )
 
 
@@ -260,7 +258,7 @@ async def legacy_completions(request: Request):
         logger.error(f"Error translating completion request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid request parameters: {str(e)}",
+            detail=f"Invalid request parameters: {e!s}",
         )
 
     # 1. Streaming response
@@ -292,7 +290,7 @@ async def legacy_completions(request: Request):
             logger.error(f"Streaming text completion generation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Generation failed: {str(e)}",
+                detail=f"Generation failed: {e!s}",
             )
 
     # 2. Non-streaming response
@@ -312,7 +310,7 @@ async def legacy_completions(request: Request):
         logger.error(f"Non-streaming text completion generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {str(e)}",
+            detail=f"Generation failed: {e!s}",
         )
 
 
@@ -365,7 +363,7 @@ async def create_embeddings(request: EmbeddingRequest):
         logger.error(f"Embedding error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Embedding failed: {str(e)}",
+            detail=f"Embedding failed: {e!s}",
         )
 
     # 3. Extract embedding vectors from response

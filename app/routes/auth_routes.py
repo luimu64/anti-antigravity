@@ -1,10 +1,9 @@
 import logging
-from typing import Optional
-from fastapi import APIRouter, Request, HTTPException, Query, status
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
-from app.config import REDIRECT_URI
 from app.auth import auth_manager
 from app.client import client
 
@@ -13,15 +12,15 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 class SetTokenRequest(BaseModel):
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    project_id: Optional[str] = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    project_id: str | None = None
 
 
 class ExchangeCodeRequest(BaseModel):
     code_or_url: str
-    state: Optional[str] = None
-    redirect_uri: Optional[str] = None
+    state: str | None = None
+    redirect_uri: str | None = None
 
 
 @router.post("/exchange")
@@ -100,7 +99,7 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
                 pass
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Authorization code exchange failed: {str(e)}",
+            detail=f"Authorization code exchange failed: {e!s}",
         )
 
 
@@ -110,7 +109,7 @@ async def auth_login(
     redirect: bool = Query(
         default=True, description="Redirect to Google OAuth page directly"
     ),
-    redirect_uri: Optional[str] = Query(default=None),
+    redirect_uri: str | None = Query(default=None),
 ):
     """
     Initiate Google OAuth 2.0 flow.
@@ -251,9 +250,9 @@ async def auth_login(
 @router.get("/callback")
 async def auth_callback(
     request: Request,
-    code: Optional[str] = Query(default=None),
-    state: Optional[str] = Query(default=None),
-    error: Optional[str] = Query(default=None),
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
 ):
     """
     Handle OAuth callback from Google.
@@ -359,7 +358,7 @@ async def auth_callback(
                     <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     <span class="font-bold">Authentication Error</span>
                   </div>
-                  <p class="text-sm text-error mb-4">{str(e)}</p>
+                  <p class="text-sm text-error mb-4">{e!s}</p>
                   <div class="card-actions justify-end">
                     <a href="/auth/login" class="btn btn-primary btn-sm">Try Again</a>
                   </div>
@@ -415,7 +414,7 @@ async def refresh_token_endpoint():
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Token refresh failed: {str(e)}",
+            detail=f"Token refresh failed: {e!s}",
         )
 
 

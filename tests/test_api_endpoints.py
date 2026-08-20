@@ -1,12 +1,14 @@
 import base64
-import struct
 import json
-import pytest
-import httpx
+import struct
 from unittest.mock import AsyncMock, patch
-from main import app
+
+import httpx
+import pytest
+
 from app.client import client
 from app.keys import api_key_manager
+from main import app
 
 
 @pytest.mark.asyncio

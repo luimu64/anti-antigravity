@@ -1,11 +1,12 @@
-import os
 import json
+import logging
+import os
+import secrets
 import time
 import uuid
-import secrets
-import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 from pydantic import BaseModel
 
 from app.config import DATA_DIR
@@ -20,14 +21,14 @@ class APIKeyItem(BaseModel):
     key: str  # hashed or raw for storage
     key_preview: str
     created_at: int
-    last_used_at: Optional[int] = None
+    last_used_at: int | None = None
     is_active: bool = True
 
 
 class APIKeyManager:
     def __init__(self, storage_file: Path = API_KEYS_FILE):
         self.storage_file = storage_file
-        self.keys: Dict[str, Dict[str, Any]] = {}
+        self.keys: dict[str, dict[str, Any]] = {}
         self.enforce_keys: bool = os.getenv("ENFORCE_API_KEY", "true").lower() in (
             "true",
             "1",
@@ -76,7 +77,7 @@ class APIKeyManager:
         except Exception as e:
             logger.error(f"Failed to save API keys to {self.storage_file}: {e}")
 
-    def create_key(self, name: str = "New Key") -> Dict[str, Any]:
+    def create_key(self, name: str = "New Key") -> dict[str, Any]:
         """Create a new API key for client access to the bridge."""
         raw_key = f"sk-agy-{secrets.token_hex(20)}"
         key_id = f"key_{uuid.uuid4().hex[:8]}"
@@ -103,7 +104,7 @@ class APIKeyManager:
             return True
         return False
 
-    def list_keys(self) -> List[Dict[str, Any]]:
+    def list_keys(self) -> list[dict[str, Any]]:
         """List all keys (with masked values)."""
         result = []
         for k in self.keys.values():
@@ -147,7 +148,7 @@ class APIKeyManager:
 
         return False
 
-    def get_first_active_key(self) -> Optional[str]:
+    def get_first_active_key(self) -> str | None:
         """Get the first active raw key (for UI testing)."""
         for k in self.keys.values():
             if k.get("is_active", True):

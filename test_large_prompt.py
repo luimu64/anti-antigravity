@@ -115,7 +115,7 @@ def main():
         if "HYPER-GRAVITY-PULSAR-7734" in ans_text:
             print("🎯 NEEDLE FOUND SUCCESSFULLY! 100% ACCURACY AT 500K CONTEXT!")
         else:
-            print(f"⚠️ Needle check: Expected 'HYPER-GRAVITY-PULSAR-7734' in answer.")
+            print("⚠️ Needle check: Expected 'HYPER-GRAVITY-PULSAR-7734' in answer.")
 
     except Exception as e:
         print(f"❌ Streaming request failed: {e}")

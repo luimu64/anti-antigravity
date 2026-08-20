@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,7 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.auth import auth_manager
 from app.client import client
-from app.config import API_KEY, BASE_DIR, DATA_DIR, SERVER_HOST, SERVER_PORT
+from app.config import API_KEY, SERVER_HOST, SERVER_PORT
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.openai import router as openai_router

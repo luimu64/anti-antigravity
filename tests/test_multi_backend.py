@@ -1,16 +1,16 @@
-import os
 import json
 import time
-import pytest
-import httpx
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from app.providers.base import BaseAdapter, RateLimitError
+import httpx
+import pytest
+
+from app.client import client
 from app.providers.antigravity import AntigravityAdapter
+from app.providers.base import BaseAdapter, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
 from app.providers.router import MultiBackendRouter
-from app.client import client
 from main import app
 
 
@@ -413,7 +413,7 @@ async def test_models_disabled_backend_exclusion():
 @pytest.mark.asyncio
 async def test_models_hidden_and_reasoning_tier_mapping():
     """Verify unusable models are marked as hidden and reasoning tiers are mapped under the hood."""
-    from app.translator import OpenAITranslator, ChatCompletionRequest
+    from app.translator import OpenAITranslator
 
     # 1. Verify reasoning tiers map silently under the hood
     assert (

@@ -128,6 +128,20 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Linting & Formatting (CRITICAL)
+**Do not commit any code until it passes a perfect `ruff` check.** All files must adhere strictly to the project's formatting and linting rules.
+
+```bash
+# Run ruff linter to check for errors
+ruff check .
+
+# Automatically fix fixable linting errors
+ruff check . --fix
+
+# Format code to standard style
+ruff format .
+```
+
 ### Running Unit & Integration Tests
 ```bash
 # Run all pytest suites

@@ -1,7 +1,8 @@
-import pytest
 import json
-import asyncio
-from app.translator import OpenAITranslator, ChatCompletionRequest
+
+import pytest
+
+from app.translator import ChatCompletionRequest, OpenAITranslator
 
 
 def test_resolve_model():

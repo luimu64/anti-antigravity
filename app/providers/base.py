@@ -1,7 +1,8 @@
-import time
 import logging
+import time
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Dict, Any, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 logger = logging.getLogger("agy_to_api.providers.base")
 
@@ -28,7 +29,6 @@ class BaseAdapter(ABC):
     @abstractmethod
     def is_configured(self) -> bool:
         """Return True if required credentials or configuration are present."""
-        pass
 
     def is_available(self) -> bool:
         """Return True if backend is enabled, configured, and not currently in cooldown."""
@@ -38,7 +38,7 @@ class BaseAdapter(ABC):
             and (time.time() >= self.cooldown_until)
         )
 
-    def set_cooldown(self, seconds: Optional[float] = None) -> None:
+    def set_cooldown(self, seconds: float | None = None) -> None:
         """Mark backend as cooled down due to rate limits or errors."""
         duration = seconds if seconds is not None else self.default_cooldown
         self.cooldown_until = time.time() + duration
@@ -58,35 +58,32 @@ class BaseAdapter(ABC):
     async def generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Generate complete content response non-streaming."""
-        pass
 
     @abstractmethod
     async def stream_generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream generated content chunks."""
-        pass
 
     @abstractmethod
     async def fetch_available_models(
         self, force_refresh: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch models supported by this adapter."""
-        pass
 
     async def embed_contents(
-        self, model: str, texts: List[str], dimensions: Optional[int] = None
-    ) -> Dict[str, Any]:
+        self, model: str, texts: list[str], dimensions: int | None = None
+    ) -> dict[str, Any]:
         """Generate text embeddings (optional support)."""
         raise NotImplementedError(f"Backend '{self.name}' does not support embeddings.")

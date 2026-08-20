@@ -1,9 +1,11 @@
-import pytest
-import httpx
 from unittest.mock import AsyncMock, patch
-from main import app
-from app.keys import api_key_manager
+
+import httpx
+import pytest
+
 from app.client import client
+from app.keys import api_key_manager
+from main import app
 
 
 @pytest.mark.asyncio

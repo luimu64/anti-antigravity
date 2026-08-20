@@ -1,6 +1,7 @@
 import pytest
-from app.keys import api_key_manager
+
 from app.auth import auth_manager
+from app.keys import api_key_manager
 
 
 @pytest.fixture(autouse=True)

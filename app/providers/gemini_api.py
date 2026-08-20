@@ -1,7 +1,9 @@
-import os
 import json
 import logging
-from typing import AsyncGenerator, Dict, Any, List, Optional
+import os
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import httpx
 
 from app.providers.base import BaseAdapter, RateLimitError
@@ -14,15 +16,15 @@ class GeminiApiAdapter(BaseAdapter):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
         enabled: bool = False,
     ):
         super().__init__(enabled=enabled)
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.base_url = base_url.rstrip("/")
-        self._http_client: Optional[httpx.AsyncClient] = None
-        self._cached_models: Optional[Dict[str, Any]] = None
+        self._http_client: httpx.AsyncClient | None = None
+        self._cached_models: dict[str, Any] | None = None
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key.strip())
@@ -53,7 +55,7 @@ class GeminiApiAdapter(BaseAdapter):
         }
         return mapping.get(clean, clean)
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         return {
             "x-goog-api-key": self.api_key or "",
             "Content-Type": "application/json",
@@ -62,7 +64,7 @@ class GeminiApiAdapter(BaseAdapter):
 
     async def fetch_available_models(
         self, force_refresh: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch available models from Google AI Studio."""
         if self._cached_models and not force_refresh:
             return self._cached_models
@@ -132,17 +134,17 @@ class GeminiApiAdapter(BaseAdapter):
     async def stream_generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream generated content from Google AI Studio."""
         if not self.is_configured():
             raise ValueError("Gemini API key is not configured.")
 
         normalized_model = self._normalize_model_name(model)
-        payload: Dict[str, Any] = {"contents": contents}
+        payload: dict[str, Any] = {"contents": contents}
         if system_instruction:
             payload["systemInstruction"] = system_instruction
         if generation_config:
@@ -185,14 +187,14 @@ class GeminiApiAdapter(BaseAdapter):
     async def generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Non-streaming generate content call. Merges SSE stream chunks."""
-        candidates_map: Dict[int, Dict[str, Any]] = {}
-        usage_metadata: Dict[str, Any] = {}
+        candidates_map: dict[int, dict[str, Any]] = {}
+        usage_metadata: dict[str, Any] = {}
         finish_reason = "STOP"
         response_id = None
         model_version = model
@@ -287,8 +289,8 @@ class GeminiApiAdapter(BaseAdapter):
         }
 
     async def embed_contents(
-        self, model: str, texts: List[str], dimensions: Optional[int] = None
-    ) -> Dict[str, Any]:
+        self, model: str, texts: list[str], dimensions: int | None = None
+    ) -> dict[str, Any]:
         """Call Gemini API batchEmbedContents."""
         if not self.is_configured():
             raise ValueError("Gemini API key is not configured.")
@@ -296,7 +298,7 @@ class GeminiApiAdapter(BaseAdapter):
         clean_model = model.replace("models/", "")
         requests_payload = []
         for text in texts:
-            req_item: Dict[str, Any] = {
+            req_item: dict[str, Any] = {
                 "model": f"models/{clean_model}",
                 "content": {"parts": [{"text": text}]},
             }

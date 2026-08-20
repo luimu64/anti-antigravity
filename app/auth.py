@@ -6,7 +6,7 @@ import os
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import httpx
 
@@ -35,21 +35,21 @@ class OAuthManager:
         self.client_secret = client_secret
         self.credentials_file = credentials_file
 
-        self.access_token: Optional[str] = None
-        self.refresh_token: Optional[str] = None
+        self.access_token: str | None = None
+        self.refresh_token: str | None = None
         self.token_expiry: float = 0
-        self.id_token: Optional[str] = None
-        self.user_email: Optional[str] = None
-        self.project_id: Optional[str] = PROJECT_ID_OVERRIDE or None
-        self.tier_name: Optional[str] = None
+        self.id_token: str | None = None
+        self.user_email: str | None = None
+        self.project_id: str | None = PROJECT_ID_OVERRIDE or None
+        self.tier_name: str | None = None
 
         # In-memory PKCE state mapping: state -> code_verifier
-        self._pkce_verifier_cache: Dict[str, str] = {}
+        self._pkce_verifier_cache: dict[str, str] = {}
 
         # Try loading credentials automatically
         self.load_credentials()
 
-    def generate_pkce(self) -> Tuple[str, str]:
+    def generate_pkce(self) -> tuple[str, str]:
         """Generate PKCE code_verifier and code_challenge."""
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
@@ -59,10 +59,10 @@ class OAuthManager:
     def get_authorization_url(
         self,
         redirect_uri: str = REDIRECT_URI,
-        state: Optional[str] = None,
-        device_id: Optional[str] = None,
-        device_name: Optional[str] = None,
-    ) -> Tuple[str, str, str]:
+        state: str | None = None,
+        device_id: str | None = None,
+        device_name: str | None = None,
+    ) -> tuple[str, str, str]:
         """
         Generate the Google OAuth2 authorization URL.
         Includes device_id and device_name to support private IP and remote deployments.
@@ -103,9 +103,9 @@ class OAuthManager:
         self,
         code: str,
         redirect_uri: str = REDIRECT_URI,
-        state: Optional[str] = None,
-        code_verifier: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        state: str | None = None,
+        code_verifier: str | None = None,
+    ) -> dict[str, Any]:
         """Exchange authorization code for access and refresh tokens."""
         verifier = code_verifier
         if not verifier and state and state in self._pkce_verifier_cache:
@@ -179,10 +179,10 @@ class OAuthManager:
 
         return self.access_token
 
-    def _apply_token_response(self, token_data: Dict[str, Any]):
+    def _apply_token_response(self, token_data: dict[str, Any]):
         """Parse and store token response data."""
         self.access_token = token_data.get("access_token")
-        if "refresh_token" in token_data and token_data["refresh_token"]:
+        if token_data.get("refresh_token"):
             self.refresh_token = token_data["refresh_token"]
 
         expires_in = token_data.get("expires_in", 3600)
@@ -363,9 +363,9 @@ class OAuthManager:
 
     def set_tokens(
         self,
-        access_token: Optional[str],
-        refresh_token: Optional[str],
-        project_id: Optional[str] = None,
+        access_token: str | None,
+        refresh_token: str | None,
+        project_id: str | None = None,
     ):
         """Manually configure tokens."""
         if access_token:
@@ -392,7 +392,7 @@ class OAuthManager:
             except Exception as e:
                 logger.warning(f"Could not delete {self.credentials_file}: {e}")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return current authentication status."""
         is_authenticated = bool(self.access_token or self.refresh_token)
         now = time.time()

@@ -1,27 +1,28 @@
+import json
+import logging
 import os
 import re
-import json
-import time
-import logging
-from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import httpx
 
+from app.auth import OAuthManager, auth_manager
 from app.config import (
+    CANONICAL_MODEL_MAP,
     CLOUD_CODE_BASE_URL,
     CREDENTIALS_FILE,
-    CANONICAL_MODEL_MAP,
     HIDDEN_MODELS,
 )
-from app.auth import auth_manager, OAuthManager
-from app.providers.base import BaseAdapter, RateLimitError
 from app.providers.antigravity import AntigravityAdapter
+from app.providers.base import BaseAdapter, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
 
 logger = logging.getLogger("agy_to_api.providers.router")
 
 
-def _extract_model_version(model_id: str) -> Tuple[int, ...]:
+def _extract_model_version(model_id: str) -> tuple[int, ...]:
     """
     Extract major/minor version numbers from a model ID string for semantic sorting.
     Examples:
@@ -62,9 +63,9 @@ class MultiBackendRouter(BaseAdapter):
 
     def __init__(
         self,
-        antigravity: Optional[AntigravityAdapter] = None,
-        gemini_api: Optional[GeminiApiAdapter] = None,
-        gemini_web: Optional[GeminiWebAdapter] = None,
+        antigravity: AntigravityAdapter | None = None,
+        gemini_api: GeminiApiAdapter | None = None,
+        gemini_web: GeminiWebAdapter | None = None,
         routing_strategy: str = "free_first",
     ):
         super().__init__(enabled=True)
@@ -72,7 +73,7 @@ class MultiBackendRouter(BaseAdapter):
         self.gemini_api = gemini_api or GeminiApiAdapter()
         self.gemini_web = gemini_web or GeminiWebAdapter()
 
-        self.adapters: Dict[str, BaseAdapter] = {
+        self.adapters: dict[str, BaseAdapter] = {
             "antigravity": self.antigravity,
             "gemini_api": self.gemini_api,
             "gemini_web": self.gemini_web,
@@ -157,16 +158,16 @@ class MultiBackendRouter(BaseAdapter):
                 ):
                     self.routing_strategy = data["routing_strategy"]
 
-                if "gemini_api_key" in data and data["gemini_api_key"]:
+                if data.get("gemini_api_key"):
                     self.gemini_api.api_key = data["gemini_api_key"]
                 if "gemini_api_enabled" in data:
                     self.gemini_api.enabled = bool(data["gemini_api_enabled"])
 
-                if "gemini_web_psid" in data and data["gemini_web_psid"]:
+                if data.get("gemini_web_psid"):
                     self.gemini_web.psid = data["gemini_web_psid"]
-                if "gemini_web_psidts" in data and data["gemini_web_psidts"]:
+                if data.get("gemini_web_psidts"):
                     self.gemini_web.psidts = data["gemini_web_psidts"]
-                if "gemini_web_sapisid" in data and data["gemini_web_sapisid"]:
+                if data.get("gemini_web_sapisid"):
                     self.gemini_web.sapisid = data["gemini_web_sapisid"]
                 if "gemini_web_enabled" in data:
                     self.gemini_web.enabled = bool(data["gemini_web_enabled"])
@@ -210,7 +211,7 @@ class MultiBackendRouter(BaseAdapter):
         except Exception as e:
             logger.error(f"Failed to save backend config to {CREDENTIALS_FILE}: {e}")
 
-    def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+    def update_config(self, updates: dict[str, Any]) -> dict[str, Any]:
         """Apply updates to backends/strategy and persist."""
         if "routing_strategy" in updates and updates["routing_strategy"] in (
             "free_first",
@@ -250,10 +251,10 @@ class MultiBackendRouter(BaseAdapter):
         self.save_config()
         return self.get_status()
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get status of all backends and routing configuration."""
 
-        def mask_secret(s: Optional[str]) -> str:
+        def mask_secret(s: str | None) -> str:
             if not s:
                 return ""
             if len(s) > 10:
@@ -308,7 +309,7 @@ class MultiBackendRouter(BaseAdapter):
             },
         }
 
-    def clear_all_cooldowns(self, backend: Optional[str] = None) -> None:
+    def clear_all_cooldowns(self, backend: str | None = None) -> None:
         """Clear cooldown status for specific backend or all backends."""
         if backend and backend in self.adapters:
             self.adapters[backend].clear_cooldown()
@@ -316,10 +317,10 @@ class MultiBackendRouter(BaseAdapter):
             for a in self.adapters.values():
                 a.clear_cooldown()
 
-    def get_adapter(self, name: str) -> Optional[BaseAdapter]:
+    def get_adapter(self, name: str) -> BaseAdapter | None:
         return self.adapters.get(name)
 
-    def get_available_adapters(self) -> List[BaseAdapter]:
+    def get_available_adapters(self) -> list[BaseAdapter]:
         available = [a for a in self.adapters.values() if a.is_available()]
         if not available:
             # If all are in cooldown but configured & enabled, fallback to configured
@@ -328,7 +329,7 @@ class MultiBackendRouter(BaseAdapter):
             ]
         return available
 
-    def get_ordered_adapters(self) -> List[BaseAdapter]:
+    def get_ordered_adapters(self) -> list[BaseAdapter]:
         """Order adapters according to the selected routing strategy."""
         if self.routing_strategy == "round_robin":
             available = self.get_available_adapters()
@@ -365,11 +366,11 @@ class MultiBackendRouter(BaseAdapter):
     async def generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Execute non-streaming content generation with automatic 429 fallback."""
         candidates = self.get_ordered_adapters()
         last_exception = None
@@ -407,11 +408,11 @@ class MultiBackendRouter(BaseAdapter):
     async def stream_generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream generated content with automatic fallback if initial connect fails with 429."""
         candidates = self.get_ordered_adapters()
         last_exception = None
@@ -472,8 +473,8 @@ class MultiBackendRouter(BaseAdapter):
         )
 
     async def embed_contents(
-        self, model: str, texts: List[str], dimensions: Optional[int] = None
-    ) -> Dict[str, Any]:
+        self, model: str, texts: list[str], dimensions: int | None = None
+    ) -> dict[str, Any]:
         """Route embedding requests to available backend supporting embeddings."""
         candidates = [
             a for a in self.get_ordered_adapters() if hasattr(a, "embed_contents")
@@ -505,13 +506,13 @@ class MultiBackendRouter(BaseAdapter):
 
     async def fetch_available_models(
         self, force_refresh: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Aggregate models across all active providers, count provider support,
         and sort models supported across the highest number of active providers first.
         """
-        aggregated_models: Dict[str, Dict[str, Any]] = {}
-        provider_counts: Dict[str, int] = {}
+        aggregated_models: dict[str, dict[str, Any]] = {}
+        provider_counts: dict[str, int] = {}
 
         # Fetch models from all enabled adapters
         for name, adapter in self.adapters.items():
@@ -680,10 +681,10 @@ class MultiBackendRouter(BaseAdapter):
         return {"models": sorted_models}
 
     # Delegation methods for Antigravity-specific calls
-    async def load_code_assist(self) -> Dict[str, Any]:
+    async def load_code_assist(self) -> dict[str, Any]:
         return await self.antigravity.load_code_assist()
 
-    async def retrieve_user_quota_summary(self) -> Dict[str, Any]:
+    async def retrieve_user_quota_summary(self) -> dict[str, Any]:
         return await self.antigravity.retrieve_user_quota_summary()
 
     async def get_project_id(self) -> str:

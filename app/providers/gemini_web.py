@@ -1,11 +1,13 @@
+import hashlib
+import json
+import logging
 import os
 import re
-import json
 import time
 import uuid
-import hashlib
-import logging
-from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import httpx
 
 from app.providers.base import BaseAdapter, RateLimitError
@@ -74,9 +76,9 @@ class GeminiWebAdapter(BaseAdapter):
 
     def __init__(
         self,
-        psid: Optional[str] = None,
-        psidts: Optional[str] = None,
-        sapisid: Optional[str] = None,
+        psid: str | None = None,
+        psidts: str | None = None,
+        sapisid: str | None = None,
         enabled: bool = False,
     ):
         super().__init__(enabled=enabled)
@@ -100,13 +102,13 @@ class GeminiWebAdapter(BaseAdapter):
             or os.getenv("__Secure-3PSID", "")
         )
 
-        self._http_client: Optional[httpx.AsyncClient] = None
-        self._snlm0e_token: Optional[str] = None
+        self._http_client: httpx.AsyncClient | None = None
+        self._snlm0e_token: str | None = None
         self._build_label: str = DEFAULT_BUILD_LABEL
         self._session_id: str = ""
         self._capacity: int = 1
         self._capacity_field: int = 12
-        self._discovered_models: Optional[Dict[str, Any]] = None
+        self._discovered_models: dict[str, Any] | None = None
 
     def is_configured(self) -> bool:
         return bool(self.psid and self.psid.strip())
@@ -126,18 +128,18 @@ class GeminiWebAdapter(BaseAdapter):
             cookies.append(f"SAPISID={self.sapisid}")
         return "; ".join(cookies)
 
-    def _generate_sapisidhash(self) -> Optional[str]:
+    def _generate_sapisidhash(self) -> str | None:
         """Generate SAPISIDHASH authorization header according to Google Web RPC specs."""
         if not self.sapisid:
             return None
         timestamp = int(time.time())
         origin = "https://gemini.google.com"
         digest = hashlib.sha1(
-            f"{timestamp} {self.sapisid} {origin}".encode("utf-8")
+            f"{timestamp} {self.sapisid} {origin}".encode()
         ).hexdigest()
         return f"SAPISIDHASH {timestamp}_{digest}"
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         headers = {
             "Host": "gemini.google.com",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -154,7 +156,7 @@ class GeminiWebAdapter(BaseAdapter):
             headers["Authorization"] = sapisid_hash
         return headers
 
-    async def _init_session(self) -> Optional[str]:
+    async def _init_session(self) -> str | None:
         """Initialize web session and extract XSRF token (SNlM0e / at) and build label."""
         if self._snlm0e_token:
             return self._snlm0e_token
@@ -199,8 +201,8 @@ class GeminiWebAdapter(BaseAdapter):
 
     def _extract_prompt_text(
         self,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
     ) -> str:
         """Flatten contents and system instructions into a clean prompt string."""
         lines = []
@@ -222,7 +224,7 @@ class GeminiWebAdapter(BaseAdapter):
 
     async def fetch_available_models(
         self, force_refresh: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Dynamically discover available models via the otAQ7b RPC endpoint,
         falling back to default models if offline or unconfigured.
@@ -253,7 +255,7 @@ class GeminiWebAdapter(BaseAdapter):
 
             resp = await http.post(url, data=post_data, headers=headers)
             if resp.status_code == 200:
-                discovered: Dict[str, Any] = {}
+                discovered: dict[str, Any] = {}
                 for line in resp.text.split("\n"):
                     if line.startswith(")]}'"):
                         continue
@@ -337,7 +339,7 @@ class GeminiWebAdapter(BaseAdapter):
         self._discovered_models = FALLBACK_MODELS
         return {"models": self._discovered_models}
 
-    def _resolve_model_metadata(self, model: str) -> Tuple[str, int, int]:
+    def _resolve_model_metadata(self, model: str) -> tuple[str, int, int]:
         """
         Map model identifier to (hex_id, model_number, default_thinking_level).
         Model numbers:
@@ -364,11 +366,11 @@ class GeminiWebAdapter(BaseAdapter):
     async def stream_generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Stream response from Gemini Web interface using the StreamGenerate RPC.
         Supports thinking/reasoning token extraction and multimodal responses.
@@ -468,7 +470,7 @@ class GeminiWebAdapter(BaseAdapter):
         response_text = ""
         thoughts_text = ""
 
-        def _extract_strings(obj: Any) -> List[str]:
+        def _extract_strings(obj: Any) -> list[str]:
             if isinstance(obj, str):
                 return [obj]
             if isinstance(obj, list):
@@ -594,11 +596,11 @@ class GeminiWebAdapter(BaseAdapter):
     async def generate_content(
         self,
         model: str,
-        contents: List[Dict[str, Any]],
-        system_instruction: Optional[Dict[str, Any]] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Non-streaming generate content call. Merges stream chunks and thought tokens."""
         chunks = []
         async for chunk in self.stream_generate_content(
@@ -613,7 +615,7 @@ class GeminiWebAdapter(BaseAdapter):
         full_text = ""
         full_thoughts = ""
         finish_reason = "STOP"
-        usage: Dict[str, Any] = {}
+        usage: dict[str, Any] = {}
 
         for c in chunks:
             cands = c.get("candidates", [])

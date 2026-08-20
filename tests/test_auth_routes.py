@@ -1,9 +1,11 @@
-import pytest
-import httpx
 from unittest.mock import AsyncMock, patch
-from main import app
+
+import httpx
+import pytest
+
 from app.auth import auth_manager
 from app.client import client
+from main import app
 
 
 @pytest.mark.asyncio

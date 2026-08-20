@@ -1,7 +1,8 @@
-import pytest
 import httpx
+import pytest
+
+from app.keys import APIKeyManager
 from main import app
-from app.keys import APIKeyManager, api_key_manager
 
 
 def test_api_key_manager_crud(tmp_path):

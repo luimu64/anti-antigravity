@@ -1,16 +1,16 @@
-import os
 import logging
+import os
 from pathlib import Path
-from typing import Optional, Dict, Any
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
-from app.config import SERVER_PORT, BASE_DIR
 from app.auth import auth_manager
-from app.keys import api_key_manager
 from app.client import client
+from app.config import SERVER_PORT
+from app.keys import api_key_manager
 
 logger = logging.getLogger("agy_to_api.dashboard")
 router = APIRouter(tags=["Dashboard"])
@@ -20,7 +20,7 @@ jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)))
 
 
 class CreateKeyRequest(BaseModel):
-    name: Optional[str] = "New Key"
+    name: str | None = "New Key"
 
 
 class ToggleEnforcementRequest(BaseModel):
@@ -28,14 +28,14 @@ class ToggleEnforcementRequest(BaseModel):
 
 
 class UpdateBackendsRequest(BaseModel):
-    routing_strategy: Optional[str] = None
-    gemini_api_key: Optional[str] = None
-    gemini_api_enabled: Optional[bool] = None
-    gemini_web_psid: Optional[str] = None
-    gemini_web_psidts: Optional[str] = None
-    gemini_web_sapisid: Optional[str] = None
-    gemini_web_enabled: Optional[bool] = None
-    antigravity_enabled: Optional[bool] = None
+    routing_strategy: str | None = None
+    gemini_api_key: str | None = None
+    gemini_api_enabled: bool | None = None
+    gemini_web_psid: str | None = None
+    gemini_web_psidts: str | None = None
+    gemini_web_sapisid: str | None = None
+    gemini_web_enabled: bool | None = None
+    antigravity_enabled: bool | None = None
 
 
 class ToggleBackendRequest(BaseModel):
@@ -47,7 +47,7 @@ class SetStrategyRequest(BaseModel):
 
 
 class ClearCooldownRequest(BaseModel):
-    backend: Optional[str] = None
+    backend: str | None = None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -149,7 +149,7 @@ async def set_routing_strategy(payload: SetStrategyRequest):
 
 
 @router.post("/api/backends/cooldown/clear")
-async def clear_cooldowns(payload: Optional[ClearCooldownRequest] = None):
+async def clear_cooldowns(payload: ClearCooldownRequest | None = None):
     """
     Clear rate limit cooldown for a specific backend or all backends.
     """
