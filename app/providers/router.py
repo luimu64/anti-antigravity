@@ -108,6 +108,10 @@ class MultiBackendRouter(BaseAdapter):
         if env_psidts:
             self.gemini_web.psidts = env_psidts
 
+        env_sapisid = os.getenv("GEMINI_WEB_SAPISID") or os.getenv("SAPISID") or os.getenv("SECURE_3PSID") or os.getenv("__Secure-3PSID")
+        if env_sapisid:
+            self.gemini_web.sapisid = env_sapisid
+
         # 2. Local credentials file
         if os.path.exists(CREDENTIALS_FILE):
             try:
@@ -126,6 +130,8 @@ class MultiBackendRouter(BaseAdapter):
                     self.gemini_web.psid = data["gemini_web_psid"]
                 if "gemini_web_psidts" in data and data["gemini_web_psidts"]:
                     self.gemini_web.psidts = data["gemini_web_psidts"]
+                if "gemini_web_sapisid" in data and data["gemini_web_sapisid"]:
+                    self.gemini_web.sapisid = data["gemini_web_sapisid"]
                 if "gemini_web_enabled" in data:
                     self.gemini_web.enabled = bool(data["gemini_web_enabled"])
 
@@ -151,6 +157,7 @@ class MultiBackendRouter(BaseAdapter):
             "gemini_api_enabled": self.gemini_api.enabled,
             "gemini_web_psid": self.gemini_web.psid,
             "gemini_web_psidts": self.gemini_web.psidts,
+            "gemini_web_sapisid": self.gemini_web.sapisid,
             "gemini_web_enabled": self.gemini_web.enabled,
             "antigravity_enabled": self.antigravity.enabled,
         })
@@ -177,6 +184,8 @@ class MultiBackendRouter(BaseAdapter):
             self.gemini_web.psid = str(updates["gemini_web_psid"]).strip()
         if "gemini_web_psidts" in updates and updates["gemini_web_psidts"] is not None:
             self.gemini_web.psidts = str(updates["gemini_web_psidts"]).strip()
+        if "gemini_web_sapisid" in updates and updates["gemini_web_sapisid"] is not None:
+            self.gemini_web.sapisid = str(updates["gemini_web_sapisid"]).strip()
         if "gemini_web_enabled" in updates and updates["gemini_web_enabled"] is not None:
             self.gemini_web.enabled = bool(updates["gemini_web_enabled"])
 

@@ -1,937 +1,215 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Antigravity OpenAI Bridge Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✨</text></svg>">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
-  <style>
-    /* Subtle Card Border Styling */
-    :root {
-      --card-subtle-border: rgba(255, 255, 255, 0.09);
-      --pico-card-border-color: var(--card-subtle-border);
-    }
-    @media (prefers-color-scheme: light) {
-      :root:not([data-theme="dark"]) {
-        --card-subtle-border: rgba(0, 0, 0, 0.08);
-      }
-    }
-    [data-theme="light"] {
-      --card-subtle-border: rgba(0, 0, 0, 0.08);
-    }
-    [data-theme="dark"] {
-      --card-subtle-border: rgba(255, 255, 255, 0.09);
-    }
-
-    article {
-      border: 1px solid var(--card-subtle-border) !important;
-    }
-
-    /* Desktop Compact Scale */
-    @media (min-width: 768px) {
-      :root {
-        --pico-font-size: 88%;
-      }
-      html {
-        font-size: 88%;
-      }
-    }
-
-    /* Toast Notification */
-    #toast-container {
-      position: fixed;
-      top: 1.25rem;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 99999;
-      pointer-events: none;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    .toast {
-      pointer-events: auto;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.6rem;
-      padding: 0.55rem 1.15rem;
-      background: var(--pico-card-background-color, #1b232c);
-      color: var(--pico-color, #e2e8f0);
-      border: 1px solid var(--pico-border-color, #334155);
-      border-radius: var(--pico-border-radius);
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
-      font-size: 0.85rem;
-      font-weight: 500;
-      opacity: 0;
-      transform: translateY(-8px) scale(0.95);
-      transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    .toast.show {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-    .toast.hide {
-      opacity: 0;
-      transform: translateY(-10px) scale(0.95);
-    }
-    .toast.toast-error {
-      border-color: #ef4444;
-    }
-    .toast-icon {
-      display: inline-flex;
-      align-items: center;
-      color: var(--pico-primary, #2ecc71);
-    }
-    .toast-icon.toast-icon-error {
-      color: #ef4444;
-    }
-
-    /* Header Responsive Layout */
-    .header-nav {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-    }
-    @media (max-width: 767px) {
-      .header-nav {
-        flex-direction: column;
-        align-items: stretch;
-      }
-      .header-brand {
-        margin: 0;
-        text-align: center;
-      }
-      .header-endpoint {
-        width: 100%;
-        margin: 0.25rem 0 0 0;
-        padding: 0;
-        display: flex;
-        justify-content: center;
-      }
-      .header-endpoint li {
-        width: 100%;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        justify-content: center;
-      }
-      .header-endpoint-btn {
-        width: 100%;
-        justify-content: center;
-      }
-    }
-
-    /* Header Endpoint Button */
-    .header-endpoint-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.65rem;
-      padding: 0.65rem 1.25rem;
-      margin: 0;
-      border-radius: var(--pico-border-radius);
-      cursor: pointer;
-      background: var(--pico-card-background-color, rgba(255, 255, 255, 0.05));
-      border: 1px solid var(--card-subtle-border);
-      color: var(--pico-color, inherit);
-      transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-    }
-    .header-endpoint-btn:hover {
-      background-color: var(--pico-dropdown-hover-background-color, rgba(255, 255, 255, 0.1));
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-      border-color: var(--pico-primary, #2ecc71);
-    }
-    .header-endpoint-btn:active {
-      transform: translateY(0);
-    }
-    .header-endpoint-btn code {
-      font-size: 0.88rem;
-      padding: 0;
-      background: none;
-      color: inherit;
-    }
-    .header-endpoint-btn svg {
-      opacity: 0.7;
-      transition: opacity 0.15s ease, color 0.15s ease;
-    }
-    .header-endpoint-btn:hover svg {
-      opacity: 1;
-      color: var(--pico-primary, #2ecc71);
-    }
-
-    /* Red Logout Button */
-    .btn-logout {
-      background-color: #dc2626 !important;
-      border-color: #dc2626 !important;
-      color: #ffffff !important;
-      margin: 0;
-      cursor: pointer;
-      border-radius: var(--pico-border-radius);
-      transition: background-color 0.15s ease, border-color 0.15s ease;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 500;
-    }
-    .btn-logout:hover, .btn-logout:focus {
-      background-color: #b91c1c !important;
-      border-color: #b91c1c !important;
-      color: #ffffff !important;
-    }
-
-    /* Auth Action Button Row */
-    .auth-action-row {
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      width: 100%;
-    }
-    .auth-action-row button {
-      flex: 1 1 0;
-      margin: 0;
-      height: 2.75rem;
-      border-radius: var(--pico-border-radius);
-    }
-
-    /* Dense Keys Table Styling for Desktop */
-    .keys-table-wrapper {
-      width: 100%;
-      overflow-x: auto;
-      margin: 0;
-    }
-    .keys-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 0.5rem;
-    }
-    .keys-table tr {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.35rem 0.5rem;
-      border-bottom: 1px solid var(--pico-border-color, #1e293b);
-      gap: 0.75rem;
-    }
-    .keys-table thead tr {
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      opacity: 0.75;
-      padding: 0.25rem 0.5rem;
-    }
-    .keys-table th,
-    .keys-table td {
-      padding: 0;
-      border: none;
-      background: transparent;
-      display: flex;
-      align-items: center;
-      white-space: nowrap;
-    }
-    .keys-col-name {
-      flex: 2 1 8.75rem;
-      min-width: 7.5rem;
-    }
-    .keys-col-preview {
-      flex: 2 1 8.75rem;
-      min-width: 8rem;
-    }
-    .keys-col-created {
-      flex: 1.5 1 6.25rem;
-      min-width: 5.5rem;
-    }
-    .keys-col-lastused {
-      flex: 1.5 1 6.25rem;
-      min-width: 5.5rem;
-    }
-    .keys-col-action {
-      flex: 0 0 auto;
-      margin-left: auto;
-      justify-content: flex-end;
-      position: sticky;
-      right: 0;
-      background: var(--pico-card-background-color, #1b232c);
-      padding-left: 0.5rem;
-    }
-    .btn-revoke {
-      margin: 0 !important;
-      padding: 0.25rem 0.75rem !important;
-      font-size: 0.75rem !important;
-      height: 1.75rem !important;
-      line-height: 1 !important;
-      white-space: nowrap;
-      min-width: auto;
-      width: auto !important;
-      background-color: #dc2626 !important;
-      border-color: #dc2626 !important;
-      color: #ffffff !important;
-      cursor: pointer;
-      border-radius: var(--pico-border-radius);
-      transition: background-color 0.15s ease, border-color 0.15s ease;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 500;
-    }
-    .btn-revoke:hover, .btn-revoke:focus {
-      background-color: #b91c1c !important;
-      border-color: #b91c1c !important;
-      color: #ffffff !important;
-    }
-
-    /* Provider Cards Grid */
-    .provider-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 1rem;
-      margin-top: 1rem;
-    }
-    .provider-card {
-      margin-bottom: 0 !important;
-      padding: 1.25rem;
-      background: var(--pico-card-background-color);
-      border: 1px solid var(--card-subtle-border);
-      border-radius: var(--pico-border-radius);
-    }
-    .provider-card header {
-      padding-bottom: 0.5rem;
-      margin-bottom: 0.75rem;
-      border-bottom: 1px solid var(--pico-border-color, rgba(255, 255, 255, 0.1));
-    }
-    .badge-active {
-      color: #2ecc71;
-      font-weight: bold;
-    }
-    .badge-cooldown {
-      color: #f39c12;
-      font-weight: bold;
-    }
-    .badge-disabled {
-      color: #7f8c8d;
-    }
-    .badge-unconfigured {
-      color: #e74c3c;
-    }
-
-    /* Dense Models Table Styling for Desktop (matching keys-table) */
-    .models-table-wrapper {
-      width: 100%;
-      overflow-x: auto;
-      margin: 0;
-    }
-    .models-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 0.5rem;
-    }
-    .models-table tr {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.4rem 0.5rem;
-      border-bottom: 1px solid var(--pico-border-color, #1e293b);
-      gap: 0.75rem;
-    }
-    .models-table thead tr {
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      opacity: 0.75;
-      padding: 0.25rem 0.5rem;
-    }
-    .models-table th,
-    .models-table td {
-      padding: 0;
-      border: none;
-      background: transparent;
-      display: flex;
-      align-items: center;
-      white-space: nowrap;
-    }
-    .models-col-name {
-      flex: 2.2 1 11rem;
-      min-width: 9rem;
-    }
-    .models-col-id {
-      flex: 2.5 1 12rem;
-      min-width: 10rem;
-    }
-    .models-col-context {
-      flex: 1.3 1 6rem;
-      min-width: 5rem;
-      justify-content: flex-start;
-    }
-    .models-col-caps {
-      flex: 1.4 1 6.5rem;
-      min-width: 5.5rem;
-      justify-content: flex-start;
-      letter-spacing: 0.12em;
-      font-size: 0.95rem;
-    }
-    .models-col-agy {
-      flex: 1 1 4.5rem;
-      min-width: 3.5rem;
-      justify-content: center;
-      text-align: center;
-    }
-    .models-col-api {
-      flex: 1 1 4.5rem;
-      min-width: 3.5rem;
-      justify-content: center;
-      text-align: center;
-    }
-    .models-col-web {
-      flex: 1 1 4.5rem;
-      min-width: 3.5rem;
-      justify-content: center;
-      text-align: center;
-    }
-
-    .model-id-clickable {
-      font-size: 0.82rem;
-      padding: 0.2rem 0.55rem;
-      background: var(--pico-code-background-color, rgba(0, 0, 0, 0.25));
-      border: 1px solid var(--pico-border-color, rgba(255, 255, 255, 0.15));
-      border-radius: var(--pico-border-radius);
-      font-family: monospace;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      transition: all 0.15s ease;
-      color: var(--pico-primary, #2ecc71);
-      user-select: all;
-    }
-    .model-id-clickable:hover {
-      background: rgba(46, 204, 113, 0.15);
-      border-color: var(--pico-primary, #2ecc71);
-      transform: translateY(-1px);
-    }
-    .check-yes {
-      color: #2ecc71;
-      font-weight: bold;
-      font-size: 1.15rem;
-      line-height: 1;
-    }
-    .check-no {
-      color: var(--pico-muted-color, #64748b);
-      font-size: 1.1rem;
-      opacity: 0.35;
-      line-height: 1;
-    }
-
-    .models-legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1.25rem;
-      align-items: center;
-      margin-top: 0.75rem;
-      padding: 0.55rem 0.85rem;
-      background: var(--pico-card-background-color);
-      border: 1px solid var(--card-subtle-border);
-      border-radius: var(--pico-border-radius);
-      font-size: 0.78rem;
-    }
-
-    .badge-redundancy {
-      display: inline-block;
-      font-size: 0.72rem;
-      font-weight: bold;
-      padding: 0.2rem 0.55rem;
-      border-radius: var(--pico-border-radius);
-      white-space: nowrap;
-    }
-    .badge-redundancy-high {
-      background: rgba(46, 204, 113, 0.15);
-      color: #2ecc71;
-      border: 1px solid rgba(46, 204, 113, 0.4);
-    }
-    .badge-redundancy-med {
-      background: rgba(52, 152, 219, 0.15);
-      color: #3498db;
-      border: 1px solid rgba(52, 152, 219, 0.4);
-    }
-    .badge-redundancy-low {
-      background: rgba(149, 165, 166, 0.15);
-      color: #95a5a6;
-      border: 1px solid rgba(149, 165, 166, 0.3);
-    }
-
-    /* Mobile Responsive Styles (< 768px) */
-    @media (max-width: 767px) {
-      .hide-desktop {
-        display: inline !important;
-      }
-
-      /* Full Width Toasts on Mobile */
-      #toast-container {
-        top: 0.75rem;
-        left: 0.75rem;
-        right: 0.75rem;
-        transform: none;
-        width: auto;
-        align-items: stretch;
-      }
-      .toast {
-        width: 100%;
-        display: flex;
-        justify-content: flex-start;
-        box-sizing: border-box;
-        border-radius: var(--pico-border-radius);
-        padding: 0.65rem 1rem;
-      }
-
-      .auth-action-row {
-        flex-direction: column !important;
-        gap: 0.6rem !important;
-        width: 100%;
-      }
-      .auth-action-row button {
-        width: 100% !important;
-        flex: 1 1 auto;
-      }
-
-      /* Mobile Keys Table */
-      .keys-table-wrapper {
-        overflow-x: visible;
-      }
-      .keys-table thead {
-        display: none;
-      }
-      .keys-table,
-      .keys-table tbody {
-        display: flex;
-        flex-direction: column;
-        gap: 0.65rem;
-        width: 100%;
-      }
-      .keys-table tr {
-        display: grid !important;
-        grid-template-columns: 1fr auto;
-        grid-template-areas:
-          "name action"
-          "preview preview"
-          "created lastused";
-        gap: 0.4rem 0.6rem;
-        padding: 0.75rem 1rem;
-        background-color: var(--pico-card-background-color) !important;
-        border: 1px solid var(--card-subtle-border) !important;
-        border-radius: var(--pico-border-radius) !important;
-        box-shadow: var(--pico-card-box-shadow) !important;
-        align-items: center;
-      }
-      .keys-table th,
-      .keys-table td,
-      .keys-table small,
-      .keys-table span {
-        background: transparent !important;
-        background-color: transparent !important;
-      }
-      .keys-col-name {
-        grid-area: name;
-        min-width: 0;
-        font-size: 0.95rem;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .keys-col-action {
-        grid-area: action;
-        position: static;
-        background: transparent;
-        padding: 0;
-        margin: 0;
-        justify-content: flex-end;
-      }
-      .keys-col-preview {
-        grid-area: preview;
-        min-width: 0;
-        width: 100%;
-      }
-      .keys-col-preview code {
-        font-size: 0.82rem;
-        word-break: break-all;
-        white-space: normal;
-        display: block;
-        width: 100%;
-        padding: 0.35rem 0.6rem;
-        background-color: var(--pico-code-background-color, rgba(0, 0, 0, 0.25));
-        border-radius: var(--pico-border-radius);
-        box-sizing: border-box;
-      }
-      .keys-col-created {
-        grid-area: created;
-        min-width: 0;
-        font-size: 0.75rem;
-        opacity: 0.8;
-      }
-      .keys-col-lastused {
-        grid-area: lastused;
-        min-width: 0;
-        font-size: 0.75rem;
-        opacity: 0.8;
-        justify-content: flex-end;
-      }
-
-      /* Mobile Models Table */
-      .models-table-wrapper {
-        overflow-x: visible;
-      }
-      .models-table thead {
-        display: none;
-      }
-      .models-table,
-      .models-table tbody {
-        display: flex;
-        flex-direction: column;
-        gap: 0.65rem;
-        width: 100%;
-      }
-      .models-table tr {
-        display: grid !important;
-        grid-template-columns: 1fr auto;
-        grid-template-areas:
-          "name caps"
-          "id id"
-          "context context"
-          "providers providers";
-        gap: 0.4rem 0.6rem;
-        padding: 0.75rem 1rem;
-        background-color: var(--pico-card-background-color) !important;
-        border: 1px solid var(--card-subtle-border) !important;
-        border-radius: var(--pico-border-radius) !important;
-        box-shadow: var(--pico-card-box-shadow) !important;
-        align-items: center;
-      }
-      .models-table th,
-      .models-table td,
-      .models-table small,
-      .models-table span {
-        background: transparent !important;
-        background-color: transparent !important;
-      }
-      .models-col-name {
-        grid-area: name;
-        min-width: 0;
-        font-size: 0.95rem;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .models-col-caps {
-        grid-area: caps;
-        min-width: 0;
-        font-size: 0.9rem;
-        justify-content: flex-end;
-      }
-      .models-col-id {
-        grid-area: id;
-        min-width: 0;
-        width: 100%;
-      }
-      .models-col-id .model-id-clickable {
-        width: 100%;
-        box-sizing: border-box;
-        justify-content: space-between;
-      }
-      .models-col-context {
-        grid-area: context;
-        min-width: 0;
-        font-size: 0.78rem;
-      }
-      .models-col-agy,
-      .models-col-api,
-      .models-col-web {
-        display: none !important;
-      }
-      .models-mobile-providers {
-        grid-area: providers;
-        display: flex !important;
-        gap: 0.75rem;
-        align-items: center;
-        font-size: 0.78rem;
-        padding-top: 0.3rem;
-        border-top: 1px dashed var(--pico-border-color, rgba(255, 255, 255, 0.1));
-      }
-    }
-
-    @media (min-width: 768px) {
-      .hide-desktop,
-      .models-mobile-providers {
-        display: none !important;
-      }
-    }
-
-    /* Small Screen (< 576px) Controls & Dialogs */
-    @media (max-width: 576px) {
-      dialog article {
-        margin: 1rem;
-        padding: 1.25rem;
-        width: calc(100% - 2rem);
-        max-width: 100%;
-        box-sizing: border-box;
-        border-radius: var(--pico-border-radius) !important;
-      }
-      form[role="group"] {
-        flex-direction: column !important;
-        gap: 0.5rem;
-      }
-      form[role="group"] input,
-      form[role="group"] button {
-        width: 100% !important;
-        border-radius: var(--pico-border-radius) !important;
-      }
-    }
-
-    /* Unified Height for Form Groups (Input + Button) */
-    form[role="group"],
-    [role="group"] {
-      display: flex !important;
-      align-items: stretch !important;
-      margin-bottom: 1rem;
-    }
-    form[role="group"] input,
-    form[role="group"] button,
-    [role="group"] input,
-    [role="group"] button {
-      height: 2.75rem !important;
-      box-sizing: border-box !important;
-      margin: 0 !important;
-      vertical-align: middle;
-    }
-    form[role="group"] button,
-    [role="group"] button {
-      padding: 0 1.5rem !important;
-      white-space: nowrap !important;
-      display: inline-flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      flex-shrink: 0;
-    }
-  </style>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="container" style="padding-top: 2rem; padding-bottom: 4rem;">
+<body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8">
 
   <!-- Toast Notification Container -->
-  <div id="toast-container" aria-live="polite"></div>
+  <div id="toast-container" class="toast toast-top toast-center z-50 pointer-events-none" aria-live="polite"></div>
 
-  <!-- Header -->
-  <header style="margin-bottom: 2rem;">
-    <nav class="header-nav">
-      <ul class="header-brand">
-        <li><strong>🚀 Antigravity API Bridge</strong></li>
-      </ul>
-      <ul class="header-endpoint">
-        <li>
-          <button type="button" class="header-endpoint-btn" onclick="copyBaseUrl()" title="Click to copy base URL">
-            <code>{{ base_url or 'http://localhost:8000/v1' }}</code>
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
-              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-            </svg>
-          </button>
-        </li>
-      </ul>
-    </nav>
-  </header>
-
-  <main>
-    <!-- Multi-Backend Management Widget (Top) -->
-    <article id="backends-card">
-      <header>
-        <nav>
-          <ul><li><strong>Multi-Backend Routing &amp; Providers</strong></li></ul>
-          <ul>
-            <li>
-              <button type="button" onclick="clearCooldowns()" class="secondary outline" style="margin: 0; padding: 0.25rem 0.75rem; font-size: 0.8rem;" title="Reset 429 rate limit cooldown timers">Clear Cooldowns</button>
-            </li>
-          </ul>
-        </nav>
-      </header>
-
-      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
-        <div>
-          <label for="routing-strategy-select" style="font-weight: bold; margin-bottom: 0.25rem; display: block;">Routing Strategy:</label>
-          <small>Automated request dispatching across active providers.</small>
-        </div>
-        <div style="min-width: 250px;">
-          <select id="routing-strategy-select" onchange="setRoutingStrategy(this.value)" style="margin: 0;">
-            <option value="free_first">Free First (Web &rarr; Studio API &rarr; Antigravity Fallback)</option>
-            <option value="round_robin">Round Robin (Distribute across available backends)</option>
-          </select>
-        </div>
+  <div class="container mx-auto max-w-6xl">
+    <!-- Header Navbar -->
+    <header class="navbar bg-base-200 shadow-md rounded-box mb-6 px-4 flex flex-col sm:flex-row gap-4 justify-between items-center">
+      <div class="flex-1">
+        <h1 class="text-xl font-bold flex items-center gap-2">🚀 Antigravity API Bridge</h1>
       </div>
+      <div class="flex-none">
+        <button type="button" class="btn btn-sm btn-outline gap-2 font-mono" onclick="copyBaseUrl()" title="Click to copy base URL">
+          <code>{{ base_url or 'http://localhost:8000/v1' }}</code>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+          </svg>
+        </button>
+      </div>
+    </header>
 
-      <div class="provider-grid">
-        <!-- 1. Google Gemini AI Studio API Card -->
-        <article class="provider-card" id="card-gemini-api">
-          <header>
-            <nav>
-              <ul><li><strong>Gemini AI Studio API</strong></li></ul>
-              <ul>
-                <li>
-                  <label>
-                    <input type="checkbox" id="toggle-gemini-api" role="switch" onchange="toggleBackend('gemini_api', this.checked)">
-                    Enabled
-                  </label>
-                </li>
-              </ul>
-            </nav>
-          </header>
-          <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-gemini-api">Loading...</span></small></p>
-          <form onsubmit="event.preventDefault(); saveGeminiApiKey();" role="group">
-            <input type="password" id="gemini-api-key-input" placeholder="Google AI Studio API Key (AIzaSy...)">
-            <button type="submit">Save</button>
-          </form>
-        </article>
+    <main>
+      <!-- Multi-Backend Routing & Providers Card -->
+      <div class="card bg-base-200 shadow-xl mb-6" id="backends-card">
+        <div class="card-body">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
+            <h2 class="card-title text-lg font-bold">Multi-Backend Routing &amp; Providers</h2>
+            <button type="button" onclick="clearCooldowns()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm" title="Reset 429 rate limit cooldown timers">Clear Cooldowns</button>
+          </div>
 
-        <!-- 2. Google Gemini Web UI Card -->
-        <article class="provider-card" id="card-gemini-web">
-          <header>
-            <nav>
-              <ul><li><strong>Gemini Web Interface</strong></li></ul>
-              <ul>
-                <li>
-                  <label>
-                    <input type="checkbox" id="toggle-gemini-web" role="switch" onchange="toggleBackend('gemini_web', this.checked)">
-                    Enabled
-                  </label>
-                </li>
-              </ul>
-            </nav>
-          </header>
-          <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-gemini-web">Loading...</span></small></p>
-          <form onsubmit="event.preventDefault(); saveGeminiWebCookies();">
-            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
-              <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value">
-              <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)">
+          <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div>
+              <label for="routing-strategy-select" class="font-bold text-sm block mb-1">Routing Strategy:</label>
+              <span class="text-xs text-base-content/70">Automated request dispatching across active providers.</span>
             </div>
-            <button type="submit" style="width: 100%;">Save Cookies</button>
-          </form>
-        </article>
-
-        <!-- 3. Antigravity OAuth Backend Card (Combined) -->
-        <article class="provider-card" id="card-antigravity">
-          <header>
-            <nav>
-              <ul><li><strong>Antigravity Backend</strong></li></ul>
-              <ul>
-                <li>
-                  <label>
-                    <input type="checkbox" id="toggle-antigravity" role="switch" onchange="toggleBackend('antigravity', this.checked)">
-                    Enabled
-                  </label>
-                </li>
-              </ul>
-            </nav>
-          </header>
-          <p style="margin-bottom: 0.5rem;"><small>Status: <span id="status-antigravity">Loading...</span></small></p>
-          <div style="font-size: 0.82rem; margin-bottom: 0.6rem; display: flex; flex-direction: column; gap: 0.25rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="opacity: 0.75;">Account:</span>
-              <strong id="antigravity-account-display" style="word-break: break-all; font-size: 0.82rem;">{{ auth_status.user_email or 'Not logged in' }}</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="opacity: 0.75;">Project ID:</span>
-              <span><small>{{ auth_status.project_id or 'Auto' }}</small></span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="opacity: 0.75;">Tier:</span>
-              <span><small>{{ auth_status.tier_name or 'Antigravity' }}</small></span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="opacity: 0.75;">Token Expires:</span>
-              <span id="token-timer"><small>{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</small></span>
+            <div class="w-full sm:w-auto min-w-[280px]">
+              <select id="routing-strategy-select" onchange="setRoutingStrategy(this.value)" class="select select-bordered select-sm w-full">
+                <option value="free_first">Free First (Web &rarr; Studio API &rarr; Antigravity Fallback)</option>
+                <option value="round_robin">Round Robin (Distribute across available backends)</option>
+              </select>
             </div>
           </div>
 
-          {% if auth_status.authenticated %}
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-              <button type="button" onclick="refreshToken(this)" class="secondary outline refresh-token-btn" style="flex: 1; margin: 0; padding: 0.35rem 0.5rem; font-size: 0.78rem;">Refresh Token</button>
-              <button type="button" onclick="logout()" class="btn-logout" style="flex: 1; margin: 0; padding: 0.35rem 0.5rem; font-size: 0.78rem;">Logout</button>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- 1. Google Gemini AI Studio API Card -->
+            <div class="card bg-base-100 shadow border border-base-300" id="card-gemini-api">
+              <div class="card-body p-4">
+                <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
+                  <h3 class="font-bold text-sm">Gemini AI Studio API</h3>
+                  <label class="label cursor-pointer p-0 gap-2">
+                    <span class="label-text text-xs">Enabled</span>
+                    <input type="checkbox" id="toggle-gemini-api" class="toggle toggle-success toggle-sm" onchange="toggleBackend('gemini_api', this.checked)">
+                  </label>
+                </div>
+                <p class="text-xs mb-2">Status: <span id="status-gemini-api" class="font-semibold">Loading...</span></p>
+                <form onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
+                  <input type="password" id="gemini-api-key-input" placeholder="AIzaSy..." class="input input-bordered input-sm join-item flex-1">
+                  <button type="submit" class="btn btn-primary btn-sm join-item">Save</button>
+                </form>
+              </div>
             </div>
-          {% else %}
-            <a href="/auth/login" role="button" style="width: 100%; text-align: center; margin-top: 0.5rem; padding: 0.45rem 0.75rem; font-size: 0.85rem;">Sign in with Google</a>
-          {% endif %}
-        </article>
-      </div>
-    </article>
 
-    <!-- 1. Available Models Catalog (Full Width) -->
-    <article id="models-card">
-      <header>
-        <nav>
-          <ul>
-            <li><strong>✨ Available Models</strong> <span id="models-count-badge" class="badge-redundancy badge-redundancy-med" style="margin-left: 0.5rem; display: none;"></span></li>
-          </ul>
-          <ul>
-            <li>
-              <button type="button" onclick="loadModels()" class="secondary outline" style="margin: 0; padding: 0.25rem 0.75rem; font-size: 0.8rem;" title="Refresh models list">Refresh Models</button>
-            </li>
-          </ul>
-        </nav>
-      </header>
+            <!-- 2. Google Gemini Web UI Card -->
+            <div class="card bg-base-100 shadow border border-base-300" id="card-gemini-web">
+              <div class="card-body p-4">
+                <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
+                  <h3 class="font-bold text-sm">Gemini Web Interface</h3>
+                  <label class="label cursor-pointer p-0 gap-2">
+                    <span class="label-text text-xs">Enabled</span>
+                    <input type="checkbox" id="toggle-gemini-web" class="toggle toggle-success toggle-sm" onchange="toggleBackend('gemini_web', this.checked)">
+                  </label>
+                </div>
+                <p class="text-xs mb-2">Status: <span id="status-gemini-web" class="font-semibold">Loading...</span></p>
+                <form onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
+                  <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value" class="input input-bordered input-sm w-full">
+                  <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)" class="input input-bordered input-sm w-full">
+                  <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
+                </form>
+              </div>
+            </div>
 
-      <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-        <div style="flex: 1; min-width: 260px;">
-          <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" style="margin: 0;">
+            <!-- 3. Antigravity OAuth Backend Card -->
+            <div class="card bg-base-100 shadow border border-base-300" id="card-antigravity">
+              <div class="card-body p-4">
+                <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
+                  <h3 class="font-bold text-sm">Antigravity Backend</h3>
+                  <label class="label cursor-pointer p-0 gap-2">
+                    <span class="label-text text-xs">Enabled</span>
+                    <input type="checkbox" id="toggle-antigravity" class="toggle toggle-success toggle-sm" onchange="toggleBackend('antigravity', this.checked)">
+                  </label>
+                </div>
+                <p class="text-xs mb-2">Status: <span id="status-antigravity" class="font-semibold">Loading...</span></p>
+                <div class="text-xs flex flex-col gap-1 mb-3">
+                  <div class="flex justify-between items-center">
+                    <span class="text-base-content/70">Account:</span>
+                    <strong id="antigravity-account-display" class="truncate max-w-[160px]">{{ auth_status.user_email or 'Not logged in' }}</strong>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-base-content/70">Project ID:</span>
+                    <span>{{ auth_status.project_id or 'Auto' }}</span>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-base-content/70">Tier:</span>
+                    <span>{{ auth_status.tier_name or 'Antigravity' }}</span>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-base-content/70">Token Expires:</span>
+                    <span id="token-timer">{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</span>
+                  </div>
+                </div>
+
+                {% if auth_status.authenticated %}
+                  <div class="flex gap-2">
+                    <button type="button" onclick="refreshToken(this)" class="btn btn-outline btn-sm flex-1 refresh-token-btn">Refresh Token</button>
+                    <button type="button" onclick="logout()" class="btn btn-error btn-sm flex-1">Logout</button>
+                  </div>
+                {% else %}
+                  <a href="/auth/login" class="btn btn-primary btn-sm w-full">Sign in with Google</a>
+                {% endif %}
+              </div>
+            </div>
+          </div>
         </div>
-        <div>
-          <small style="opacity: 0.8;">Click any <strong>Model ID</strong> to copy it to clipboard.</small>
+      </div>
+
+      <!-- Available Models Catalog -->
+      <div class="card bg-base-200 shadow-xl mb-6" id="models-card">
+        <div class="card-body">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
+            <div class="flex items-center gap-2">
+              <h2 class="card-title text-lg font-bold">✨ Available Models</h2>
+              <span id="models-count-badge" class="badge badge-info badge-sm hidden"></span>
+            </div>
+            <button type="button" onclick="loadModels()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm" title="Refresh models list">Refresh Models</button>
+          </div>
+
+          <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
+            <div class="flex-1 min-w-[260px]">
+              <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" class="input input-bordered input-sm w-full">
+            </div>
+            <div class="text-xs text-base-content/70">
+              Click any <strong>Model ID</strong> to copy it to clipboard.
+            </div>
+          </div>
+
+          <div id="models-container">
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+              <span class="loading loading-spinner loading-sm"></span>
+              <span>Loading available models...</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div id="models-container">
-        <p><small aria-busy="true">Loading available models...</small></p>
+      <!-- Usage & Quotas Widget -->
+      <div class="card bg-base-200 shadow-xl mb-6" id="quotas-card">
+        <div class="card-body">
+          <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+            <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
+            <button type="button" onclick="loadQuotas()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm">Refresh</button>
+          </div>
+
+          <div id="quotas-container">
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+              <span class="loading loading-spinner loading-sm"></span>
+              <span>Loading quotas...</span>
+            </div>
+          </div>
+        </div>
       </div>
-    </article>
 
-    <!-- 2. Usage & Quotas Widget (Full Width) -->
-    <article id="quotas-card">
-      <header>
-        <nav>
-          <ul><li><strong>Usage &amp; Quotas</strong></li></ul>
-          <ul><li><button type="button" onclick="loadQuotas()" class="secondary outline" style="margin: 0; padding: 0.25rem 0.75rem; font-size: 0.8rem;">Refresh</button></li></ul>
-        </nav>
-      </header>
+      <!-- Bridge API Keys Widget -->
+      <div class="card bg-base-200 shadow-xl mb-6" id="keys-card">
+        <div class="card-body">
+          <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+            <h2 class="card-title text-lg font-bold">Bridge API Keys</h2>
+            <label class="label cursor-pointer p-0 gap-2">
+              <span class="label-text text-sm font-semibold">Enforce Auth</span>
+              <input type="checkbox" id="enforce-toggle" class="toggle toggle-primary toggle-sm" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
+            </label>
+          </div>
 
-      <div id="quotas-container">
-        <p><small aria-busy="true">Loading quotas...</small></p>
+          <p class="text-xs text-base-content/70 mb-4">
+            Protect incoming requests. Clients supply key via <code class="badge badge-neutral text-xs">Authorization: Bearer &lt;key&gt;</code>.
+          </p>
+
+          <form onsubmit="event.preventDefault(); createNewKey();" class="join w-full mb-4">
+            <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)" class="input input-bordered input-sm join-item flex-1">
+            <button type="submit" class="btn btn-primary btn-sm join-item">Create Key</button>
+          </form>
+
+          <div id="keys-container">
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+              <span class="loading loading-spinner loading-sm"></span>
+              <span>Loading API keys...</span>
+            </div>
+          </div>
+        </div>
       </div>
-    </article>
-
-    <!-- 2. Bridge API Keys Widget (Full Width) -->
-    <article id="keys-card">
-      <header>
-        <nav>
-          <ul><li><strong>Bridge API Keys</strong></li></ul>
-          <ul>
-            <li>
-              <label>
-                <input type="checkbox" id="enforce-toggle" role="switch" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
-                Enforce Auth
-              </label>
-            </li>
-          </ul>
-        </nav>
-      </header>
-
-      <p>
-        <small>Protect incoming requests. Clients supply key via <code>Authorization: Bearer &lt;key&gt;</code>.</small>
-      </p>
-      
-      <form onsubmit="event.preventDefault(); createNewKey();" role="group">
-        <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)">
-        <button type="submit">Create Key</button>
-      </form>
-
-      <div id="keys-container">
-        <p><small aria-busy="true">Loading API keys...</small></p>
-      </div>
-    </article>
-
-  </main>
+    </main>
+  </div>
 
   <script>
     // Utility: Toast feedback system
@@ -939,24 +217,22 @@
       const container = document.getElementById('toast-container');
       if (!container) return;
 
-      const toast = document.createElement('div');
-      toast.className = `toast ${type === 'error' ? 'toast-error' : ''}`;
-      
-      const icon = type === 'error' 
-        ? '<span class="toast-icon toast-icon-error"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>'
-        : '<span class="toast-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
+      const alertClass = type === 'error' ? 'alert-error' : 'alert-success';
+      const iconSvg = type === 'error'
+        ? '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>'
+        : '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>';
 
-      toast.innerHTML = `${icon}<span>${escapeHtml(message)}</span>`;
-      container.appendChild(toast);
-
-      requestAnimationFrame(() => {
-        toast.classList.add('show');
-      });
+      const toastEl = document.createElement('div');
+      toastEl.className = `alert ${alertClass} shadow-lg pointer-events-auto transition-all duration-300`;
+      toastEl.innerHTML = `
+        ${iconSvg}
+        <span>${escapeHtml(message)}</span>
+      `;
+      container.appendChild(toastEl);
 
       setTimeout(() => {
-        toast.classList.remove('show');
-        toast.classList.add('hide');
-        setTimeout(() => toast.remove(), 250);
+        toastEl.classList.add('opacity-0');
+        setTimeout(() => toastEl.remove(), 300);
       }, 3000);
     }
 
@@ -982,7 +258,10 @@
 
     // Refresh token
     async function refreshToken(btn) {
-      if (btn) btn.setAttribute('aria-busy', 'true');
+      if (btn) {
+        btn.classList.add('loading');
+        btn.disabled = true;
+      }
       try {
         const res = await fetch('/auth/refresh', { method: 'POST' });
         const data = await res.json();
@@ -995,7 +274,10 @@
       } catch (err) {
         showToast('Error: ' + err.message, 'error');
       } finally {
-        if (btn) btn.removeAttribute('aria-busy');
+        if (btn) {
+          btn.classList.remove('loading');
+          btn.disabled = false;
+        }
       }
     }
 
@@ -1018,7 +300,7 @@
     // Toggle API Key Enforcement
     async function toggleEnforcement(enabled) {
       try {
-        const res = await fetch('/api/keys/enforce', {
+        const res = await fetch('/api/keys/enforcement', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enforce: enabled })
@@ -1052,7 +334,7 @@
           nameInput.value = '';
           showToast('API Key generated!');
           loadKeys();
-          showKeyModal(data.key, data.name);
+          showKeyModal(data.key.key, data.key.name);
         } else {
           showToast('Failed to create key', 'error');
         }
@@ -1087,20 +369,20 @@
         const keys = data.keys || [];
 
         if (keys.length === 0) {
-          container.innerHTML = '<p><small>No API keys created yet. Create one above to secure your endpoint.</small></p>';
+          container.innerHTML = '<p class="text-xs text-base-content/70">No API keys created yet. Create one above to secure your endpoint.</p>';
           return;
         }
 
         let html = `
-          <div class="keys-table-wrapper">
-            <table class="keys-table">
+          <div class="overflow-x-auto">
+            <table class="table table-zebra table-sm w-full">
               <thead>
                 <tr>
-                  <th class="keys-col-name">Name</th>
-                  <th class="keys-col-preview">Key</th>
-                  <th class="keys-col-created">Created</th>
-                  <th class="keys-col-lastused">Last Used</th>
-                  <th class="keys-col-action">Action</th>
+                  <th>Name</th>
+                  <th>Key</th>
+                  <th>Created</th>
+                  <th>Last Used</th>
+                  <th class="text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -1113,13 +395,13 @@
             : 'Never';
 
           html += `
-            <tr>
-              <td class="keys-col-name"><strong>${escapeHtml(k.name)}</strong></td>
-              <td class="keys-col-preview"><code>${escapeHtml(k.key_preview)}</code></td>
-              <td class="keys-col-created"><small><span class="hide-desktop">Created: </span>${created}</small></td>
-              <td class="keys-col-lastused"><small><span class="hide-desktop">Used: </span>${lastUsed}</small></td>
-              <td class="keys-col-action">
-                <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn-revoke" title="Revoke key">Revoke</button>
+            <tr class="hover">
+              <td class="font-bold">${escapeHtml(k.name)}</td>
+              <td><code class="badge badge-neutral font-mono text-xs">${escapeHtml(k.key_preview)}</code></td>
+              <td class="text-xs text-base-content/70">${created}</td>
+              <td class="text-xs text-base-content/70">${lastUsed}</td>
+              <td class="text-right">
+                <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn btn-error btn-xs" title="Revoke key">Revoke</button>
               </td>
             </tr>
           `;
@@ -1128,7 +410,7 @@
         html += '</tbody></table></div>';
         container.innerHTML = html;
       } catch (err) {
-        container.innerHTML = '<p><del>Failed to load keys.</del></p>';
+        container.innerHTML = '<p class="text-xs text-error">Failed to load keys.</p>';
       }
     }
 
@@ -1138,24 +420,25 @@
       if (!modal) {
         modal = document.createElement('dialog');
         modal.id = 'key-modal';
+        modal.className = 'modal';
         document.body.appendChild(modal);
       }
 
       modal.innerHTML = `
-        <article>
-          <header>
-            <button aria-label="Close" rel="prev" onclick="document.getElementById('key-modal').close()"></button>
-            <h3>Save Your API Key</h3>
-          </header>
-          <p>Key for <strong>${escapeHtml(name)}</strong> created. Copy it now; you won't be able to see the full key again!</p>
-          <div role="group">
-            <input type="text" id="raw-key-input" value="${escapeHtml(rawKey)}" readonly style="font-family: monospace;">
-            <button type="button" onclick="copyText('${escapeHtml(rawKey)}', 'Key copied!')">Copy</button>
+        <div class="modal-box">
+          <h3 class="font-bold text-lg mb-2">Save Your API Key</h3>
+          <p class="text-sm text-base-content/80 mb-4">Key for <strong>${escapeHtml(name)}</strong> created. Copy it now; you won't be able to see the full key again!</p>
+          <div class="join w-full mb-4">
+            <input type="text" id="raw-key-input" value="${escapeHtml(rawKey)}" readonly class="input input-bordered input-sm join-item flex-1 font-mono">
+            <button type="button" class="btn btn-primary btn-sm join-item" onclick="copyText('${escapeHtml(rawKey)}', 'Key copied!')">Copy</button>
           </div>
-          <footer>
-            <button type="button" class="secondary" onclick="document.getElementById('key-modal').close()">Done</button>
-          </footer>
-        </article>
+          <div class="modal-action">
+            <button type="button" class="btn btn-sm" onclick="document.getElementById('key-modal').close()">Done</button>
+          </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+          <button>close</button>
+        </form>
       `;
 
       modal.showModal();
@@ -1169,36 +452,42 @@
         const data = await res.json();
         
         if (!res.ok) {
-          container.innerHTML = `<p><small style="color: #e74c3c;">${escapeHtml(data.error || 'Failed to load quotas')}</small></p>`;
+          container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load quotas')}</p>`;
           return;
         }
 
         const groups = data.groups || [];
         if (groups.length === 0) {
-          container.innerHTML = '<p><small>No active quota buckets reported by backend.</small></p>';
+          container.innerHTML = '<p class="text-xs text-base-content/70">No active quota buckets reported by backend.</p>';
           return;
         }
 
-        let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">';
+        let html = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">';
         groups.forEach(g => {
           const frac = g.fraction_used != null ? g.fraction_used : 0;
           const pct = Math.round(frac * 100);
           const resetSecs = g.reset_time_seconds ? `${Math.round(g.reset_time_seconds)}s` : 'N/A';
           
-          let progressClass = '';
-          if (pct >= 90) progressClass = 'style="--pico-progress-color: #e74c3c;"';
-          else if (pct >= 70) progressClass = 'style="--pico-progress-color: #f39c12;"';
+          let progressColor = 'progress-primary';
+          let badgeColor = 'badge-ghost';
+          if (pct >= 90) {
+            progressColor = 'progress-error';
+            badgeColor = 'badge-error';
+          } else if (pct >= 70) {
+            progressColor = 'progress-warning';
+            badgeColor = 'badge-warning';
+          }
 
           html += `
-            <div style="padding: 0.75rem; background: var(--pico-card-background-color); border: 1px solid var(--card-subtle-border); border-radius: var(--pico-border-radius);">
-              <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
-                <strong>${escapeHtml(g.display_name)}</strong>
-                <small>${pct}% used</small>
+            <div class="card bg-base-100 p-4 border border-base-300 rounded-box shadow-sm">
+              <div class="flex justify-between items-center mb-1">
+                <strong class="text-sm">${escapeHtml(g.display_name)}</strong>
+                <span class="badge badge-sm ${badgeColor}">${pct}% used</span>
               </div>
-              <progress value="${pct}" max="100" ${progressClass} style="margin-bottom: 0.4rem;"></progress>
-              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; opacity: 0.8;">
+              <progress class="progress ${progressColor} w-full mb-2" value="${pct}" max="100"></progress>
+              <div class="flex justify-between text-xs text-base-content/70">
                 <span>Reset: ${resetSecs}</span>
-                <span>${escapeHtml(g.model_id || '')}</span>
+                <span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>
               </div>
             </div>
           `;
@@ -1206,7 +495,7 @@
         html += '</div>';
         container.innerHTML = html;
       } catch (err) {
-        container.innerHTML = '<p><del>Failed to load quotas.</del></p>';
+        container.innerHTML = '<p class="text-xs text-error">Failed to load quotas.</p>';
       }
     }
 
@@ -1229,10 +518,10 @@
         if (toggleApi) toggleApi.checked = !!gApi.enabled;
         const statusApi = document.getElementById('status-gemini-api');
         if (statusApi) {
-          if (!gApi.enabled) statusApi.innerHTML = '<span class="badge-disabled">Disabled</span>';
-          else if (!gApi.configured) statusApi.innerHTML = '<span class="badge-unconfigured">Key Required</span>';
-          else if (gApi.cooldown_remaining > 0) statusApi.innerHTML = `<span class="badge-cooldown">Cooldown (${Math.round(gApi.cooldown_remaining)}s)</span>`;
-          else statusApi.innerHTML = '<span class="badge-active">● Active</span>';
+          if (!gApi.enabled) statusApi.innerHTML = '<span class="badge badge-ghost badge-sm">Disabled</span>';
+          else if (!gApi.configured) statusApi.innerHTML = '<span class="badge badge-error badge-sm">Key Required</span>';
+          else if (gApi.cooldown_remaining > 0) statusApi.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(gApi.cooldown_remaining)}s)</span>`;
+          else statusApi.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
         }
 
         // 3. Gemini Web Backend
@@ -1241,10 +530,10 @@
         if (toggleWeb) toggleWeb.checked = !!gWeb.enabled;
         const statusWeb = document.getElementById('status-gemini-web');
         if (statusWeb) {
-          if (!gWeb.enabled) statusWeb.innerHTML = '<span class="badge-disabled">Disabled</span>';
-          else if (!gWeb.configured) statusWeb.innerHTML = '<span class="badge-unconfigured">Cookies Required</span>';
-          else if (gWeb.cooldown_remaining > 0) statusWeb.innerHTML = `<span class="badge-cooldown">Cooldown (${Math.round(gWeb.cooldown_remaining)}s)</span>`;
-          else statusWeb.innerHTML = '<span class="badge-active">● Active</span>';
+          if (!gWeb.enabled) statusWeb.innerHTML = '<span class="badge badge-ghost badge-sm">Disabled</span>';
+          else if (!gWeb.configured) statusWeb.innerHTML = '<span class="badge badge-error badge-sm">Cookies Required</span>';
+          else if (gWeb.cooldown_remaining > 0) statusWeb.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(gWeb.cooldown_remaining)}s)</span>`;
+          else statusWeb.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
         }
 
         // 4. Antigravity Backend
@@ -1253,10 +542,10 @@
         if (toggleAgy) toggleAgy.checked = !!agy.enabled;
         const statusAgy = document.getElementById('status-antigravity');
         if (statusAgy) {
-          if (!agy.enabled) statusAgy.innerHTML = '<span class="badge-disabled">Disabled</span>';
-          else if (!agy.configured) statusAgy.innerHTML = '<span class="badge-unconfigured">Auth Required</span>';
-          else if (agy.cooldown_remaining > 0) statusAgy.innerHTML = `<span class="badge-cooldown">Cooldown (${Math.round(agy.cooldown_remaining)}s)</span>`;
-          else statusAgy.innerHTML = '<span class="badge-active">● Active</span>';
+          if (!agy.enabled) statusAgy.innerHTML = '<span class="badge badge-ghost badge-sm">Disabled</span>';
+          else if (!agy.configured) statusAgy.innerHTML = '<span class="badge badge-error badge-sm">Auth Required</span>';
+          else if (agy.cooldown_remaining > 0) statusAgy.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(agy.cooldown_remaining)}s)</span>`;
+          else statusAgy.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
         }
       } catch (err) {
         console.error('Failed to load backend status:', err);
@@ -1398,9 +687,9 @@
         if (countBadge) {
           if (models.length > 0) {
             countBadge.innerText = `${models.length} Model${models.length === 1 ? '' : 's'}`;
-            countBadge.style.display = 'inline-block';
+            countBadge.classList.remove('hidden');
           } else {
-            countBadge.style.display = 'none';
+            countBadge.classList.add('hidden');
           }
         }
 
@@ -1413,7 +702,7 @@
         }
       } catch (err) {
         console.error('Failed to load models:', err);
-        container.innerHTML = '<p><del>Failed to load available models.</del></p>';
+        container.innerHTML = '<p class="text-xs text-error">Failed to load available models.</p>';
       }
     }
 
@@ -1422,22 +711,22 @@
       if (!container) return;
 
       if (!models || models.length === 0) {
-        container.innerHTML = '<p><small style="opacity: 0.8;">No models found from currently enabled backends. Enable and configure at least one backend above to see available models.</small></p>';
+        container.innerHTML = '<p class="text-xs text-base-content/70">No models found from currently enabled backends. Enable and configure at least one backend above to see available models.</p>';
         return;
       }
 
       let html = `
-        <div class="models-table-wrapper">
-          <table class="models-table">
+        <div class="overflow-x-auto">
+          <table class="table table-zebra table-sm w-full">
             <thead>
               <tr>
-                <th class="models-col-name">Model</th>
-                <th class="models-col-id">Model ID</th>
-                <th class="models-col-context">Context</th>
-                <th class="models-col-caps">Capabilities</th>
-                <th class="models-col-agy">Antigravity</th>
-                <th class="models-col-api">Gemini API</th>
-                <th class="models-col-web">Gemini Web</th>
+                <th>Model</th>
+                <th>Model ID</th>
+                <th>Context</th>
+                <th>Capabilities</th>
+                <th class="text-center">Antigravity</th>
+                <th class="text-center">Gemini API</th>
+                <th class="text-center">Gemini Web</th>
               </tr>
             </thead>
             <tbody>
@@ -1472,39 +761,19 @@
         emojis = emojis.trim();
 
         html += `
-          <tr>
-            <td class="models-col-name">
-              <strong>${escapeHtml(model.displayName || model.id)}</strong>
-            </td>
-            <td class="models-col-id">
-              <code class="model-id-clickable" onclick="copyText('${escapeHtml(model.id)}', 'Model ID copied to clipboard!')" title="Click to copy model ID">
+          <tr class="hover">
+            <td class="font-bold">${escapeHtml(model.displayName || model.id)}</td>
+            <td>
+              <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-center gap-1" onclick="copyText('${escapeHtml(model.id)}', 'Model ID copied to clipboard!')" title="Click to copy model ID">
                 <span>${escapeHtml(model.id)}</span>
-                <small style="opacity: 0.6; font-size: 0.72rem;">📋</small>
-              </code>
+                <span class="text-xs opacity-60">📋</span>
+              </button>
             </td>
-            <td class="models-col-context">
-              <span class="hide-desktop" style="opacity: 0.75; font-size: 0.75rem; margin-right: 0.25rem;">Context: </span>
-              <small>${contextText}</small>
-            </td>
-            <td class="models-col-caps" title="Model capabilities">
-              <span class="hide-desktop" style="opacity: 0.75; font-size: 0.75rem; margin-right: 0.25rem;">Capabilities: </span>
-              <span>${emojis || '—'}</span>
-            </td>
-            <td class="models-col-agy">
-              ${hasAgy ? '<span class="check-yes" title="Supported by Antigravity">✓</span>' : '<span class="check-no">-</span>'}
-            </td>
-            <td class="models-col-api">
-              ${hasApi ? '<span class="check-yes" title="Supported by Gemini API">✓</span>' : '<span class="check-no">-</span>'}
-            </td>
-            <td class="models-col-web">
-              ${hasWeb ? '<span class="check-yes" title="Supported by Gemini Web">✓</span>' : '<span class="check-no">-</span>'}
-            </td>
-            <td class="models-mobile-providers hide-desktop">
-              <span style="opacity: 0.75;">Providers:</span>
-              <span>Agy: ${hasAgy ? '<strong style="color:#2ecc71;">✓</strong>' : '<span style="opacity:0.4;">-</span>'}</span>
-              <span>API: ${hasApi ? '<strong style="color:#2ecc71;">✓</strong>' : '<span style="opacity:0.4;">-</span>'}</span>
-              <span>Web: ${hasWeb ? '<strong style="color:#2ecc71;">✓</strong>' : '<span style="opacity:0.4;">-</span>'}</span>
-            </td>
+            <td class="text-xs whitespace-nowrap">${contextText}</td>
+            <td class="text-sm whitespace-nowrap" title="Model capabilities">${emojis || '—'}</td>
+            <td class="text-center">${hasAgy ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+            <td class="text-center">${hasApi ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+            <td class="text-center">${hasWeb ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
           </tr>
         `;
       });
@@ -1512,8 +781,8 @@
             </tbody>
           </table>
         </div>
-        <div class="models-legend">
-          <span><strong style="opacity: 0.85;">Capabilities Legend:</strong></span>
+        <div class="card bg-base-100 p-3 rounded-box flex flex-wrap gap-4 text-xs mt-3 border border-base-300">
+          <span><strong class="text-base-content/80">Capabilities Legend:</strong></span>
           <span>🧠 Reasoning / Thinking</span>
           <span>🛠️ Tool Calling</span>
           <span>👁️ Multimodal / Vision</span>

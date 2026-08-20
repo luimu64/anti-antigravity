@@ -115,144 +115,87 @@ async def auth_login(
     return HTMLResponse(
         content=f"""
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="en" data-theme="dark">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Google Sign-In - Antigravity API</title>
-          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
-          <style>
-            #toast-container {{
-              position: fixed;
-              top: 1.25rem;
-              left: 50%;
-              transform: translateX(-50%);
-              z-index: 99999;
-              pointer-events: none;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              gap: 0.5rem;
-            }}
-            .toast {{
-              pointer-events: auto;
-              display: inline-flex;
-              align-items: center;
-              gap: 0.6rem;
-              padding: 0.55rem 1.15rem;
-              background: var(--pico-card-background-color, #1b232c);
-              color: var(--pico-color, #e2e8f0);
-              border: 1px solid var(--pico-border-color, #334155);
-              border-radius: 9999px;
-              box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
-              font-size: 0.85rem;
-              font-weight: 500;
-              opacity: 0;
-              transform: translateY(-8px) scale(0.95);
-              transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-            }}
-            .toast.show {{
-              opacity: 1;
-              transform: translateY(0) scale(1);
-            }}
-            .toast.hide {{
-              opacity: 0;
-              transform: translateY(-10px) scale(0.95);
-            }}
-            .toast.toast-error {{
-              border-color: #ef4444;
-            }}
-            .toast-icon {{
-              display: inline-flex;
-              align-items: center;
-              color: var(--pico-primary, #2ecc71);
-            }}
-            .toast-icon.toast-icon-error {{
-              color: #ef4444;
-            }}
-            form[role="group"], [role="group"] {{
-              display: flex !important;
-              align-items: stretch !important;
-              margin-bottom: 1rem;
-            }}
-            form[role="group"] input, form[role="group"] button, [role="group"] input, [role="group"] button {{
-              height: 2.75rem !important;
-              box-sizing: border-box !important;
-              margin: 0 !important;
-            }}
-            form[role="group"] button, [role="group"] button {{
-              white-space: nowrap !important;
-              flex-shrink: 0 !important;
-              padding: 0 1.25rem !important;
-            }}
-          </style>
+          <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
+          <script src="https://cdn.tailwindcss.com"></script>
         </head>
-        <body>
-          <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
-          <main class="container">
-            <article>
-              <header>
-                <nav>
-                  <ul><li><strong>Connect Google Account</strong></li></ul>
-                  <ul><li><small>Remote Server Setup</small></li></ul>
-                </nav>
-              </header>
+        <body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8 flex items-center justify-center">
+          <div id="toast-container" class="toast toast-top toast-center z-50 pointer-events-none" aria-live="polite" aria-atomic="true"></div>
+          
+          <div class="container max-w-lg mx-auto">
+            <div class="card bg-base-200 shadow-xl">
+              <div class="card-body">
+                <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+                  <h1 class="card-title text-lg font-bold">Connect Google Account</h1>
+                  <span class="badge badge-neutral badge-sm">Remote Server Setup</span>
+                </div>
 
-              <p>
-                Because this bridge is deployed on a remote server/IP (<code>{hostname}</code>), Google requires authenticating via standard loopback.
-              </p>
+                <p class="text-xs text-base-content/80 mb-4">
+                  Because this bridge is deployed on a remote server/IP (<code class="badge badge-neutral font-mono text-xs">{hostname}</code>), Google requires authenticating via standard loopback.
+                </p>
 
-              <article>
-                <header><strong>Step 1: Open Google Sign-In</strong></header>
-                <p><small>Click below to authorize with your Google Account in a new tab:</small></p>
-                <a href="{auth_url}" target="_blank" role="button">Authorize Google Account (New Tab)</a>
-              </article>
+                <div class="card bg-base-100 border border-base-300 shadow-sm mb-4">
+                  <div class="card-body p-4">
+                    <h2 class="font-bold text-sm mb-1">Step 1: Open Google Sign-In</h2>
+                    <p class="text-xs text-base-content/70 mb-3">Click below to authorize with your Google Account in a new tab:</p>
+                    <a href="{auth_url}" target="_blank" class="btn btn-primary btn-sm w-full">Authorize Google Account (New Tab)</a>
+                  </div>
+                </div>
 
-              <article>
-                <header><strong>Step 2: Paste Redirect URL or Code</strong></header>
-                <p><small>After approving, Google redirects to <code>http://localhost:8085/?code=...</code>. Copy that address bar URL (or the code) and paste it here:</small></p>
-                <form onsubmit="event.preventDefault(); submitCode();" role="group">
-                  <input type="text" id="callback-input" placeholder="http://localhost:8085/?state=...&code=4/0A...">
-                  <button type="submit">Connect</button>
-                </form>
-              </article>
+                <div class="card bg-base-100 border border-base-300 shadow-sm mb-4">
+                  <div class="card-body p-4">
+                    <h2 class="font-bold text-sm mb-1">Step 2: Paste Redirect URL or Code</h2>
+                    <p class="text-xs text-base-content/70 mb-3">After approving, Google redirects to <code class="badge badge-neutral font-mono text-xs">http://localhost:8085/?code=...</code>. Copy that address bar URL (or the code) and paste it here:</p>
+                    <form onsubmit="event.preventDefault(); submitCode();" class="join w-full">
+                      <input type="text" id="callback-input" placeholder="http://localhost:8085/?state=...&code=4/0A..." class="input input-bordered input-sm join-item flex-1">
+                      <button type="submit" class="btn btn-primary btn-sm join-item">Connect</button>
+                    </form>
+                  </div>
+                </div>
 
-              <footer>
-                <a href="/" role="button" class="secondary outline">Back to Dashboard</a>
-              </footer>
-            </article>
-          </main>
+                <div class="card-actions justify-end mt-2">
+                  <a href="/" class="btn btn-outline btn-sm">Back to Dashboard</a>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <script>
             function showToast(message, type = 'success') {{
               const container = document.getElementById('toast-container');
               if (!container) return;
 
-              const toast = document.createElement('div');
-              toast.className = `toast ${{type === 'error' ? 'toast-error' : ''}}`;
-              const iconHtml = type === 'error'
-                ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`
-                : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+              const alertClass = type === 'error' ? 'alert-error' : 'alert-success';
+              const iconSvg = type === 'error'
+                ? '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>'
+                : '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>';
 
-              toast.innerHTML = `
-                <span class="toast-icon ${{type === 'error' ? 'toast-icon-error' : ''}}">
-                  ${{iconHtml}}
-                </span>
-                <span>${{message}}</span>
+              const toastEl = document.createElement('div');
+              toastEl.className = `alert ${{alertClass}} shadow-lg pointer-events-auto transition-all duration-300`;
+              toastEl.innerHTML = `
+                ${{iconSvg}}
+                <span>${{escapeHtml(message)}}</span>
               `;
-              container.appendChild(toast);
-
-              requestAnimationFrame(() => {{
-                toast.classList.add('show');
-              }});
+              container.appendChild(toastEl);
 
               setTimeout(() => {{
-                toast.classList.remove('show');
-                toast.classList.add('hide');
-                setTimeout(() => {{
-                  toast.remove();
-                }}, 250);
-              }}, 2400);
+                toastEl.classList.add('opacity-0');
+                setTimeout(() => toastEl.remove(), 300);
+              }}, 3000);
+            }}
+
+            function escapeHtml(str) {{
+              if (!str) return '';
+              return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
             }}
 
             async function submitCode() {{
@@ -299,23 +242,27 @@ async def auth_callback(
         return HTMLResponse(
             content=f"""
             <!DOCTYPE html>
-            <html lang="en">
+            <html lang="en" data-theme="dark">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>OAuth Error - Antigravity API</title>
-              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+              <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
+              <script src="https://cdn.tailwindcss.com"></script>
             </head>
-            <body>
-              <main class="container">
-                <article>
-                  <header><strong>Authentication Failed</strong></header>
-                  <p>Google returned error: <code>{error}</code></p>
-                  <footer>
-                    <a href="/auth/login" role="button">Try Again</a>
-                  </footer>
-                </article>
-              </main>
+            <body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8 flex items-center justify-center">
+              <div class="card bg-base-200 shadow-xl max-w-md w-full">
+                <div class="card-body">
+                  <div class="alert alert-error mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span class="font-bold">Authentication Failed</span>
+                  </div>
+                  <p class="text-sm mb-4">Google returned error: <code class="badge badge-neutral font-mono">{error}</code></p>
+                  <div class="card-actions justify-end">
+                    <a href="/auth/login" class="btn btn-primary btn-sm">Try Again</a>
+                  </div>
+                </div>
+              </div>
             </body>
             </html>
             """,
@@ -340,30 +287,31 @@ async def auth_callback(
         return HTMLResponse(
             content=f"""
             <!DOCTYPE html>
-            <html lang="en">
+            <html lang="en" data-theme="dark">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Login Successful - Antigravity API</title>
-              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+              <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
+              <script src="https://cdn.tailwindcss.com"></script>
               <meta http-equiv="refresh" content="3;url=/">
             </head>
-            <body>
-              <main class="container">
-                <article>
-                  <header>
-                    <ins>● Connected</ins>
-                    <h2>Authentication Successful!</h2>
-                  </header>
-                  <p>Your Google account has been connected to Antigravity API.</p>
-                  <p>Project ID: <strong>{auth_manager.project_id or 'Auto-discovered'}</strong></p>
-                  <p>Account: <strong>{auth_manager.user_email or 'Authenticated'}</strong></p>
-                  <footer>
-                    <a href="/" role="button">Go to Dashboard</a>
-                    <p><small>Redirecting in 3 seconds...</small></p>
-                  </footer>
-                </article>
-              </main>
+            <body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8 flex items-center justify-center">
+              <div class="card bg-base-200 shadow-xl max-w-md w-full">
+                <div class="card-body">
+                  <div class="alert alert-success mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span class="font-bold">Authentication Successful!</span>
+                  </div>
+                  <p class="text-sm text-base-content/80 mb-2">Your Google account has been connected to Antigravity API.</p>
+                  <p class="text-sm mb-1">Project ID: <strong>{auth_manager.project_id or 'Auto-discovered'}</strong></p>
+                  <p class="text-sm mb-4">Account: <strong>{auth_manager.user_email or 'Authenticated'}</strong></p>
+                  <div class="card-actions justify-between items-center">
+                    <span class="text-xs text-base-content/60">Redirecting in 3 seconds...</span>
+                    <a href="/" class="btn btn-primary btn-sm">Go to Dashboard</a>
+                  </div>
+                </div>
+              </div>
             </body>
             </html>
             """
@@ -373,23 +321,27 @@ async def auth_callback(
         return HTMLResponse(
             content=f"""
             <!DOCTYPE html>
-            <html lang="en">
+            <html lang="en" data-theme="dark">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Authentication Error - Antigravity API</title>
-              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css">
+              <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
+              <script src="https://cdn.tailwindcss.com"></script>
             </head>
-            <body>
-              <main class="container">
-                <article>
-                  <header><strong>Authentication Error</strong></header>
-                  <p><del>{str(e)}</del></p>
-                  <footer>
-                    <a href="/auth/login" role="button">Try Again</a>
-                  </footer>
-                </article>
-              </main>
+            <body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8 flex items-center justify-center">
+              <div class="card bg-base-200 shadow-xl max-w-md w-full">
+                <div class="card-body">
+                  <div class="alert alert-error mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span class="font-bold">Authentication Error</span>
+                  </div>
+                  <p class="text-sm text-error mb-4">{str(e)}</p>
+                  <div class="card-actions justify-end">
+                    <a href="/auth/login" class="btn btn-primary btn-sm">Try Again</a>
+                  </div>
+                </div>
+              </div>
             </body>
             </html>
             """,

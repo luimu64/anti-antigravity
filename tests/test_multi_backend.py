@@ -510,10 +510,45 @@ async def test_gemini_api_adapter_streaming_and_generation():
 
 @pytest.mark.asyncio
 async def test_gemini_web_adapter_prompt_and_generation():
-    """Verify GeminiWebAdapter initialization and payload preparation."""
-    adapter = GeminiWebAdapter(psid="test_psid_val", psidts="test_psidts_val")
+    """Verify GeminiWebAdapter initialization, headers, SAPISIDHASH, and thinking extraction."""
+    adapter = GeminiWebAdapter(psid="test_psid_val", psidts="test_psidts_val", sapisid="test_sapisid_val")
     assert adapter.is_configured() is True
     
     headers = adapter._get_headers()
     assert "__Secure-1PSID=test_psid_val" in headers["Cookie"]
     assert "__Secure-1PSIDTS=test_psidts_val" in headers["Cookie"]
+    assert "SAPISID=test_sapisid_val" in headers["Cookie"]
+    assert "Authorization" in headers
+    assert headers["Authorization"].startswith("SAPISIDHASH ")
+
+    # Verify model resolution
+    hex_id, model_num, thinking = adapter._resolve_model_metadata("gemini-3.7-flash")
+    assert model_num == 5
+    assert thinking == 2
+
+    # Mock response with reasoning candidate [37][0][0] and response text [1][0]
+    raw_rpc_text = (
+        ')]}\'\n'
+        '150\n'
+        '[["wrb.fr",null,"[[null,null,null,null,[[null,[\\"Hello from Gemini Web!\\"],null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,[[[\\"Thinking step 1\\"]]]]]]]"]]\n'
+    )
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.text = raw_rpc_text
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.get = AsyncMock(return_value=MagicMock(status_code=200, text='{"SNlM0e":"mock_snlm0e_token"}'))
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    result = await adapter.generate_content(
+        model="gemini-3.7-flash",
+        contents=[{"role": "user", "parts": [{"text": "Hello"}]}]
+    )
+
+    assert result["text"] == "Hello from Gemini Web!"
+    assert result["thoughts"] == "Thinking step 1"
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["thoughts"] == "Thinking step 1"

@@ -30,6 +30,7 @@ class UpdateBackendsRequest(BaseModel):
     gemini_api_enabled: Optional[bool] = None
     gemini_web_psid: Optional[str] = None
     gemini_web_psidts: Optional[str] = None
+    gemini_web_sapisid: Optional[str] = None
     gemini_web_enabled: Optional[bool] = None
     antigravity_enabled: Optional[bool] = None
 

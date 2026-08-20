@@ -115,7 +115,7 @@ agy-to-api/
 - **Available Models Catalog**: Displays available models from currently enabled backends in an API-key-styled dense table with clickable Model IDs (click to copy), context window sizes, designated capability emojis (`🧠` Reasoning, `🛠️` Tools, `👁️` Multimodal, `🔢` Embeddings with a capability legend), and provider availability checkmarks.
 - **Quota Monitoring & Key Management**: Visual gauges for quota usage and full UI for generating, inspecting, revoking bridge API keys, and toggling enforcement.
 - **Toast Feedback System**: Non-blocking animated pill toasts for clipboard copying, token refresh events, and status updates.
-- **Consistent Roundness & Styling**: All UI elements (cards, buttons, inputs, tables, badges, toast notifications, code snippets, dialogs) must strictly follow consistent roundness using PicoCSS baseline variables (`var(--pico-border-radius)`). Avoid hardcoded border-radius values (e.g. `9999px`, `8px`, `0.5rem`, `0.25rem`).
+- **Consistent Styling**: All UI elements (cards, buttons, inputs, tables, badges, toast notifications, code snippets, dialogs) strictly use daisyUI components and Tailwind CSS utility classes without custom CSS overrides.
 
 ---
 
