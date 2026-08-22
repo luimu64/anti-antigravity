@@ -1,3 +1,4 @@
+{% import 'macros/components.html' as ui %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -32,188 +33,129 @@
 
     <main>
       <!-- Multi-Backend Routing & Providers Card -->
-      <div class="card bg-base-200 shadow-xl mb-6" id="backends-card">
-        <div class="card-body">
-          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
-            <h2 class="card-title text-lg font-bold">Multi-Backend Routing &amp; Providers</h2>
-            <button type="button" onclick="clearCooldowns()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm" title="Reset 429 rate limit cooldown timers">Clear Cooldowns</button>
+      {% call ui.section_card('backends-card') %}
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
+          <h2 class="card-title text-lg font-bold">Multi-Backend Routing &amp; Providers</h2>
+          {{ ui.action_button('Clear Cooldowns', 'clearCooldowns()', title='Reset 429 rate limit cooldown timers') }}
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+          <div>
+            <label for="routing-strategy-select" class="font-bold text-sm block mb-1">Routing Strategy:</label>
+            <span class="text-xs text-base-content/70">Automated request dispatching across active providers.</span>
           </div>
-
-          <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
-            <div>
-              <label for="routing-strategy-select" class="font-bold text-sm block mb-1">Routing Strategy:</label>
-              <span class="text-xs text-base-content/70">Automated request dispatching across active providers.</span>
-            </div>
-            <div class="w-full sm:w-auto min-w-[280px]">
-              <select id="routing-strategy-select" onchange="setRoutingStrategy(this.value)" class="select select-bordered select-sm w-full">
-                <option value="free_first">Free First (Web &rarr; Studio API &rarr; Antigravity Fallback)</option>
-                <option value="round_robin">Round Robin (Distribute across available backends)</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <!-- 1. Google Gemini AI Studio API Card -->
-            <div class="card bg-base-100 shadow border border-base-300" id="card-gemini-api">
-              <div class="card-body p-4">
-                <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
-                  <h3 class="font-bold text-sm">Gemini AI Studio API</h3>
-                  <label class="label cursor-pointer p-0 gap-2">
-                    <span class="label-text text-xs">Enabled</span>
-                    <input type="checkbox" id="toggle-gemini-api" class="toggle toggle-success toggle-sm" onchange="toggleBackend('gemini_api', this.checked)">
-                  </label>
-                </div>
-                <p class="text-xs mb-2">Status: <span id="status-gemini-api" class="font-semibold">Loading...</span></p>
-                <form onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
-                  <input type="password" id="gemini-api-key-input" placeholder="AIzaSy..." class="input input-bordered input-sm join-item flex-1">
-                  <button type="submit" class="btn btn-primary btn-sm join-item">Save</button>
-                </form>
-              </div>
-            </div>
-
-            <!-- 2. Google Gemini Web UI Card -->
-            <div class="card bg-base-100 shadow border border-base-300" id="card-gemini-web">
-              <div class="card-body p-4">
-                <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
-                  <h3 class="font-bold text-sm">Gemini Web Interface</h3>
-                  <label class="label cursor-pointer p-0 gap-2">
-                    <span class="label-text text-xs">Enabled</span>
-                    <input type="checkbox" id="toggle-gemini-web" class="toggle toggle-success toggle-sm" onchange="toggleBackend('gemini_web', this.checked)">
-                  </label>
-                </div>
-                <p class="text-xs mb-2">Status: <span id="status-gemini-web" class="font-semibold">Loading...</span></p>
-                <form onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
-                  <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value" class="input input-bordered input-sm w-full">
-                  <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)" class="input input-bordered input-sm w-full">
-                  <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
-                </form>
-              </div>
-            </div>
-
-            <!-- 3. Antigravity OAuth Backend Card -->
-            <div class="card bg-base-100 shadow border border-base-300" id="card-antigravity">
-              <div class="card-body p-4">
-                <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
-                  <h3 class="font-bold text-sm">Antigravity Backend</h3>
-                  <label class="label cursor-pointer p-0 gap-2">
-                    <span class="label-text text-xs">Enabled</span>
-                    <input type="checkbox" id="toggle-antigravity" class="toggle toggle-success toggle-sm" onchange="toggleBackend('antigravity', this.checked)">
-                  </label>
-                </div>
-                <p class="text-xs mb-2">Status: <span id="status-antigravity" class="font-semibold">Loading...</span></p>
-                <div class="text-xs flex flex-col gap-1 mb-3">
-                  <div class="flex justify-between items-center">
-                    <span class="text-base-content/70">Account:</span>
-                    <strong id="antigravity-account-display" class="truncate max-w-[160px]">{{ auth_status.user_email or 'Not logged in' }}</strong>
-                  </div>
-                  <div class="flex justify-between items-center">
-                    <span class="text-base-content/70">Project ID:</span>
-                    <span>{{ auth_status.project_id or 'Auto' }}</span>
-                  </div>
-                  <div class="flex justify-between items-center">
-                    <span class="text-base-content/70">Tier:</span>
-                    <span>{{ auth_status.tier_name or 'Antigravity' }}</span>
-                  </div>
-                  <div class="flex justify-between items-center">
-                    <span class="text-base-content/70">Token Expires:</span>
-                    <span id="token-timer">{{ auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A' }}</span>
-                  </div>
-                </div>
-
-                {% if auth_status.authenticated %}
-                  <div class="flex gap-2">
-                    <button type="button" onclick="refreshToken(this)" class="btn btn-outline btn-sm flex-1 refresh-token-btn">Refresh Token</button>
-                    <button type="button" onclick="logout()" class="btn btn-error btn-sm flex-1">Logout</button>
-                  </div>
-                {% else %}
-                  <a href="/auth/login" class="btn btn-primary btn-sm w-full">Sign in with Google</a>
-                {% endif %}
-              </div>
-            </div>
+          <div class="w-full sm:w-auto min-w-[280px]">
+            <select id="routing-strategy-select" onchange="setRoutingStrategy(this.value)" class="select select-bordered select-sm w-full">
+              <option value="free_first">Free First (Web &rarr; Studio API &rarr; Antigravity Fallback)</option>
+              <option value="round_robin">Round Robin (Distribute across available backends)</option>
+            </select>
           </div>
         </div>
-      </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- 1. Google Gemini AI Studio API Card -->
+          {% call ui.provider_card('card-gemini-api', 'Gemini AI Studio API', 'toggle-gemini-api', 'gemini_api', 'status-gemini-api') %}
+            <form onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
+              <input type="password" id="gemini-api-key-input" placeholder="AIzaSy..." class="input input-bordered input-sm join-item flex-1">
+              <button type="submit" class="btn btn-primary btn-sm join-item">Save</button>
+            </form>
+          {% endcall %}
+
+          <!-- 2. Google Gemini Web UI Card -->
+          {% call ui.provider_card('card-gemini-web', 'Gemini Web Interface', 'toggle-gemini-web', 'gemini_web', 'status-gemini-web') %}
+            <form onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
+              <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value" class="input input-bordered input-sm w-full">
+              <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)" class="input input-bordered input-sm w-full">
+              <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
+            </form>
+          {% endcall %}
+
+          <!-- 3. Antigravity OAuth Backend Card -->
+          {% call ui.provider_card('card-antigravity', 'Antigravity Backend', 'toggle-antigravity', 'antigravity', 'status-antigravity') %}
+            <div class="text-xs flex flex-col gap-1 mb-3">
+              {{ ui.info_row('Account', auth_status.user_email or 'Not logged in', id='antigravity-account-display', is_strong=True, max_w='max-w-[160px]') }}
+              {{ ui.info_row('Project ID', auth_status.project_id or 'Auto') }}
+              {{ ui.info_row('Tier', auth_status.tier_name or 'Antigravity') }}
+              {{ ui.info_row('Token Expires', auth_status.expires_in_seconds ~ 's' if auth_status.expires_in_seconds else 'N/A', id='token-timer') }}
+            </div>
+
+            {% if auth_status.authenticated %}
+              <div class="flex gap-2">
+                <button type="button" onclick="refreshToken(this)" class="btn btn-outline btn-sm flex-1 refresh-token-btn">Refresh Token</button>
+                <button type="button" onclick="logout()" class="btn btn-error btn-sm flex-1">Logout</button>
+              </div>
+            {% else %}
+              <a href="/auth/login" class="btn btn-primary btn-sm w-full">Sign in with Google</a>
+            {% endif %}
+          {% endcall %}
+        </div>
+      {% endcall %}
 
       <!-- Available Models Catalog -->
-      <div class="card bg-base-200 shadow-xl mb-6" id="models-card">
-        <div class="card-body">
-          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
-            <div class="flex items-center gap-2">
-              <h2 class="card-title text-lg font-bold">✨ Available Models</h2>
-              <span id="models-count-badge" class="badge badge-info badge-sm hidden"></span>
-            </div>
-            <div class="flex items-center gap-3">
-              <label class="label cursor-pointer p-0 gap-1.5 text-xs text-base-content/70 hover:text-base-content" title="Show/hide internal and tab completion models">
-                <span>Show Hidden</span>
-                <input type="checkbox" id="toggle-hidden-models" class="checkbox checkbox-xs checkbox-primary" onchange="toggleHiddenModels(this.checked)">
-              </label>
-              <button type="button" onclick="loadModels()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm" title="Refresh models list">Refresh Models</button>
-            </div>
+      {% call ui.section_card('models-card') %}
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
+          <div class="flex items-center gap-2">
+            <h2 class="card-title text-lg font-bold">✨ Available Models</h2>
+            <span id="models-count-badge" class="badge badge-info badge-sm hidden"></span>
           </div>
-
-          <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
-            <div class="flex-1 min-w-[260px]">
-              <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" class="input input-bordered input-sm w-full">
-            </div>
-            <div class="text-xs text-base-content/70">
-              Click any <strong>Model ID</strong> to copy it to clipboard.
-            </div>
-          </div>
-
-          <div id="models-container">
-            <div class="flex items-center gap-2 text-sm text-base-content/70">
-              <span class="loading loading-spinner loading-sm"></span>
-              <span>Loading available models...</span>
-            </div>
+          <div class="flex items-center gap-3">
+            <label class="label cursor-pointer p-0 gap-1.5 text-xs text-base-content/70 hover:text-base-content" title="Show/hide internal and tab completion models">
+              <span>Show Hidden</span>
+              <input type="checkbox" id="toggle-hidden-models" class="checkbox checkbox-xs checkbox-primary" onchange="toggleHiddenModels(this.checked)">
+            </label>
+            {{ ui.action_button('Refresh Models', 'loadModels()', title='Refresh models list') }}
           </div>
         </div>
-      </div>
+
+        <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
+          <div class="flex-1 min-w-[260px]">
+            <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" class="input input-bordered input-sm w-full">
+          </div>
+          <div class="text-xs text-base-content/70">
+            Click any <strong>Model ID</strong> to copy it to clipboard.
+          </div>
+        </div>
+
+        <div id="models-container">
+          {{ ui.loading_placeholder('Loading available models...') }}
+        </div>
+      {% endcall %}
 
       <!-- Usage & Quotas Widget -->
-      <div class="card bg-base-200 shadow-xl mb-6" id="quotas-card">
-        <div class="card-body">
-          <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
-            <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
-            <button type="button" onclick="loadQuotas()" class="btn btn-outline btn-secondary btn-xs sm:btn-sm">Refresh</button>
-          </div>
-
-          <div id="quotas-container">
-            <div class="flex items-center gap-2 text-sm text-base-content/70">
-              <span class="loading loading-spinner loading-sm"></span>
-              <span>Loading quotas...</span>
-            </div>
-          </div>
+      {% call ui.section_card('quotas-card') %}
+        <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+          <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
+          {{ ui.action_button('Refresh', 'loadQuotas()') }}
         </div>
-      </div>
+
+        <div id="quotas-container">
+          {{ ui.loading_placeholder('Loading quotas...') }}
+        </div>
+      {% endcall %}
 
       <!-- Bridge API Keys Widget -->
-      <div class="card bg-base-200 shadow-xl mb-6" id="keys-card">
-        <div class="card-body">
-          <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
-            <h2 class="card-title text-lg font-bold">Bridge API Keys</h2>
-            <label class="label cursor-pointer p-0 gap-2">
-              <span class="label-text text-sm font-semibold">Enforce Auth</span>
-              <input type="checkbox" id="enforce-toggle" class="toggle toggle-primary toggle-sm" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
-            </label>
-          </div>
-
-          <p class="text-xs text-base-content/70 mb-4">
-            Protect incoming requests. Clients supply key via <code class="badge badge-neutral text-xs">Authorization: Bearer &lt;key&gt;</code>.
-          </p>
-
-          <form onsubmit="event.preventDefault(); createNewKey();" class="join w-full mb-4">
-            <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)" class="input input-bordered input-sm join-item flex-1">
-            <button type="submit" class="btn btn-primary btn-sm join-item">Create Key</button>
-          </form>
-
-          <div id="keys-container">
-            <div class="flex items-center gap-2 text-sm text-base-content/70">
-              <span class="loading loading-spinner loading-sm"></span>
-              <span>Loading API keys...</span>
-            </div>
-          </div>
+      {% call ui.section_card('keys-card') %}
+        <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+          <h2 class="card-title text-lg font-bold">Bridge API Keys</h2>
+          <label class="label cursor-pointer p-0 gap-2">
+            <span class="label-text text-sm font-semibold">Enforce Auth</span>
+            <input type="checkbox" id="enforce-toggle" class="toggle toggle-primary toggle-sm" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
+          </label>
         </div>
-      </div>
+
+        <p class="text-xs text-base-content/70 mb-4">
+          Protect incoming requests. Clients supply key via <code class="badge badge-neutral text-xs">Authorization: Bearer &lt;key&gt;</code>.
+        </p>
+
+        <form onsubmit="event.preventDefault(); createNewKey();" class="join w-full mb-4">
+          <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)" class="input input-bordered input-sm join-item flex-1">
+          <button type="submit" class="btn btn-primary btn-sm join-item">Create Key</button>
+        </form>
+
+        <div id="keys-container">
+          {{ ui.loading_placeholder('Loading API keys...') }}
+        </div>
+      {% endcall %}
     </main>
   </div>
 
@@ -726,6 +668,85 @@
       }
     }
 
+    function renderModelTableRows(items) {
+      if (!items || items.length === 0) {
+        return `<tr><td colspan="8" class="text-center text-xs text-base-content/50 py-4">No models available in this category.</td></tr>`;
+      }
+      return items.map(model => {
+        const sources = model.available_sources || [];
+        const hasAgy = sources.includes('Antigravity') || (model.providers && model.providers.includes('antigravity'));
+        const hasApi = sources.includes('Gemini API') || (model.providers && model.providers.includes('gemini_api'));
+        const hasWeb = sources.includes('Gemini Web') || (model.providers && model.providers.includes('gemini_web'));
+
+        // Context Window formatting
+        let contextText = '1M tokens';
+        const ctxVal = model.context_window || model.maxTokens;
+        if (ctxVal) {
+          if (ctxVal >= 1048576) {
+            const mVal = ctxVal / 1048576;
+            contextText = `${mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1)}M tokens`;
+          } else if (ctxVal >= 1024) {
+            contextText = `${Math.round(ctxVal / 1024)}k tokens`;
+          } else {
+            contextText = `${ctxVal} tokens`;
+          }
+        }
+
+        // Capabilities emojis
+        let emojis = '';
+        const caps = model.capabilities || [];
+        const isEmbed = caps.includes('embeddings') || (model.id && model.id.includes('embedding'));
+        const isThinking = caps.includes('thinking') || (model.id && (model.id.includes('thinking') || model.id.includes('3.7')));
+
+        if (isThinking) emojis += '🧠 ';
+        if (!isEmbed && (caps.includes('tools') || model.supportsTools !== false)) emojis += '🛠️ ';
+        if (!isEmbed && (caps.includes('vision') || model.supportsVision !== false)) emojis += '👁️ ';
+        if (isEmbed) emojis += '🔢 ';
+        emojis = emojis.trim();
+
+        // Reasoning levels badges
+        let reasoningBadges = '<span class="text-base-content/40">—</span>';
+        if (model.reasoning_levels && model.reasoning_levels.length > 0) {
+          reasoningBadges = model.reasoning_levels.map(lvl => {
+            let color = 'badge-neutral';
+            if (lvl === 'High') color = 'badge-secondary';
+            else if (lvl === 'Medium') color = 'badge-primary';
+            else if (lvl === 'Low' || lvl === 'Extra Low') color = 'badge-info';
+            else if (lvl === 'Dynamic' || lvl === 'Thinking') color = 'badge-accent';
+            return `<span class="badge ${color} badge-xs font-mono font-medium">${escapeHtml(lvl)}</span>`;
+          }).join(' ');
+        }
+
+        const modelId = model.id || (model.selectable_model_ids ? model.selectable_model_ids[0] : '');
+        const displayName = model.base_model_name || model.displayName || modelId;
+
+        const hiddenBadge = model.hidden
+          ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Experimental</span>'
+          : '';
+
+        return `
+          <tr class="hover">
+            <td class="font-bold whitespace-nowrap flex items-center">
+              <span>${escapeHtml(displayName)}</span>
+              ${hiddenBadge}
+            </td>
+            <td>
+              <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-center gap-1 w-fit" onclick="copyText('${escapeHtml(modelId)}', 'Model ID copied to clipboard!')" title="Click to copy '${escapeHtml(modelId)}'">
+                <span>${escapeHtml(modelId)}</span>
+                <span class="text-xs opacity-60">📋</span>
+              </button>
+            </td>
+            <td class="whitespace-nowrap">${reasoningBadges}</td>
+            <td class="text-xs whitespace-nowrap">${contextText}</td>
+            <td class="text-sm whitespace-nowrap" title="Model capabilities">${emojis || '—'}</td>
+            <td class="text-center">${hasAgy ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+            <td class="text-center">${hasApi ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+            <td class="text-center">${hasWeb ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
     function renderModels(models) {
       const container = document.getElementById('models-container');
       if (!container) return;
@@ -737,83 +758,77 @@
         return;
       }
 
+      // Partition into Gemini vs Non-Google models
+      const geminiList = activeList.filter(m => (m.id || '').includes('gemini') || (m.base_model_name || '').toLowerCase().includes('gemini'));
+      const nonGoogleList = activeList.filter(m => !geminiList.includes(m));
+
       let html = `
-        <div class="overflow-x-auto">
-          <table class="table table-zebra table-sm w-full">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Model ID</th>
-                <th>Context</th>
-                <th>Capabilities</th>
-                <th class="text-center">Antigravity</th>
-                <th class="text-center">Gemini API</th>
-                <th class="text-center">Gemini Web</th>
-              </tr>
-            </thead>
-            <tbody>
-      `;
-      activeList.forEach(model => {
-        const hasAgy = model.providers && model.providers.includes('antigravity');
-        const hasApi = model.providers && model.providers.includes('gemini_api');
-        const hasWeb = model.providers && model.providers.includes('gemini_web');
+        <div class="space-y-6">
+          <!-- Category 1: Google Gemini Models -->
+          <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
+            <div class="flex items-center justify-between mb-3 px-1">
+              <h3 class="text-sm font-bold flex items-center gap-2">
+                <span>✨ Google Gemini Models</span>
+                <span class="badge badge-primary badge-xs">${geminiList.length}</span>
+              </h3>
+            </div>
+            <div class="overflow-x-auto bg-base-100 rounded-box border border-base-300">
+              <table class="table table-zebra table-sm w-full">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Model ID</th>
+                    <th>Reasoning Levels</th>
+                    <th>Context</th>
+                    <th>Capabilities</th>
+                    <th class="text-center">Antigravity</th>
+                    <th class="text-center">Gemini API</th>
+                    <th class="text-center">Gemini Web</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${renderModelTableRows(geminiList)}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-        // Context Window formatting
-        let contextText = '1M tokens';
-        if (model.maxTokens) {
-          if (model.maxTokens >= 1048576) {
-            const mVal = model.maxTokens / 1048576;
-            contextText = `${mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1)}M tokens`;
-          } else if (model.maxTokens >= 1024) {
-            contextText = `${Math.round(model.maxTokens / 1024)}k tokens`;
-          } else {
-            contextText = `${model.maxTokens} tokens`;
-          }
-        }
+          <!-- Category 2: Non-Google Models (Claude, GPT-OSS, etc.) -->
+          <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
+            <div class="flex items-center justify-between mb-3 px-1">
+              <h3 class="text-sm font-bold flex items-center gap-2">
+                <span>🚀 Non-Google Models (Claude, GPT, OSS)</span>
+                <span class="badge badge-secondary badge-xs">${nonGoogleList.length}</span>
+              </h3>
+            </div>
+            <div class="overflow-x-auto bg-base-100 rounded-box border border-base-300">
+              <table class="table table-zebra table-sm w-full">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Model ID</th>
+                    <th>Reasoning Levels</th>
+                    <th>Context</th>
+                    <th>Capabilities</th>
+                    <th class="text-center">Antigravity</th>
+                    <th class="text-center">Gemini API</th>
+                    <th class="text-center">Gemini Web</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${renderModelTableRows(nonGoogleList)}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-        // Capabilities emojis
-        let emojis = '';
-        const isEmbed = model.isEmbedding || (model.id && model.id.includes('embedding'));
-        const isThinking = model.supportsThinking || (model.id && (model.id.includes('thinking') || model.id.includes('3.7')));
-        
-        if (isThinking) emojis += '🧠 ';
-        if (!isEmbed && (model.supportsTools !== false)) emojis += '🛠️ ';
-        if (!isEmbed && (model.supportsVision !== false)) emojis += '👁️ ';
-        if (isEmbed) emojis += '🔢 ';
-        emojis = emojis.trim();
-
-        const hiddenBadge = model.hidden ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Hidden</span>' : '';
-
-        html += `
-          <tr class="hover">
-            <td class="font-bold flex items-center">
-              <span>${escapeHtml(model.displayName || model.id)}</span>
-              ${hiddenBadge}
-            </td>
-            <td>
-              <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-center gap-1" onclick="copyText('${escapeHtml(model.id)}', 'Model ID copied to clipboard!')" title="Click to copy model ID">
-                <span>${escapeHtml(model.id)}</span>
-                <span class="text-xs opacity-60">📋</span>
-              </button>
-            </td>
-            <td class="text-xs whitespace-nowrap">${contextText}</td>
-            <td class="text-sm whitespace-nowrap" title="Model capabilities">${emojis || '—'}</td>
-            <td class="text-center">${hasAgy ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
-            <td class="text-center">${hasApi ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
-            <td class="text-center">${hasWeb ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
-          </tr>
-        `;
-      });
-      html += `
-            </tbody>
-          </table>
-        </div>
-        <div class="card bg-base-100 p-3 rounded-box flex flex-wrap gap-4 text-xs mt-3 border border-base-300">
-          <span><strong class="text-base-content/80">Capabilities Legend:</strong></span>
-          <span>🧠 Reasoning / Thinking</span>
-          <span>🛠️ Tool Calling</span>
-          <span>👁️ Multimodal / Vision</span>
-          <span>🔢 Text Embeddings</span>
+          <div class="card bg-base-100 p-3 rounded-box flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-xs border border-base-300">
+            <span class="font-semibold text-base-content/80">Capabilities Legend:</span>
+            <span class="inline-flex items-center gap-1.5"><span>🧠</span><span>Reasoning / Thinking</span></span>
+            <span class="inline-flex items-center gap-1.5"><span>🛠️</span><span>Tool Calling</span></span>
+            <span class="inline-flex items-center gap-1.5"><span>👁️</span><span>Multimodal / Vision</span></span>
+            <span class="inline-flex items-center gap-1.5"><span>🔢</span><span>Text Embeddings</span></span>
+          </div>
         </div>
       `;
       container.innerHTML = html;
@@ -830,10 +845,12 @@
       }
 
       const filtered = baseList.filter(m => {
-        const idMatch = (m.id || '').toLowerCase().includes(q);
-        const nameMatch = (m.displayName || '').toLowerCase().includes(q);
-        const providerMatch = m.providers && m.providers.some(p => p.toLowerCase().includes(q));
-        return idMatch || nameMatch || providerMatch;
+        const nameMatch = (m.base_model_name || m.displayName || m.id || '').toLowerCase().includes(q);
+        const ids = m.selectable_model_ids || [m.id || ''];
+        const idMatch = ids.some(mid => mid.toLowerCase().includes(q));
+        const sources = m.available_sources || m.providers || [];
+        const providerMatch = sources.some(p => p.toLowerCase().includes(q));
+        return nameMatch || idMatch || providerMatch;
       });
 
       renderModels(filtered);

@@ -144,8 +144,9 @@ ruff format .
 
 ### Running Unit & Integration Tests
 ```bash
-# Run all pytest suites
-.venv/bin/pytest -v
+# Source the virtual environment and run all pytest suites using uv
+source .venv/bin/activate
+uv run pytest -v
 ```
 
 ### Running the Server Locally

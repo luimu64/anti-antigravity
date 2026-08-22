@@ -115,3 +115,22 @@ async def test_quotas_endpoint():
             data = resp_fail.json()
             assert "error" in data
             assert data["groups"] == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_models_transformed():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/api/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "gemini_models" in data
+        assert "the_rest" in data
+        assert "models" in data
+        assert isinstance(data["gemini_models"], list)
+        assert isinstance(data["the_rest"], list)
+        for item in data["models"]:
+            assert "base_model_name" in item
+            assert "selectable_model_ids" in item
+            assert "available_sources" in item

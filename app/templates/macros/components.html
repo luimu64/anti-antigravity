@@ -1,0 +1,47 @@
+{# Reusable Jinja2 UI macros for agy-to-api dashboard #}
+
+{% macro section_card(id, class="mb-6") %}
+<div class="card bg-base-200 shadow-xl {{ class }}" id="{{ id }}">
+  <div class="card-body">
+    {{ caller() }}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro provider_card(id, title, toggle_id, backend_key, status_id) %}
+<div class="card bg-base-100 shadow border border-base-300" id="{{ id }}">
+  <div class="card-body p-4">
+    <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
+      <h3 class="font-bold text-sm">{{ title }}</h3>
+      <label class="label cursor-pointer p-0 gap-2">
+        <span class="label-text text-xs">Enabled</span>
+        <input type="checkbox" id="{{ toggle_id }}" class="toggle toggle-success toggle-sm" onchange="toggleBackend('{{ backend_key }}', this.checked)">
+      </label>
+    </div>
+    <p class="text-xs mb-2">Status: <span id="{{ status_id }}" class="font-semibold">Loading...</span></p>
+    {{ caller() }}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro loading_placeholder(text) %}
+<div class="flex items-center gap-2 text-sm text-base-content/70">
+  <span class="loading loading-spinner loading-sm"></span>
+  <span>{{ text }}</span>
+</div>
+{% endmacro %}
+
+{% macro action_button(label, onclick, variant="btn-outline btn-secondary btn-xs sm:btn-sm", title=None, type="button") %}
+<button type="{{ type }}" onclick="{{ onclick }}" class="btn {{ variant }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button>
+{% endmacro %}
+
+{% macro info_row(label, value="", id=None, is_strong=False, max_w=None) %}
+<div class="flex justify-between items-center">
+  <span class="text-base-content/70">{{ label }}:</span>
+  {% if is_strong %}
+  <strong{% if id %} id="{{ id }}"{% endif %}{% if max_w %} class="truncate {{ max_w }}"{% endif %}>{{ value }}</strong>
+  {% else %}
+  <span{% if id %} id="{{ id }}"{% endif %}{% if max_w %} class="truncate {{ max_w }}"{% endif %}>{{ value }}</span>
+  {% endif %}
+</div>
+{% endmacro %}

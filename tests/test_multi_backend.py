@@ -510,7 +510,7 @@ async def test_dashboard_backend_api_and_persistence(mock_credentials_file):
         assert client.gemini_web.psid == "psid_cookie_val_12345"
 
         # Verify disk persistence in credentials.json
-        with open(mock_credentials_file, "r") as f:
+        with open(mock_credentials_file) as f:
             persisted = json.load(f)
         assert persisted["gemini_api_key"] == "AIzaSyTestKeyDashboard123"
         assert persisted["gemini_web_psid"] == "psid_cookie_val_12345"

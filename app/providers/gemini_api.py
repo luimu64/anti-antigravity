@@ -70,62 +70,213 @@ class GeminiApiAdapter(BaseAdapter):
             return self._cached_models
 
         fallback_models = {
-            "gemini-2.5-flash": {
-                "displayName": "Gemini 2.5 Flash",
+            "gemini-3.7-flash": {
+                "displayName": "Gemini 3.7 Flash",
                 "maxTokens": 1048576,
                 "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-3.6-flash": {
+                "displayName": "Gemini 3.6 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-3.5-pro": {
+                "displayName": "Gemini 3.5 Pro",
+                "maxTokens": 2097152,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-3.5-flash": {
+                "displayName": "Gemini 3.5 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-3.5-flash-lite": {
+                "displayName": "Gemini 3.5 Flash Lite",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-3.1-pro": {
+                "displayName": "Gemini 3.1 Pro",
+                "maxTokens": 2097152,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-3.1-flash-lite": {
+                "displayName": "Gemini 3.1 Flash Lite",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
             },
             "gemini-2.5-pro": {
                 "displayName": "Gemini 2.5 Pro",
                 "maxTokens": 2097152,
                 "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-2.5-flash": {
+                "displayName": "Gemini 2.5 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-2.5-flash-lite": {
+                "displayName": "Gemini 2.5 Flash Lite",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-2.0-pro-exp-02-05": {
+                "displayName": "Gemini 2.0 Pro Experimental",
+                "maxTokens": 2097152,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
+            },
+            "gemini-2.0-flash-thinking-exp-01-21": {
+                "displayName": "Gemini 2.0 Flash Thinking",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+                "capabilities": ["thinking", "tools", "vision"],
             },
             "gemini-2.0-flash": {
                 "displayName": "Gemini 2.0 Flash",
                 "maxTokens": 1048576,
                 "supportsThinking": False,
+                "capabilities": ["tools", "vision"],
+            },
+            "gemini-2.0-flash-lite": {
+                "displayName": "Gemini 2.0 Flash Lite",
+                "maxTokens": 1048576,
+                "supportsThinking": False,
+                "capabilities": ["tools", "vision"],
             },
             "gemini-1.5-pro": {
                 "displayName": "Gemini 1.5 Pro",
                 "maxTokens": 2097152,
                 "supportsThinking": False,
+                "capabilities": ["tools", "vision"],
             },
             "gemini-1.5-flash": {
                 "displayName": "Gemini 1.5 Flash",
                 "maxTokens": 1048576,
                 "supportsThinking": False,
+                "capabilities": ["tools", "vision"],
+            },
+            "gemini-1.5-flash-8b": {
+                "displayName": "Gemini 1.5 Flash 8B",
+                "maxTokens": 1048576,
+                "supportsThinking": False,
+                "capabilities": ["tools", "vision"],
+            },
+            "gemini-1.0-pro": {
+                "displayName": "Gemini 1.0 Pro",
+                "maxTokens": 32768,
+                "supportsThinking": False,
+                "capabilities": ["tools"],
             },
             "text-embedding-004": {
                 "displayName": "Text Embedding 004",
                 "maxTokens": 2048,
                 "supportsThinking": False,
+                "capabilities": ["embeddings"],
             },
         }
 
         if not self.is_configured():
             return {"models": fallback_models}
 
-        url = f"{self.base_url}/models"
         http = self.get_http_client()
-        try:
-            resp = await http.get(url, headers=self._get_headers())
-            if resp.status_code == 429:
-                self.set_cooldown(60.0)
-                return {"models": fallback_models}
+        models_dict = {}
+        page_token = None
+        page_count = 0
 
-            if resp.status_code == 200:
+        try:
+            while True:
+                params = {"pageSize": 100}
+                if page_token:
+                    params["pageToken"] = page_token
+
+                url = f"{self.base_url}/models"
+                resp = await http.get(url, params=params, headers=self._get_headers())
+                if resp.status_code == 429:
+                    self.set_cooldown(60.0)
+                    return {"models": models_dict or fallback_models}
+
+                if resp.status_code != 200:
+                    break
+
                 data = resp.json()
-                models_dict = {}
                 for m in data.get("models", []):
                     m_name = m.get("name", "").replace("models/", "")
-                    if m_name:
-                        models_dict[m_name] = {
-                            "displayName": m.get("displayName", m_name),
-                            "maxTokens": m.get("outputTokenLimit", 1048576),
-                            "supportsThinking": "2.5" in m_name or "thinking" in m_name,
-                        }
-                self._cached_models = {"models": models_dict or fallback_models}
-                return self._cached_models
+                    if not m_name:
+                        continue
+
+                    methods = m.get("supportedGenerationMethods", [])
+                    is_embedding = (
+                        "embedContent" in methods or "embedding" in m_name.lower()
+                    )
+                    supports_thinking = bool(
+                        "thinking" in m_name.lower()
+                        or "2.5" in m_name
+                        or "3.7" in m_name
+                        or "3.6" in m_name
+                        or "3.1" in m_name
+                    )
+                    supports_tools = not is_embedding and (
+                        "generateContent" in methods or "gemini" in m_name.lower()
+                    )
+                    supports_vision = not is_embedding and any(
+                        k in m_name.lower()
+                        for k in (
+                            "flash",
+                            "pro",
+                            "2.0",
+                            "2.5",
+                            "3.0",
+                            "3.1",
+                            "3.5",
+                            "3.6",
+                            "3.7",
+                            "1.5",
+                        )
+                    )
+
+                    caps = []
+                    if supports_thinking:
+                        caps.append("thinking")
+                    if supports_tools:
+                        caps.append("tools")
+                    if supports_vision:
+                        caps.append("vision")
+                    if is_embedding:
+                        caps.append("embeddings")
+
+                    # InputTokenLimit is the context window size in Google AI Studio
+                    ctx_window = m.get("inputTokenLimit") or (
+                        2097152 if "pro" in m_name.lower() else 1048576
+                    )
+
+                    models_dict[m_name] = {
+                        "displayName": m.get("displayName", m_name),
+                        "maxTokens": ctx_window,
+                        "supportsThinking": supports_thinking,
+                        "supportsTools": supports_tools,
+                        "supportsVision": supports_vision,
+                        "isEmbedding": is_embedding,
+                        "capabilities": caps,
+                    }
+
+                page_token = data.get("nextPageToken")
+                page_count += 1
+                if not page_token or page_count >= 10:
+                    break
+
+            self._cached_models = {"models": models_dict or fallback_models}
+            return self._cached_models
         except Exception as e:
             logger.warning(f"Failed to fetch models from Gemini API: {e}")
 

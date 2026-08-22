@@ -69,6 +69,7 @@ class MultiBackendRouter(BaseAdapter):
         routing_strategy: str = "free_first",
     ):
         super().__init__(enabled=True)
+        custom_instances = bool(antigravity or gemini_api or gemini_web)
         self.antigravity = antigravity or AntigravityAdapter()
         self.gemini_api = gemini_api or GeminiApiAdapter()
         self.gemini_web = gemini_web or GeminiWebAdapter()
@@ -79,17 +80,16 @@ class MultiBackendRouter(BaseAdapter):
             "gemini_web": self.gemini_web,
         }
 
-        self.routing_strategy = routing_strategy or os.getenv(
-            "ROUTING_STRATEGY", "free_first"
-        )
+        self.routing_strategy = routing_strategy
         self._rr_counter = 0
 
         # Backwards-compatibility attributes for direct AntigravityClient callers
         self.auth: OAuthManager = getattr(self.antigravity, "auth", auth_manager)
         self.base_url: str = CLOUD_CODE_BASE_URL
 
-        # Load persisted credentials & configuration
-        self.load_config()
+        # Load persisted credentials & configuration if using default instances
+        if not custom_instances:
+            self.load_config()
 
     def is_configured(self) -> bool:
         return any(a.is_configured() for a in self.adapters.values() if a.enabled)
@@ -124,7 +124,7 @@ class MultiBackendRouter(BaseAdapter):
         env_psid = (
             os.getenv("GEMINI_WEB_PSID")
             or os.getenv("SECURE_1PSID")
-            or os.getenv("__Secure-1PSID")
+            or os.environ.get("__Secure-1PSID")
         )
         if env_psid:
             self.gemini_web.psid = env_psid
@@ -132,7 +132,7 @@ class MultiBackendRouter(BaseAdapter):
         env_psidts = (
             os.getenv("GEMINI_WEB_PSIDTS")
             or os.getenv("SECURE_1PSIDTS")
-            or os.getenv("__Secure-1PSIDTS")
+            or os.environ.get("__Secure-1PSIDTS")
         )
         if env_psidts:
             self.gemini_web.psidts = env_psidts
@@ -141,7 +141,7 @@ class MultiBackendRouter(BaseAdapter):
             os.getenv("GEMINI_WEB_SAPISID")
             or os.getenv("SAPISID")
             or os.getenv("SECURE_3PSID")
-            or os.getenv("__Secure-3PSID")
+            or os.environ.get("__Secure-3PSID")
         )
         if env_sapisid:
             self.gemini_web.sapisid = env_sapisid
@@ -149,7 +149,7 @@ class MultiBackendRouter(BaseAdapter):
         # 2. Local credentials file
         if os.path.exists(CREDENTIALS_FILE):
             try:
-                with open(CREDENTIALS_FILE, "r") as f:
+                with open(CREDENTIALS_FILE) as f:
                     data = json.load(f)
 
                 if "routing_strategy" in data and data["routing_strategy"] in (
@@ -185,7 +185,7 @@ class MultiBackendRouter(BaseAdapter):
         existing_data = {}
         if os.path.exists(CREDENTIALS_FILE):
             try:
-                with open(CREDENTIALS_FILE, "r") as f:
+                with open(CREDENTIALS_FILE) as f:
                     existing_data = json.load(f)
             except Exception:
                 existing_data = {}
@@ -354,14 +354,12 @@ class MultiBackendRouter(BaseAdapter):
         if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
             return True
         msg = str(e).lower()
-        if (
+        return (
             "429" in msg
             or "resource_exhausted" in msg
             or "quota" in msg
             or "too many requests" in msg
-        ):
-            return True
-        return False
+        )
 
     async def generate_content(
         self,
@@ -432,9 +430,7 @@ class MultiBackendRouter(BaseAdapter):
                 )
 
                 # Peek first item to ensure connection and catch immediate rate limit
-                first_chunk = None
                 async for chunk in stream_gen:
-                    first_chunk = chunk
                     yield chunk
                     success = True
                     break

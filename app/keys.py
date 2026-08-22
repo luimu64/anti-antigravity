@@ -40,7 +40,7 @@ class APIKeyManager:
         """Load API keys from disk."""
         if self.storage_file.exists():
             try:
-                with open(self.storage_file, "r") as f:
+                with open(self.storage_file) as f:
                     data = json.load(f)
                 self.keys = data.get("keys", {})
                 self.enforce_keys = data.get("enforce_keys", self.enforce_keys)

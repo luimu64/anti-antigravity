@@ -11,6 +11,7 @@ from app.auth import auth_manager
 from app.client import client
 from app.config import SERVER_PORT
 from app.keys import api_key_manager
+from app.transformer import transform_model_catalog
 
 logger = logging.getLogger("agy_to_api.dashboard")
 router = APIRouter(tags=["Dashboard"])
@@ -118,7 +119,6 @@ async def toggle_backend(backend_id: str, payload: ToggleBackendRequest):
             )
 
         adapter.enabled = payload.enabled
-        key_name = f"{backend_id}_enabled"
         if hasattr(client, "save_config"):
             client.save_config()
         return {
@@ -221,36 +221,83 @@ async def get_quotas():
 @router.get("/api/models")
 async def get_dashboard_models():
     """
-    Get aggregated list of models available from currently enabled backends,
-    ranked by redundancy (descending) and newness (descending).
+    Get simplified and normalized list of models across all active providers.
     """
     try:
-        if hasattr(client, "fetch_available_models"):
-            raw = await client.fetch_available_models()
-            models_dict = raw.get("models", {})
-        else:
-            models_dict = {}
+        raw_records = []
+        if hasattr(client, "adapters"):
+            for name, adapter in client.adapters.items():
+                if not adapter.enabled:
+                    continue
+                try:
+                    res = await adapter.fetch_available_models()
+                    for m_id, m_info in res.get("models", {}).items():
+                        raw_id = m_id.replace("models/", "")
+                        is_embedding = "embedding" in raw_id.lower()
+                        supports_thinking = bool(
+                            m_info.get("supportsThinking", False)
+                            or "thinking" in raw_id.lower()
+                            or "3.7" in raw_id
+                        )
+                        supports_tools = not is_embedding and any(
+                            k in raw_id.lower() for k in ("gemini", "claude", "gpt")
+                        )
+                        supports_vision = not is_embedding and any(
+                            k in raw_id.lower() for k in ("gemini", "claude", "gpt-4")
+                        )
+                        capabilities = []
+                        if supports_thinking:
+                            capabilities.append("thinking")
+                        if supports_tools:
+                            capabilities.append("tools")
+                        if supports_vision:
+                            capabilities.append("vision")
+                        if is_embedding:
+                            capabilities.append("embeddings")
 
-        result = []
-        for model_id, info in models_dict.items():
-            result.append(
-                {
-                    "id": model_id,
-                    "displayName": info.get("displayName", model_id),
-                    "maxTokens": info.get("maxTokens", 1048576),
-                    "supportsThinking": info.get("supportsThinking", False),
-                    "supportsTools": info.get("supportsTools", True),
-                    "supportsVision": info.get("supportsVision", True),
-                    "isEmbedding": info.get("isEmbedding", False),
-                    "capabilities": info.get("capabilities", []),
-                    "hidden": bool(info.get("hidden", False)),
-                    "providers": info.get("providers", []),
-                    "provider_count": info.get(
-                        "provider_count", len(info.get("providers", []))
-                    ),
-                }
-            )
-        return {"status": "ok", "models": result, "total": len(result)}
+                        raw_records.append(
+                            {
+                                "model_id": raw_id,
+                                "raw_name": m_info.get("displayName", raw_id),
+                                "context_window": m_info.get("maxTokens", 1048576),
+                                "capabilities": capabilities,
+                                "source_antigravity": (name == "antigravity"),
+                                "source_gemini_api": (name == "gemini_api"),
+                                "source_gemini_web": (name == "gemini_web"),
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(f"Error fetching models from '{name}': {e}")
+        elif hasattr(client, "fetch_available_models"):
+            raw = await client.fetch_available_models()
+            for m_id, m_info in raw.get("models", {}).items():
+                raw_id = m_id.replace("models/", "")
+                provs = m_info.get("providers", ["antigravity"])
+                raw_records.append(
+                    {
+                        "model_id": raw_id,
+                        "raw_name": m_info.get("displayName", raw_id),
+                        "context_window": m_info.get("maxTokens", 1048576),
+                        "capabilities": m_info.get("capabilities", []),
+                        "source_antigravity": "antigravity" in provs,
+                        "source_gemini_api": "gemini_api" in provs,
+                        "source_gemini_web": "gemini_web" in provs,
+                    }
+                )
+
+        transformed = transform_model_catalog(raw_records)
+        gemini_models = transformed["gemini_models"]
+        the_rest = transformed["the_rest"]
+        all_models = gemini_models + the_rest
+
+        return {
+            "status": "ok",
+            "gemini_models": gemini_models,
+            "non_google_models": the_rest,
+            "the_rest": the_rest,
+            "models": all_models,
+            "total": len(all_models),
+        }
     except Exception as e:
         logger.warning(f"Failed to fetch models for dashboard: {e}")
         return JSONResponse(

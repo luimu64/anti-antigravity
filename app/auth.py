@@ -209,7 +209,7 @@ class OAuthManager:
         existing_data = {}
         if os.path.exists(self.credentials_file):
             try:
-                with open(self.credentials_file, "r") as f:
+                with open(self.credentials_file) as f:
                     existing_data = json.load(f)
             except Exception:
                 existing_data = {}
@@ -254,7 +254,7 @@ class OAuthManager:
         # 2. Local credentials file
         if os.path.exists(self.credentials_file):
             try:
-                with open(self.credentials_file, "r") as f:
+                with open(self.credentials_file) as f:
                     data = json.load(f)
                 self.access_token = data.get("access_token")
                 self.refresh_token = data.get("refresh_token")

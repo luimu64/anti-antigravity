@@ -145,7 +145,7 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid request parameters: {e!s}",
-        )
+        ) from e
 
     # Determine if include_usage is requested for streaming
     include_usage = False
@@ -185,7 +185,7 @@ async def chat_completions(request: ChatCompletionRequest):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Generation failed: {e!s}",
-            )
+            ) from e
 
     # 2. Non-streaming response
     try:
@@ -205,7 +205,7 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Generation failed: {e!s}",
-        )
+        ) from e
 
 
 @router.post("/v1/completions", dependencies=[Depends(verify_api_key)])
@@ -220,7 +220,7 @@ async def legacy_completions(request: Request):
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON request body."
-        )
+        ) from None
 
     prompt = body.get("prompt", "")
     if isinstance(prompt, list):
@@ -259,7 +259,7 @@ async def legacy_completions(request: Request):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid request parameters: {e!s}",
-        )
+        ) from e
 
     # 1. Streaming response
     if stream:
@@ -291,7 +291,7 @@ async def legacy_completions(request: Request):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Generation failed: {e!s}",
-            )
+            ) from e
 
     # 2. Non-streaming response
     try:
@@ -311,7 +311,7 @@ async def legacy_completions(request: Request):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Generation failed: {e!s}",
-        )
+        ) from e
 
 
 @router.post("/v1/embeddings", dependencies=[Depends(verify_api_key)])
@@ -364,7 +364,7 @@ async def create_embeddings(request: EmbeddingRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Embedding failed: {e!s}",
-        )
+        ) from e
 
     # 3. Extract embedding vectors from response
     raw_embeddings = []

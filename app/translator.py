@@ -71,9 +71,7 @@ class OpenAITranslator:
         return f"fp_agy_{abs(hash(model)) & 0xFFFFFFFF:08x}"
 
     @staticmethod
-    def resolve_model(
-        requested_model: str, reasoning_effort: str | None = None
-    ) -> str:
+    def resolve_model(requested_model: str, reasoning_effort: str | None = None) -> str:
         """
         Map user-requested model and optional reasoning_effort to Antigravity internal model name
         using the lookup table and tier mappings.

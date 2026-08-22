@@ -86,20 +86,20 @@ class GeminiWebAdapter(BaseAdapter):
             psid
             or os.getenv("GEMINI_WEB_PSID")
             or os.getenv("SECURE_1PSID")
-            or os.getenv("__Secure-1PSID", "")
+            or os.environ.get("__Secure-1PSID", "")
         )
         self.psidts = (
             psidts
             or os.getenv("GEMINI_WEB_PSIDTS")
             or os.getenv("SECURE_1PSIDTS")
-            or os.getenv("__Secure-1PSIDTS", "")
+            or os.environ.get("__Secure-1PSIDTS", "")
         )
         self.sapisid = (
             sapisid
             or os.getenv("GEMINI_WEB_SAPISID")
             or os.getenv("SAPISID")
             or os.getenv("SECURE_3PSID")
-            or os.getenv("__Secure-3PSID", "")
+            or os.environ.get("__Secure-3PSID", "")
         )
 
         self._http_client: httpx.AsyncClient | None = None
@@ -454,7 +454,7 @@ class GeminiWebAdapter(BaseAdapter):
         except Exception as e:
             logger.warning(f"Gemini Web request network error: {e}")
             self.set_cooldown(30.0)
-            raise RateLimitError(f"Gemini Web network error: {e}")
+            raise RateLimitError(f"Gemini Web network error: {e}") from e
 
         if resp.status_code in (429, 403, 401):
             self.set_cooldown(60.0)

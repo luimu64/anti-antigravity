@@ -68,7 +68,7 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
             )
 
     try:
-        tokens = await auth_manager.exchange_code(
+        await auth_manager.exchange_code(
             code=code, redirect_uri=redirect_uri, state=state
         )
         try:
@@ -100,7 +100,7 @@ async def exchange_code_endpoint(payload: ExchangeCodeRequest, request: Request)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Authorization code exchange failed: {e!s}",
-        )
+        ) from e
 
 
 @router.get("/login")
@@ -144,7 +144,7 @@ async def auth_login(
         </head>
         <body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8 flex items-center justify-center">
           <div id="toast-container" class="toast toast-top toast-center z-50 pointer-events-none" aria-live="polite" aria-atomic="true"></div>
-          
+
           <div class="container max-w-lg mx-auto">
             <div class="card bg-base-200 shadow-xl">
               <div class="card-body">
@@ -415,7 +415,7 @@ async def refresh_token_endpoint():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Token refresh failed: {e!s}",
-        )
+        ) from e
 
 
 @router.post("/logout")
