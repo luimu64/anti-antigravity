@@ -1,13 +1,20 @@
 import datetime
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 
 from app.auth import OAuthManager, auth_manager
-from app.config import CLOUD_CODE_BASE_URL, PROVIDER_RATE_LIMITS, USER_AGENT
+from app.config import (
+    CLOUD_CODE_BASE_URL,
+    DEPRECATED_MODELS,
+    MODEL_CACHE_TTL,
+    PROVIDER_RATE_LIMITS,
+    USER_AGENT,
+)
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("google_gate.providers.antigravity")
@@ -31,6 +38,7 @@ class AntigravityAdapter(BaseAdapter):
         base_url: str = CLOUD_CODE_BASE_URL,
         auth: OAuthManager = auth_manager,
         enabled: bool = False,
+        model_cache_ttl: float = MODEL_CACHE_TTL,
     ):
         limits = PROVIDER_RATE_LIMITS.get("antigravity", {})
         super().__init__(
@@ -40,10 +48,12 @@ class AntigravityAdapter(BaseAdapter):
             rpd=limits.get("rpd", 0),
             default_cooldown=limits.get("default_cooldown", 60.0),
             min_quota_fraction=limits.get("min_quota_fraction", 0.01),
+            model_cache_ttl=model_cache_ttl,
         )
         self.base_url = base_url.rstrip("/")
         self.auth = auth
         self._cached_models: dict[str, Any] | None = None
+        self._models_fetched_at: float = 0.0
         self._http_client: httpx.AsyncClient | None = None
 
     def is_configured(self) -> bool:
@@ -128,39 +138,109 @@ class AntigravityAdapter(BaseAdapter):
     async def fetch_available_models(
         self, force_refresh: bool = False
     ) -> dict[str, Any]:
-        """Call /v1internal:fetchAvailableModels to get all supported models."""
-        if self._cached_models and not force_refresh:
+        """Call /v1internal:fetchAvailableModels to get all supported models with TTL caching."""
+        now = time.time()
+        if (
+            self._cached_models
+            and not force_refresh
+            and (now - self._models_fetched_at < self.model_cache_ttl)
+        ):
+            return self._cached_models
+
+        fallback_models = {
+            "gemini-3.7-flash-high": {
+                "displayName": "Gemini 3.7 Flash High",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+            },
+            "gemini-3.6-flash-high": {
+                "displayName": "Gemini 3.6 Flash High",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+            },
+            "gemini-3.1-pro-high": {
+                "displayName": "Gemini 3.1 Pro High",
+                "maxTokens": 2097152,
+                "supportsThinking": True,
+            },
+            "gemini-3-flash-agent": {
+                "displayName": "Gemini 3.5 Flash",
+                "maxTokens": 1048576,
+                "supportsThinking": True,
+            },
+            "claude-sonnet-4-6": {
+                "displayName": "Claude 3.7 Sonnet",
+                "maxTokens": 200000,
+                "supportsThinking": True,
+            },
+            "claude-opus-4-6-thinking": {
+                "displayName": "Claude 3 Opus",
+                "maxTokens": 200000,
+                "supportsThinking": True,
+            },
+            "gpt-oss-120b-medium": {
+                "displayName": "GPT-OSS 120B",
+                "maxTokens": 32768,
+                "supportsThinking": True,
+            },
+            "text-embedding-004": {
+                "displayName": "Text Embedding 004",
+                "maxTokens": 2048,
+                "supportsThinking": False,
+            },
+        }
+
+        if not self.is_configured():
+            self._cached_models = {"models": fallback_models}
+            self._models_fetched_at = now
             return self._cached_models
 
         headers = await self._get_headers()
         url = f"{self.base_url}/v1internal:fetchAvailableModels"
         http = self.get_http_client()
-        resp = await http.post(url, json={}, headers=headers)
-        if resp.status_code == 401 and self.auth.refresh_token:
-            logger.info(
-                "Received 401 on fetchAvailableModels, refreshing token and retrying..."
-            )
-            await self.auth.refresh_access_token()
-            headers = await self._get_headers()
+        try:
             resp = await http.post(url, json={}, headers=headers)
+            if resp.status_code == 401 and self.auth.refresh_token:
+                logger.info(
+                    "Received 401 on fetchAvailableModels, refreshing token and retrying..."
+                )
+                await self.auth.refresh_access_token()
+                headers = await self._get_headers()
+                resp = await http.post(url, json={}, headers=headers)
 
-        if resp.status_code == 429:
-            retry_after = _extract_retry_after(resp, self.default_cooldown)
-            self.set_cooldown(retry_after)
-            raise RateLimitError(
-                f"Antigravity rate limited (429): {resp.text}",
-                status_code=429,
-                retry_after=retry_after,
-            )
+            if resp.status_code == 429:
+                retry_after = _extract_retry_after(resp, self.default_cooldown)
+                self.set_cooldown(retry_after)
+                if self._cached_models:
+                    return self._cached_models
+                return {"models": fallback_models}
 
-        if resp.status_code != 200:
-            logger.error(f"fetchAvailableModels failed: {resp.status_code} {resp.text}")
-            raise ValueError(
-                f"fetchAvailableModels failed: {resp.status_code} {resp.text}"
-            )
+            if resp.status_code != 200:
+                logger.error(
+                    f"fetchAvailableModels failed: {resp.status_code} {resp.text}"
+                )
+                if self._cached_models:
+                    return self._cached_models
+                return {"models": fallback_models}
 
-        self._cached_models = resp.json()
-        return self._cached_models
+            data = resp.json()
+            if isinstance(data, dict) and "models" in data:
+                filtered = {
+                    k: v
+                    for k, v in data["models"].items()
+                    if k not in DEPRECATED_MODELS
+                    and k.replace("models/", "") not in DEPRECATED_MODELS
+                }
+                self._cached_models = {"models": filtered}
+            else:
+                self._cached_models = data
+            self._models_fetched_at = now
+            return self._cached_models
+        except Exception as e:
+            logger.warning(f"Error fetching models from Antigravity: {e}")
+            if self._cached_models:
+                return self._cached_models
+            return {"models": fallback_models}
 
     async def retrieve_user_quota_summary(self) -> dict[str, Any]:
         """Call /v1internal:retrieveUserQuotaSummary to get quota details."""

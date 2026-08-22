@@ -1,15 +1,74 @@
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 
-from app.config import PROVIDER_RATE_LIMITS
+from app.config import DEPRECATED_MODELS, MODEL_CACHE_TTL, PROVIDER_RATE_LIMITS
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("google_gate.providers.gemini_api")
+
+# Fallback models for Google AI Studio API when unconfigured or offline
+FALLBACK_MODELS = {
+    "gemini-2.0-flash": {
+        "displayName": "Gemini 2.0 Flash",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "capabilities": ["tools", "vision"],
+    },
+    "gemini-2.0-flash-lite": {
+        "displayName": "Gemini 2.0 Flash Lite",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "capabilities": ["tools", "vision"],
+    },
+    "gemini-2.0-pro-exp-02-05": {
+        "displayName": "Gemini 2.0 Pro Experimental",
+        "maxTokens": 2097152,
+        "supportsThinking": True,
+        "capabilities": ["thinking", "tools", "vision"],
+    },
+    "gemini-2.0-flash-thinking-exp-01-21": {
+        "displayName": "Gemini 2.0 Flash Thinking",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "capabilities": ["thinking", "tools", "vision"],
+    },
+    "gemini-1.5-pro": {
+        "displayName": "Gemini 1.5 Pro",
+        "maxTokens": 2097152,
+        "supportsThinking": False,
+        "capabilities": ["tools", "vision"],
+    },
+    "gemini-1.5-flash": {
+        "displayName": "Gemini 1.5 Flash",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "capabilities": ["tools", "vision"],
+    },
+    "gemini-1.5-flash-8b": {
+        "displayName": "Gemini 1.5 Flash 8B",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "capabilities": ["tools", "vision"],
+    },
+    "gemini-1.0-pro": {
+        "displayName": "Gemini 1.0 Pro",
+        "maxTokens": 32768,
+        "supportsThinking": False,
+        "capabilities": ["tools"],
+    },
+    "text-embedding-004": {
+        "displayName": "Text Embedding 004",
+        "maxTokens": 2048,
+        "supportsThinking": False,
+        "capabilities": ["embeddings"],
+    },
+}
 
 
 def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:
@@ -30,6 +89,7 @@ class GeminiApiAdapter(BaseAdapter):
         api_key: str | None = None,
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
         enabled: bool = False,
+        model_cache_ttl: float = MODEL_CACHE_TTL,
     ):
         limits = PROVIDER_RATE_LIMITS.get("gemini_api", {})
         super().__init__(
@@ -39,11 +99,13 @@ class GeminiApiAdapter(BaseAdapter):
             rpd=limits.get("rpd", 1500),
             default_cooldown=limits.get("default_cooldown", 60.0),
             min_quota_fraction=limits.get("min_quota_fraction", 0.0),
+            model_cache_ttl=model_cache_ttl,
         )
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.base_url = base_url.rstrip("/")
         self._http_client: httpx.AsyncClient | None = None
         self._cached_models: dict[str, Any] | None = None
+        self._models_fetched_at: float = 0.0
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key.strip())
@@ -58,21 +120,24 @@ class GeminiApiAdapter(BaseAdapter):
     def _normalize_model_name(self, model: str) -> str:
         """Map internal/alias names to standard Gemini API model names."""
         clean = model.replace("models/", "")
+        if self._cached_models and clean in self._cached_models.get("models", {}):
+            return clean
+
         mapping = {
-            "gemini-3.7-flash-high": "gemini-2.5-flash",
-            "gemini-3.7-flash-medium": "gemini-2.5-flash",
-            "gemini-3.7-flash-low": "gemini-2.5-flash",
-            "gemini-3.7-flash-image": "gemini-2.5-flash",
-            "vision": "gemini-2.5-flash",
-            "gemini-3.6-flash-high": "gemini-2.5-flash",
-            "gemini-3.6-flash-medium": "gemini-2.5-flash",
-            "gemini-3.1-pro-high": "gemini-2.5-pro",
-            "gemini-3-flash-agent": "gemini-2.5-flash",
-            "gpt-4o": "gemini-2.5-flash",
-            "gpt-4o-mini": "gemini-2.5-flash",
-            "claude-sonnet-4-6": "gemini-2.5-pro",
-            "claude-opus-4-6-thinking": "gemini-2.5-pro",
-            "gpt-oss-120b-medium": "gemini-2.5-flash",
+            "gemini-3.7-flash-high": "gemini-2.0-flash",
+            "gemini-3.7-flash-medium": "gemini-2.0-flash",
+            "gemini-3.7-flash-low": "gemini-2.0-flash",
+            "gemini-3.7-flash-image": "gemini-2.0-flash",
+            "vision": "gemini-2.0-flash",
+            "gemini-3.6-flash-high": "gemini-2.0-flash",
+            "gemini-3.6-flash-medium": "gemini-2.0-flash",
+            "gemini-3.1-pro-high": "gemini-1.5-pro",
+            "gemini-3-flash-agent": "gemini-2.0-flash",
+            "gpt-4o": "gemini-2.0-flash",
+            "gpt-4o-mini": "gemini-2.0-flash",
+            "claude-sonnet-4-6": "gemini-1.5-pro",
+            "claude-opus-4-6-thinking": "gemini-1.5-pro",
+            "gpt-oss-120b-medium": "gemini-2.0-flash",
         }
         return mapping.get(clean, clean)
 
@@ -86,129 +151,19 @@ class GeminiApiAdapter(BaseAdapter):
     async def fetch_available_models(
         self, force_refresh: bool = False
     ) -> dict[str, Any]:
-        """Fetch available models from Google AI Studio."""
-        if self._cached_models and not force_refresh:
+        """Fetch available models from Google AI Studio with TTL caching."""
+        now = time.time()
+        if (
+            self._cached_models
+            and not force_refresh
+            and (now - self._models_fetched_at < self.model_cache_ttl)
+        ):
             return self._cached_models
 
-        fallback_models = {
-            "gemini-3.7-flash": {
-                "displayName": "Gemini 3.7 Flash",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-3.6-flash": {
-                "displayName": "Gemini 3.6 Flash",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-3.5-pro": {
-                "displayName": "Gemini 3.5 Pro",
-                "maxTokens": 2097152,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-3.5-flash": {
-                "displayName": "Gemini 3.5 Flash",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-3.5-flash-lite": {
-                "displayName": "Gemini 3.5 Flash Lite",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-3.1-pro": {
-                "displayName": "Gemini 3.1 Pro",
-                "maxTokens": 2097152,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-3.1-flash-lite": {
-                "displayName": "Gemini 3.1 Flash Lite",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-2.5-pro": {
-                "displayName": "Gemini 2.5 Pro",
-                "maxTokens": 2097152,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-2.5-flash": {
-                "displayName": "Gemini 2.5 Flash",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-2.5-flash-lite": {
-                "displayName": "Gemini 2.5 Flash Lite",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-2.0-pro-exp-02-05": {
-                "displayName": "Gemini 2.0 Pro Experimental",
-                "maxTokens": 2097152,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-2.0-flash-thinking-exp-01-21": {
-                "displayName": "Gemini 2.0 Flash Thinking",
-                "maxTokens": 1048576,
-                "supportsThinking": True,
-                "capabilities": ["thinking", "tools", "vision"],
-            },
-            "gemini-2.0-flash": {
-                "displayName": "Gemini 2.0 Flash",
-                "maxTokens": 1048576,
-                "supportsThinking": False,
-                "capabilities": ["tools", "vision"],
-            },
-            "gemini-2.0-flash-lite": {
-                "displayName": "Gemini 2.0 Flash Lite",
-                "maxTokens": 1048576,
-                "supportsThinking": False,
-                "capabilities": ["tools", "vision"],
-            },
-            "gemini-1.5-pro": {
-                "displayName": "Gemini 1.5 Pro",
-                "maxTokens": 2097152,
-                "supportsThinking": False,
-                "capabilities": ["tools", "vision"],
-            },
-            "gemini-1.5-flash": {
-                "displayName": "Gemini 1.5 Flash",
-                "maxTokens": 1048576,
-                "supportsThinking": False,
-                "capabilities": ["tools", "vision"],
-            },
-            "gemini-1.5-flash-8b": {
-                "displayName": "Gemini 1.5 Flash 8B",
-                "maxTokens": 1048576,
-                "supportsThinking": False,
-                "capabilities": ["tools", "vision"],
-            },
-            "gemini-1.0-pro": {
-                "displayName": "Gemini 1.0 Pro",
-                "maxTokens": 32768,
-                "supportsThinking": False,
-                "capabilities": ["tools"],
-            },
-            "text-embedding-004": {
-                "displayName": "Text Embedding 004",
-                "maxTokens": 2048,
-                "supportsThinking": False,
-                "capabilities": ["embeddings"],
-            },
-        }
-
         if not self.is_configured():
-            return {"models": fallback_models}
+            self._cached_models = {"models": FALLBACK_MODELS}
+            self._models_fetched_at = now
+            return self._cached_models
 
         http = self.get_http_client()
         models_dict = {}
@@ -226,15 +181,20 @@ class GeminiApiAdapter(BaseAdapter):
                 if resp.status_code == 429:
                     retry_after = _extract_retry_after(resp, self.default_cooldown)
                     self.set_cooldown(retry_after)
-                    return {"models": models_dict or fallback_models}
+                    if self._cached_models:
+                        return self._cached_models
+                    return {"models": models_dict or FALLBACK_MODELS}
 
                 if resp.status_code != 200:
+                    logger.warning(
+                        f"Gemini API /models returned status {resp.status_code}: {resp.text[:200]}"
+                    )
                     break
 
                 data = resp.json()
                 for m in data.get("models", []):
                     m_name = m.get("name", "").replace("models/", "")
-                    if not m_name:
+                    if not m_name or m_name in DEPRECATED_MODELS:
                         continue
 
                     methods = m.get("supportedGenerationMethods", [])
@@ -243,7 +203,7 @@ class GeminiApiAdapter(BaseAdapter):
                     )
                     supports_thinking = bool(
                         "thinking" in m_name.lower()
-                        or "2.5" in m_name
+                        or "2.0-flash-thinking" in m_name.lower()
                         or "3.7" in m_name
                         or "3.6" in m_name
                         or "3.1" in m_name
@@ -257,7 +217,6 @@ class GeminiApiAdapter(BaseAdapter):
                             "flash",
                             "pro",
                             "2.0",
-                            "2.5",
                             "3.0",
                             "3.1",
                             "3.5",
@@ -297,12 +256,21 @@ class GeminiApiAdapter(BaseAdapter):
                 if not page_token or page_count >= 10:
                     break
 
-            self._cached_models = {"models": models_dict or fallback_models}
-            return self._cached_models
+            if models_dict:
+                self._cached_models = {"models": models_dict}
+                self._models_fetched_at = now
+                return self._cached_models
+            elif self._cached_models:
+                return self._cached_models
         except Exception as e:
             logger.warning(f"Failed to fetch models from Gemini API: {e}")
 
-        return {"models": fallback_models}
+        if self._cached_models:
+            return self._cached_models
+
+        self._cached_models = {"models": FALLBACK_MODELS}
+        self._models_fetched_at = now
+        return self._cached_models
 
     async def stream_generate_content(
         self,

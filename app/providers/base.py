@@ -22,6 +22,20 @@ class RateLimitError(Exception):
         self.retry_after = retry_after
 
 
+class ModelNotFoundError(Exception):
+    """Raised when a requested model is not found, deprecated, or not supported by any configured backend."""
+
+    def __init__(
+        self,
+        message: str,
+        model: str = "",
+        status_code: int = 404,
+    ):
+        super().__init__(message)
+        self.model = model
+        self.status_code = status_code
+
+
 class InMemoryRateTracker:
     """
     In-memory proactive sliding-window rate limit tracker per running process.
@@ -134,12 +148,16 @@ class BaseAdapter(ABC):
         rpd: int = 0,
         default_cooldown: float = 60.0,
         min_quota_fraction: float = 0.0,
+        model_cache_ttl: float = 300.0,
     ):
         self.enabled: bool = enabled
         self.cooldown_until: float = 0.0
         self.default_cooldown = default_cooldown
         self.min_quota_fraction = min_quota_fraction
+        self.model_cache_ttl = model_cache_ttl
         self.rate_limiter = InMemoryRateTracker(rpm=rpm, tpm=tpm, rpd=rpd)
+        self._cached_models: dict[str, Any] | None = None
+        self._models_fetched_at: float = 0.0
 
     @abstractmethod
     def is_configured(self) -> bool:

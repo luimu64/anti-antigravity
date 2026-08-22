@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.client import client
-from app.config import MODEL_ALIASES
+from app.config import DEPRECATED_MODELS, MODEL_ALIASES
 from app.history import history_manager
 from app.keys import api_key_manager
-from app.providers.base import RateLimitError
+from app.providers.base import ModelNotFoundError, RateLimitError
 from app.translator import ChatCompletionRequest, EmbeddingRequest, OpenAITranslator
 
 logger = logging.getLogger("google_gate.openai")
@@ -83,6 +83,8 @@ async def list_models():
 
     # 1. Models from active backends (ordered by provider support count)
     for model_id, info in raw_models.items():
+        if model_id in DEPRECATED_MODELS:
+            continue
         seen_ids.add(model_id)
         model_list.append(
             {
@@ -105,6 +107,8 @@ async def list_models():
 
     # 2. Add standard OpenAI / Claude aliases
     for alias, internal_target in MODEL_ALIASES.items():
+        if alias in DEPRECATED_MODELS or internal_target in DEPRECATED_MODELS:
+            continue
         if alias not in seen_ids:
             seen_ids.add(alias)
             supports_vision = (
@@ -136,6 +140,18 @@ async def retrieve_model(model_id: str):
     """
     Retrieve single model info in standard OpenAI format.
     """
+    if model_id in DEPRECATED_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{model_id}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        )
     resolved = OpenAITranslator.resolve_model(model_id)
     return {
         "id": model_id,
@@ -159,6 +175,32 @@ async def chat_completions(request: ChatCompletionRequest):
     start_time = time.perf_counter()
     req_id = f"req_{uuid.uuid4().hex[:12]}"
     backend = get_active_backend_name()
+
+    if request.model in DEPRECATED_MODELS:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=request.model,
+            resolved_model=request.model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=f"The model `{request.model}` does not exist or is deprecated.",
+            request_id=req_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{request.model}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        )
 
     try:
         (internal_model, contents, system_instruction, generation_config, tools) = (
@@ -281,6 +323,32 @@ async def chat_completions(request: ChatCompletionRequest):
                     "Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))
                 },
             ) from e
+        except ModelNotFoundError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=request.model,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="error",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
+            logger.warning(f"Streaming chat model not found: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": {
+                        "message": f"The model `{request.model}` does not exist or you do not have access to it.",
+                        "type": "invalid_request_error",
+                        "param": "model",
+                        "code": "model_not_found",
+                    }
+                },
+            ) from e
         except ValueError as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
             history_manager.record(
@@ -394,6 +462,32 @@ async def chat_completions(request: ChatCompletionRequest):
             },
             headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
         ) from e
+    except ModelNotFoundError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=request.model,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
+        logger.warning(f"Non-streaming chat model not found: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{request.model}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        ) from e
     except ValueError as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
         history_manager.record(
@@ -493,6 +587,31 @@ async def legacy_completions(request: Request):
         prompt = str(prompt)
 
     model_name = body.get("model", "gemini-3.7-flash-high")
+    if model_name in DEPRECATED_MODELS:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=model_name,
+            resolved_model=model_name,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=f"The model `{model_name}` does not exist or is deprecated.",
+            request_id=req_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{model_name}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        )
     stream = bool(body.get("stream", False))
     stream_options = body.get("stream_options")
     include_usage = False
@@ -627,6 +746,32 @@ async def legacy_completions(request: Request):
                     "Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))
                 },
             ) from e
+        except ModelNotFoundError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=model_name,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="error",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
+            logger.warning(f"Streaming text model not found: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": {
+                        "message": f"The model `{model_name}` does not exist or you do not have access to it.",
+                        "type": "invalid_request_error",
+                        "param": "model",
+                        "code": "model_not_found",
+                    }
+                },
+            ) from e
         except ValueError as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
             history_manager.record(
@@ -740,6 +885,32 @@ async def legacy_completions(request: Request):
             },
             headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
         ) from e
+    except ModelNotFoundError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=model_name,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
+        logger.warning(f"Non-streaming text model not found: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{model_name}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        ) from e
     except ValueError as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
         history_manager.record(
@@ -840,6 +1011,19 @@ async def create_embeddings(request: EmbeddingRequest):
             detail="dimensions must be a positive integer.",
         )
 
+    if request.model in DEPRECATED_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{request.model}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        )
+
     resolved_model = OpenAITranslator.resolve_model(request.model)
 
     try:
@@ -859,6 +1043,19 @@ async def create_embeddings(request: EmbeddingRequest):
                 }
             },
             headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
+        ) from e
+    except ModelNotFoundError as e:
+        logger.warning(f"Embedding model not found: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "message": f"The model `{request.model}` does not exist or you do not have access to it.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
         ) from e
     except ValueError as e:
         status_code = (

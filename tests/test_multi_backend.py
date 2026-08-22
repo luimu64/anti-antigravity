@@ -140,7 +140,7 @@ async def test_free_first_routing_and_429_fallback():
 
     # Execute generate_content
     result = await router.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash",
         contents=[{"role": "user", "parts": [{"text": "hello"}]}],
     )
 
@@ -196,7 +196,7 @@ async def test_round_robin_routing():
     calls = []
     for _ in range(6):
         res = await router.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[{"role": "user", "parts": [{"text": "hello"}]}],
         )
         calls.append(res["backend"])
@@ -249,7 +249,7 @@ async def test_streaming_fallback_on_429():
 
     chunks = []
     async for chunk in router.stream_generate_content(
-        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "hi"}]}]
+        model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "hi"}]}]
     ):
         chunks.append(chunk)
 
@@ -606,7 +606,7 @@ async def test_gemini_api_adapter_streaming_and_generation():
 
     # Test non-streaming generate_content
     result = await adapter.generate_content(
-        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
+        model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
     )
     assert "candidates" in result
     assert result["text"] == "Hello from Gemini API!"
@@ -614,7 +614,7 @@ async def test_gemini_api_adapter_streaming_and_generation():
     # Test streaming
     chunks = []
     async for chunk in adapter.stream_generate_content(
-        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
+        model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "Hi"}]}]
     ):
         chunks.append(chunk)
 
@@ -676,10 +676,10 @@ async def test_gemini_web_adapter_prompt_and_generation():
 def test_vision_model_mapping_across_all_adapters():
     """Verify GeminiApiAdapter and GeminiWebAdapter map vision and -image models to latest Flash targets."""
     api_adapter = GeminiApiAdapter(api_key="test-key")
-    assert api_adapter._normalize_model_name("vision") == "gemini-2.5-flash"
+    assert api_adapter._normalize_model_name("vision") == "gemini-2.0-flash"
     assert (
         api_adapter._normalize_model_name("gemini-3.7-flash-image")
-        == "gemini-2.5-flash"
+        == "gemini-2.0-flash"
     )
 
     web_adapter = GeminiWebAdapter(psid="test-psid")
@@ -804,17 +804,17 @@ async def test_hybrid_routing_proactive_exhaustion_fallback():
 
     # First two requests go to gemini_web
     res1 = await router.generate_content(
-        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "1"}]}]
+        model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "1"}]}]
     )
     res2 = await router.generate_content(
-        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "2"}]}]
+        model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "2"}]}]
     )
     assert res1["backend"] == "gemini_web"
     assert res2["backend"] == "gemini_web"
 
     # Third request proactively skips gemini_web (out of capacity) and routes to gemini_api!
     res3 = await router.generate_content(
-        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "3"}]}]
+        model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "3"}]}]
     )
     assert res3["backend"] == "gemini_api"
 
@@ -849,7 +849,7 @@ async def test_all_backends_exhausted_immediate_429():
 
     with pytest.raises(RateLimitError) as exc_info:
         await router.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[{"role": "user", "parts": [{"text": "hi"}]}],
         )
 

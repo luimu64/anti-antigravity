@@ -75,8 +75,6 @@ MODEL_ALIASES = {
     "gemini-3.1-pro": "gemini-3.1-pro-high",
     "gemini-3.1-pro-high": "gemini-3.1-pro-high",
     "gemini-3.1-pro-low": "gemini-3.1-pro-low",
-    "gemini-2.5-pro": "gemini-2.5-pro",
-    "gemini-2.5-flash": "gemini-2.5-flash",
     # Claude models
     "claude-sonnet-4-6": "claude-sonnet-4-6",
     "claude-3-7-sonnet": "claude-sonnet-4-6",
@@ -145,6 +143,14 @@ CANONICAL_MODEL_MAP = {
     "claude-opus-4-6-thinking": "claude-3-opus",
 }
 
+# Explicitly deprecated or unavailable upstream models
+DEPRECATED_MODELS = {
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-thinking",
+}
+
 # Internal or unusable models hidden by default in the catalog
 HIDDEN_MODELS = {
     "tab_flash_lite_preview",
@@ -157,6 +163,9 @@ HIDDEN_MODELS = {
     "gemini-3.7-flash-medium",
     "gemini-3.1-pro-low",
 }
+
+# Cache TTL for dynamic model probing (seconds)
+MODEL_CACHE_TTL = float(os.getenv("MODEL_CACHE_TTL", "300.0"))
 
 # Provider rate limits, quota thresholds, and cooldown defaults (configurable via env vars)
 PROVIDER_RATE_LIMITS = {

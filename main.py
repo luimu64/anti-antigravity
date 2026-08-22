@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.auth import auth_manager
 from app.client import client
 from app.config import API_KEY, SERVER_HOST, SERVER_PORT
+from app.providers.base import ModelNotFoundError
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.openai import router as openai_router
@@ -49,6 +50,13 @@ async def lifespan(app: FastAPI):
             "No authentication tokens found. Please log in via browser at /auth/login or run with --login flag."
         )
 
+    # Dynamic model discovery & probing on startup
+    try:
+        logger.info("Probing available models from backend providers...")
+        await client.fetch_available_models(force_refresh=True)
+    except Exception as e:
+        logger.warning(f"Initial model probing during startup failed: {e}")
+
     yield
     logger.info("Shutting down Google Gate bridge...")
 
@@ -81,6 +89,22 @@ app.include_router(auth_router)
 
 
 # Global OpenAI-compatible Exception Handlers
+@app.exception_handler(ModelNotFoundError)
+async def model_not_found_handler(request: Request, exc: ModelNotFoundError):
+    model_name = getattr(exc, "model", "") or "requested model"
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "message": f"The model `{model_name}` does not exist or you do not have access to it.",
+                "type": "invalid_request_error",
+                "param": "model",
+                "code": "model_not_found",
+            }
+        },
+    )
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     if isinstance(exc.detail, dict) and "error" in exc.detail:

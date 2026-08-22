@@ -6,6 +6,10 @@
     <div class="flex items-center gap-2">
       <h2 class="card-title text-lg font-bold">Query History</h2>
       <span id="history-count-badge" class="badge badge-sm badge-neutral">0 queries</span>
+      <span class="flex items-center gap-1.5 text-[11px] text-success font-medium ml-1">
+        <span class="inline-block w-2 h-2 rounded-full bg-success animate-pulse"></span>
+        <span>Live</span>
+      </span>
     </div>
     <div class="flex items-center gap-2">
       {{ ui.action_button('Clear', 'clearHistory()', variant="btn-outline btn-error btn-xs sm:btn-sm") }}
@@ -13,12 +17,17 @@
     </div>
   </div>
 
-  <div id="history-container">
-    {{ ui.loading_placeholder('Loading query history...') }}
+  <div id="history-container" class="overflow-x-auto overflow-y-auto max-h-96 border border-base-300 rounded-box">
+    <div class="p-4">
+      {{ ui.loading_placeholder('Loading query history...') }}
+    </div>
   </div>
 {% endcall %}
 
 <script>
+  let _isLoadingHistory = false;
+  let _historyPollingInterval = null;
+
   // Clear Query History
   async function clearHistory() {
     try {
@@ -36,14 +45,18 @@
 
   // Load Query History
   async function loadHistory() {
+    if (_isLoadingHistory) return;
     const container = document.getElementById('history-container');
     const countBadge = document.getElementById('history-count-badge');
+    if (!container) return;
+
+    _isLoadingHistory = true;
     try {
       const res = await fetch('/api/history');
       const data = await res.json();
       
       if (!res.ok) {
-        container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load history')}</p>`;
+        container.innerHTML = `<div class="p-4"><p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load history')}</p></div>`;
         return;
       }
 
@@ -53,24 +66,23 @@
       }
 
       if (history.length === 0) {
-        container.innerHTML = '<p class="text-xs text-base-content/70">No recent queries recorded yet.</p>';
+        container.innerHTML = '<div class="p-4"><p class="text-xs text-base-content/70">No recent queries recorded yet.</p></div>';
         return;
       }
 
       let html = `
-        <div class="overflow-x-auto">
-          <table class="table table-zebra table-sm w-full">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Time</th>
-                <th>Model</th>
-                <th>Backend</th>
-                <th>Latency</th>
-                <th>Tokens</th>
-              </tr>
-            </thead>
-            <tbody>
+        <table class="table table-zebra table-sm table-pin-rows w-full">
+          <thead>
+            <tr class="bg-base-200">
+              <th>Status</th>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Backend</th>
+              <th>Latency</th>
+              <th>Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
       `;
 
       history.forEach(q => {
@@ -78,6 +90,8 @@
         if (q.status === 'error') {
           badgeClass = 'badge-error';
         } else if (q.status === 'stream-aborted') {
+          badgeClass = 'badge-warning';
+        } else if (q.status === 'rate_limited') {
           badgeClass = 'badge-warning';
         }
 
@@ -135,10 +149,17 @@
         `;
       });
 
-      html += '</tbody></table></div>';
+      html += '</tbody></table>';
       container.innerHTML = html;
     } catch (err) {
-      container.innerHTML = '<p class="text-xs text-error">Failed to load history.</p>';
+      container.innerHTML = '<div class="p-4"><p class="text-xs text-error">Failed to load history.</p></div>';
+    } finally {
+      _isLoadingHistory = false;
     }
+  }
+
+  // Live polling for query history updates
+  if (!_historyPollingInterval) {
+    _historyPollingInterval = setInterval(loadHistory, 3000);
   }
 </script>

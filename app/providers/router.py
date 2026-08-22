@@ -12,12 +12,15 @@ from app.config import (
     CANONICAL_MODEL_MAP,
     CLOUD_CODE_BASE_URL,
     CREDENTIALS_FILE,
+    DEPRECATED_MODELS,
     HIDDEN_MODELS,
+    MODEL_ALIASES,
 )
 from app.providers.antigravity import AntigravityAdapter
-from app.providers.base import BaseAdapter, RateLimitError
+from app.providers.base import BaseAdapter, ModelNotFoundError, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
+from app.translator import OpenAITranslator
 
 logger = logging.getLogger("google_gate.providers.router")
 
@@ -332,18 +335,177 @@ class MultiBackendRouter(BaseAdapter):
     def supports_model(
         self, adapter: BaseAdapter, model: str | None = None, is_embedding: bool = False
     ) -> bool:
-        """Check if a backend adapter is capable of handling the specified model / task."""
-        if is_embedding:
-            return hasattr(adapter, "embed_contents") and adapter.name in (
-                "antigravity",
-                "gemini_api",
-            )
-        if not model:
+        """Check if a backend adapter is capable of handling the specified model / task against probed models."""
+        if not model and not is_embedding:
             return True
-        clean_model = model.lower().replace("models/", "")
+
+        clean_model = (model or "").lower().replace("models/", "").strip()
+        if clean_model in DEPRECATED_MODELS:
+            return False
+
+        if is_embedding:
+            if not hasattr(adapter, "embed_contents"):
+                return False
+            if adapter.name == "antigravity":
+                return (
+                    not clean_model
+                    or clean_model
+                    in (
+                        "text-embedding-004",
+                        "text-embedding-3-small",
+                        "text-embedding-3-large",
+                        "text-embedding-ada-002",
+                    )
+                    or "embedding" in clean_model
+                )
+            if adapter.name == "gemini_api":
+                if clean_model:
+                    probed = getattr(adapter, "_cached_models", None)
+                    if (
+                        isinstance(probed, dict)
+                        and "models" in probed
+                        and clean_model in probed["models"]
+                    ):
+                        return bool(
+                            probed["models"][clean_model].get("isEmbedding", False)
+                            or "embed" in clean_model
+                        )
+                    return (
+                        "embedding" in clean_model
+                        or clean_model == "text-embedding-004"
+                    )
+                return True
+            return False
+
+        if not clean_model:
+            return True
+
+        # 1. Antigravity Adapter
+        if adapter.name == "antigravity":
+            resolved = OpenAITranslator.resolve_model(clean_model)
+            resolved_clean = resolved.lower().replace("models/", "").strip()
+
+            probed = getattr(adapter, "_cached_models", None)
+            if isinstance(probed, dict) and "models" in probed:
+                probed_models = {
+                    k.lower().replace("models/", ""): v
+                    for k, v in probed["models"].items()
+                }
+                if clean_model in probed_models or resolved_clean in probed_models:
+                    return True
+                canon = CANONICAL_MODEL_MAP.get(resolved_clean, resolved_clean)
+                if canon in probed_models:
+                    return True
+                if clean_model in MODEL_ALIASES:
+                    target = MODEL_ALIASES[clean_model].lower().replace("models/", "")
+                    if target in probed_models:
+                        return True
+                return False
+            else:
+                known_agy = {
+                    "gemini-3.7-flash",
+                    "gemini-3.7-flash-high",
+                    "gemini-3.7-flash-medium",
+                    "gemini-3.7-flash-low",
+                    "gemini-3.7-flash-image",
+                    "gemini-3.6-flash",
+                    "gemini-3.6-flash-high",
+                    "gemini-3.6-flash-medium",
+                    "gemini-3.6-flash-low",
+                    "gemini-3.5-flash",
+                    "gemini-3-flash-agent",
+                    "gemini-3.1-pro",
+                    "gemini-3.1-pro-high",
+                    "gemini-3.1-pro-low",
+                    "claude-sonnet-4-6",
+                    "claude-3-7-sonnet",
+                    "claude-3-5-sonnet",
+                    "claude-sonnet-3.7",
+                    "claude-opus-4-6-thinking",
+                    "claude-3-opus",
+                    "claude-opus-4.6",
+                    "gpt-4o",
+                    "gpt-4o-mini",
+                    "gpt-4-turbo",
+                    "o1",
+                    "o3-mini",
+                    "gpt-oss-120b",
+                    "gpt-oss-120b-medium",
+                    "vision",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-pro",
+                    "gemini-1.5-flash",
+                }
+                return clean_model in known_agy or resolved_clean in known_agy
+
+        # 2. Gemini API Adapter
+        if adapter.name == "gemini_api":
+            probed = getattr(adapter, "_cached_models", None)
+            probed_models = {}
+            if isinstance(probed, dict) and "models" in probed:
+                probed_models = {
+                    k.lower().replace("models/", ""): v
+                    for k, v in probed["models"].items()
+                }
+
+            normalized = (
+                adapter._normalize_model_name(clean_model)
+                .lower()
+                .replace("models/", "")
+            )
+
+            if probed_models:
+                if clean_model in probed_models:
+                    return not probed_models[clean_model].get("isEmbedding", False)
+                if normalized in probed_models:
+                    return not probed_models[normalized].get("isEmbedding", False)
+                if clean_model in MODEL_ALIASES and normalized in probed_models:
+                    return not probed_models[normalized].get("isEmbedding", False)
+                return False
+            else:
+                from app.providers.gemini_api import FALLBACK_MODELS as API_FALLBACK
+
+                return (
+                    clean_model in API_FALLBACK
+                    or normalized in API_FALLBACK
+                    or clean_model
+                    in (
+                        "gpt-4o",
+                        "gpt-4o-mini",
+                        "vision",
+                        "claude-sonnet-4-6",
+                        "claude-opus-4-6-thinking",
+                        "gemini-2.0-flash",
+                        "gemini-1.5-pro",
+                        "gemini-1.5-flash",
+                    )
+                )
+
+        # 3. Gemini Web Adapter
         if adapter.name == "gemini_web":
-            # Gemini web only handles Google Gemini models and vision
-            return any(k in clean_model for k in ("gemini", "vision", "image"))
+            probed = getattr(adapter, "_discovered_models", None)
+            if isinstance(probed, dict):
+                probed_models = {
+                    k.lower().replace("models/", ""): v for k, v in probed.items()
+                }
+                if clean_model in probed_models:
+                    return True
+            from app.providers.gemini_web import FALLBACK_MODELS as WEB_FALLBACK
+
+            if clean_model in WEB_FALLBACK:
+                return True
+            return any(
+                clean_model.startswith(k)
+                for k in (
+                    "gemini-3.7",
+                    "gemini-3.5",
+                    "gemini-3.1",
+                    "gemini-2.0",
+                    "gemini-1.5",
+                    "vision",
+                )
+            )
+
         return True
 
     def get_capable_adapters(
@@ -401,12 +563,21 @@ class MultiBackendRouter(BaseAdapter):
     ) -> list[BaseAdapter]:
         """
         Evaluate hybrid capacity (proactive in-memory counters + reactive cooldowns).
-        Returns ordered candidate adapters or immediately raises RateLimitError (429) / ValueError (503).
+        Returns ordered candidate adapters or immediately raises RateLimitError (429) / ValueError (503) / ModelNotFoundError (404).
         """
-        capable = self.get_capable_adapters(model=model, is_embedding=is_embedding)
-        if not capable:
+        enabled_and_configured = [
+            a for a in self.adapters.values() if a.enabled and a.is_configured()
+        ]
+        if not enabled_and_configured:
             raise ValueError(
                 f"No configured or enabled backends available for model '{model}'."
+            )
+
+        capable = self.get_capable_adapters(model=model, is_embedding=is_embedding)
+        if not capable:
+            raise ModelNotFoundError(
+                f"The model `{model}` does not exist or is not supported.",
+                model=model,
             )
 
         candidates = self.get_ordered_adapters(

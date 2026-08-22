@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from app.config import PROVIDER_RATE_LIMITS
+from app.config import MODEL_CACHE_TTL, PROVIDER_RATE_LIMITS
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("google_gate.providers.gemini_web")
@@ -60,20 +60,20 @@ FALLBACK_MODELS = {
         "modelNumber": 3,
         "hexId": "2c8c",
     },
-    "gemini-2.5-flash": {
-        "displayName": "Gemini 2.5 Flash (Web)",
+    "gemini-2.0-flash": {
+        "displayName": "Gemini 2.0 Flash (Web)",
         "maxTokens": 1048576,
-        "supportsThinking": True,
+        "supportsThinking": False,
         "supportsTools": True,
         "supportsVision": True,
         "isEmbedding": False,
         "modelNumber": 1,
         "hexId": "2c8d",
     },
-    "gemini-2.5-pro": {
-        "displayName": "Gemini 2.5 Pro (Web)",
+    "gemini-1.5-pro": {
+        "displayName": "Gemini 1.5 Pro (Web)",
         "maxTokens": 2097152,
-        "supportsThinking": True,
+        "supportsThinking": False,
         "supportsTools": True,
         "supportsVision": True,
         "isEmbedding": False,
@@ -92,6 +92,7 @@ class GeminiWebAdapter(BaseAdapter):
         psidts: str | None = None,
         sapisid: str | None = None,
         enabled: bool = False,
+        model_cache_ttl: float = MODEL_CACHE_TTL,
     ):
         limits = PROVIDER_RATE_LIMITS.get("gemini_web", {})
         super().__init__(
@@ -101,6 +102,7 @@ class GeminiWebAdapter(BaseAdapter):
             rpd=limits.get("rpd", 0),
             default_cooldown=limits.get("default_cooldown", 60.0),
             min_quota_fraction=limits.get("min_quota_fraction", 0.0),
+            model_cache_ttl=model_cache_ttl,
         )
         self.psid = (
             psid
@@ -129,6 +131,7 @@ class GeminiWebAdapter(BaseAdapter):
         self._capacity: int = 1
         self._capacity_field: int = 12
         self._discovered_models: dict[str, Any] | None = None
+        self._models_fetched_at: float = 0.0
 
     def is_configured(self) -> bool:
         return bool(self.psid and self.psid.strip())
@@ -252,17 +255,24 @@ class GeminiWebAdapter(BaseAdapter):
         Dynamically discover available models via the otAQ7b RPC endpoint,
         falling back to default models if offline or unconfigured.
         """
-        if self._discovered_models and not force_refresh:
+        now = time.time()
+        if (
+            self._discovered_models
+            and not force_refresh
+            and (now - self._models_fetched_at < self.model_cache_ttl)
+        ):
             return {"models": self._discovered_models}
 
         if not self.is_configured():
             self._discovered_models = FALLBACK_MODELS
+            self._models_fetched_at = now
             return {"models": self._discovered_models}
 
         try:
             at_token = await self._init_session()
             if not at_token:
                 self._discovered_models = FALLBACK_MODELS
+                self._models_fetched_at = now
                 return {"models": self._discovered_models}
 
             url = f"https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=otAQ7b&source-path=/app&bl={self._build_label}&hl=en&_reqid=100001&rt=c"
@@ -321,7 +331,7 @@ class GeminiWebAdapter(BaseAdapter):
                                             )
 
                                             # Normalize into canonical model ID
-                                            norm_id = "gemini-2.5-flash"
+                                            norm_id = "gemini-2.0-flash"
                                             if "3.7" in raw_name:
                                                 norm_id = "gemini-3.7-flash"
                                             elif "3.5" in raw_name:
@@ -329,7 +339,7 @@ class GeminiWebAdapter(BaseAdapter):
                                             elif "3.1" in raw_name:
                                                 norm_id = "gemini-3.1-pro"
                                             elif "pro" in raw_name.lower():
-                                                norm_id = "gemini-2.5-pro"
+                                                norm_id = "gemini-1.5-pro"
                                             elif "lite" in raw_name.lower():
                                                 norm_id = "gemini-3.5-flash-lite"
 
@@ -354,12 +364,14 @@ class GeminiWebAdapter(BaseAdapter):
 
                 if discovered:
                     self._discovered_models = discovered
+                    self._models_fetched_at = now
                     return {"models": self._discovered_models}
 
         except Exception as e:
             logger.debug(f"Dynamic model discovery failed: {e}")
 
         self._discovered_models = FALLBACK_MODELS
+        self._models_fetched_at = now
         return {"models": self._discovered_models}
 
     def _resolve_model_metadata(self, model: str) -> tuple[str, int, int]:
