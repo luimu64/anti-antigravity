@@ -666,6 +666,7 @@ class OpenAITranslator:
         event_stream: AsyncGenerator[dict[str, Any], None],
         requested_model: str,
         include_usage: bool = False,
+        usage_collector: dict[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Convert SSE stream from Antigravity internal API to standard OpenAI SSE chunk format.
@@ -692,6 +693,8 @@ class OpenAITranslator:
                 latest_usage_metadata.update(resp_obj["usageMetadata"])
             elif "usageMetadata" in event:
                 latest_usage_metadata.update(event["usageMetadata"])
+            if usage_collector is not None and latest_usage_metadata:
+                usage_collector.update(cls.format_usage(latest_usage_metadata))
 
             candidates = resp_obj.get("candidates", [])
             for default_idx, cand in enumerate(candidates):
@@ -848,6 +851,7 @@ class OpenAITranslator:
         event_stream: AsyncGenerator[dict[str, Any], None],
         requested_model: str,
         include_usage: bool = False,
+        usage_collector: dict[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Convert SSE stream from Antigravity internal API to OpenAI text_completion chunks.
@@ -871,6 +875,8 @@ class OpenAITranslator:
                 latest_usage_metadata.update(resp_obj["usageMetadata"])
             elif "usageMetadata" in event:
                 latest_usage_metadata.update(event["usageMetadata"])
+            if usage_collector is not None and latest_usage_metadata:
+                usage_collector.update(cls.format_usage(latest_usage_metadata))
 
             candidates = resp_obj.get("candidates", [])
             for default_idx, cand in enumerate(candidates):

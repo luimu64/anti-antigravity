@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.auth import auth_manager
 from app.client import client
 from app.config import SERVER_PORT
+from app.history import history_manager
 from app.keys import api_key_manager
 from app.transformer import transform_model_catalog, transform_quota_summary
 
@@ -203,6 +204,31 @@ async def toggle_key_enforcement(payload: ToggleEnforcementRequest):
     api_key_manager.enforce_keys = payload.enforce
     api_key_manager.save_keys()
     return {"status": "updated", "enforce_keys": api_key_manager.enforce_keys}
+
+
+@router.get("/api/history")
+async def get_query_history():
+    """
+    Retrieve recent query history (up to 50 entries) in reverse chronological order.
+    """
+    history = history_manager.list_history()
+    return {
+        "status": "ok",
+        "history": history,
+        "total": len(history),
+    }
+
+
+@router.delete("/api/history")
+async def clear_query_history():
+    """
+    Clear all in-memory query history records.
+    """
+    history_manager.clear()
+    return {
+        "status": "cleared",
+        "message": "Query history cleared successfully",
+    }
 
 
 @router.get("/api/quotas")

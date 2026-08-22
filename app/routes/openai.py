@@ -1,17 +1,29 @@
+import asyncio
 import base64
 import logging
 import struct
+import time
+import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.client import client
 from app.config import MODEL_ALIASES
+from app.history import history_manager
 from app.keys import api_key_manager
 from app.translator import ChatCompletionRequest, EmbeddingRequest, OpenAITranslator
 
 logger = logging.getLogger("agy_to_api.openai")
 router = APIRouter(tags=["OpenAI"])
+
+
+def get_active_backend_name() -> str:
+    if hasattr(client, "get_ordered_adapters"):
+        adapters = client.get_ordered_adapters()
+        if adapters:
+            return adapters[0].name
+    return getattr(client, "name", "antigravity")
 
 
 async def verify_api_key(authorization: str | None = Header(None)):
@@ -143,11 +155,28 @@ async def chat_completions(request: ChatCompletionRequest):
     Supports streaming (SSE) and non-streaming, multi-modal, function/tool calling,
     and reasoning/thinking models.
     """
+    start_time = time.perf_counter()
+    req_id = f"req_{uuid.uuid4().hex[:12]}"
+    backend = get_active_backend_name()
+
     try:
         (internal_model, contents, system_instruction, generation_config, tools) = (
             OpenAITranslator.openai_to_internal_request(request)
         )
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=getattr(request, "model", "unknown") or "unknown",
+            resolved_model="unknown",
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
         logger.error(f"Error translating OpenAI request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -172,13 +201,44 @@ async def chat_completions(request: ChatCompletionRequest):
                 generation_config=generation_config,
                 tools=tools,
             )
+            usage_collector: dict = {}
             openai_chunks = OpenAITranslator.internal_stream_to_openai_chunks(
                 event_stream=event_stream,
                 requested_model=request.model,
                 include_usage=include_usage,
+                usage_collector=usage_collector,
             )
+
+            async def tracked_chat_stream():
+                stream_status = "success"
+                error_msg = None
+                try:
+                    async for chunk in openai_chunks:
+                        yield chunk
+                except asyncio.CancelledError:
+                    stream_status = "stream-aborted"
+                    raise
+                except Exception as stream_err:
+                    stream_status = "error"
+                    error_msg = str(stream_err)
+                    raise
+                finally:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    history_manager.record(
+                        model=request.model,
+                        resolved_model=internal_model,
+                        backend=get_active_backend_name(),
+                        duration_ms=duration_ms,
+                        status=stream_status,
+                        prompt_tokens=usage_collector.get("prompt_tokens", 0),
+                        completion_tokens=usage_collector.get("completion_tokens", 0),
+                        total_tokens=usage_collector.get("total_tokens", 0),
+                        error_message=error_msg,
+                        request_id=req_id,
+                    )
+
             return StreamingResponse(
-                openai_chunks,
+                tracked_chat_stream(),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -188,6 +248,19 @@ async def chat_completions(request: ChatCompletionRequest):
                 },
             )
         except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=request.model,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="error",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
             logger.error(f"Streaming generation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -206,8 +279,34 @@ async def chat_completions(request: ChatCompletionRequest):
         response_json = OpenAITranslator.internal_to_openai_response(
             result=result, requested_model=request.model
         )
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        usage = response_json.get("usage", {})
+        history_manager.record(
+            model=request.model,
+            resolved_model=internal_model,
+            backend=get_active_backend_name(),
+            duration_ms=duration_ms,
+            status="success",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            request_id=response_json.get("id") or req_id,
+        )
         return JSONResponse(content=response_json)
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=request.model,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
         logger.error(f"Non-streaming generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -222,9 +321,26 @@ async def legacy_completions(request: Request):
     Legacy /v1/completions endpoint returning standard OpenAI text_completion objects.
     Supports streaming (SSE) and non-streaming responses.
     """
+    start_time = time.perf_counter()
+    req_id = f"req_{uuid.uuid4().hex[:12]}"
+    backend = get_active_backend_name()
+
     try:
         body = await request.json()
     except Exception:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model="unknown",
+            resolved_model="unknown",
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message="Invalid JSON request body.",
+            request_id=req_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON request body."
         ) from None
@@ -262,6 +378,19 @@ async def legacy_completions(request: Request):
             OpenAITranslator.openai_to_internal_request(chat_req)
         )
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=model_name,
+            resolved_model="unknown",
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
         logger.error(f"Error translating completion request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -278,13 +407,44 @@ async def legacy_completions(request: Request):
                 generation_config=generation_config,
                 tools=tools,
             )
+            usage_collector: dict = {}
             openai_chunks = OpenAITranslator.internal_stream_to_openai_text_chunks(
                 event_stream=event_stream,
                 requested_model=model_name,
                 include_usage=include_usage,
+                usage_collector=usage_collector,
             )
+
+            async def tracked_text_stream():
+                stream_status = "success"
+                error_msg = None
+                try:
+                    async for chunk in openai_chunks:
+                        yield chunk
+                except asyncio.CancelledError:
+                    stream_status = "stream-aborted"
+                    raise
+                except Exception as stream_err:
+                    stream_status = "error"
+                    error_msg = str(stream_err)
+                    raise
+                finally:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    history_manager.record(
+                        model=model_name,
+                        resolved_model=internal_model,
+                        backend=get_active_backend_name(),
+                        duration_ms=duration_ms,
+                        status=stream_status,
+                        prompt_tokens=usage_collector.get("prompt_tokens", 0),
+                        completion_tokens=usage_collector.get("completion_tokens", 0),
+                        total_tokens=usage_collector.get("total_tokens", 0),
+                        error_message=error_msg,
+                        request_id=req_id,
+                    )
+
             return StreamingResponse(
-                openai_chunks,
+                tracked_text_stream(),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -294,6 +454,19 @@ async def legacy_completions(request: Request):
                 },
             )
         except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=model_name,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="error",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
             logger.error(f"Streaming text completion generation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -312,8 +485,34 @@ async def legacy_completions(request: Request):
         response_json = OpenAITranslator.internal_to_openai_text_completion(
             result=result, requested_model=model_name
         )
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        usage = response_json.get("usage", {})
+        history_manager.record(
+            model=model_name,
+            resolved_model=internal_model,
+            backend=get_active_backend_name(),
+            duration_ms=duration_ms,
+            status="success",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            request_id=response_json.get("id") or req_id,
+        )
         return JSONResponse(content=response_json)
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=model_name,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
         logger.error(f"Non-streaming text completion generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

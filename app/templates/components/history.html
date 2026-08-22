@@ -1,0 +1,144 @@
+{% import 'macros/components.html' as ui %}
+
+<!-- Query History Widget -->
+{% call ui.section_card('history-card') %}
+  <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+    <div class="flex items-center gap-2">
+      <h2 class="card-title text-lg font-bold">Query History</h2>
+      <span id="history-count-badge" class="badge badge-sm badge-neutral">0 queries</span>
+    </div>
+    <div class="flex items-center gap-2">
+      {{ ui.action_button('Clear', 'clearHistory()', variant="btn-outline btn-error btn-xs sm:btn-sm") }}
+      {{ ui.action_button('Refresh', 'loadHistory()') }}
+    </div>
+  </div>
+
+  <div id="history-container">
+    {{ ui.loading_placeholder('Loading query history...') }}
+  </div>
+{% endcall %}
+
+<script>
+  // Clear Query History
+  async function clearHistory() {
+    try {
+      const res = await fetch('/api/history', { method: 'DELETE' });
+      if (res.ok) {
+        showToast('Query history cleared');
+        loadHistory();
+      } else {
+        showToast('Failed to clear query history', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  }
+
+  // Load Query History
+  async function loadHistory() {
+    const container = document.getElementById('history-container');
+    const countBadge = document.getElementById('history-count-badge');
+    try {
+      const res = await fetch('/api/history');
+      const data = await res.json();
+      
+      if (!res.ok) {
+        container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load history')}</p>`;
+        return;
+      }
+
+      const history = data.history || [];
+      if (countBadge) {
+        countBadge.textContent = `${history.length} ${history.length === 1 ? 'query' : 'queries'}`;
+      }
+
+      if (history.length === 0) {
+        container.innerHTML = '<p class="text-xs text-base-content/70">No recent queries recorded yet.</p>';
+        return;
+      }
+
+      let html = `
+        <div class="overflow-x-auto">
+          <table class="table table-zebra table-sm w-full">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Time</th>
+                <th>Model</th>
+                <th>Backend</th>
+                <th>Latency</th>
+                <th>Tokens</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      history.forEach(q => {
+        let badgeClass = 'badge-success';
+        if (q.status === 'error') {
+          badgeClass = 'badge-error';
+        } else if (q.status === 'stream-aborted') {
+          badgeClass = 'badge-warning';
+        }
+
+        const date = new Date(q.timestamp);
+        const timeStr = isNaN(date.getTime()) ? q.timestamp : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        const durationStr = q.duration_ms >= 1000 
+          ? `${(q.duration_ms / 1000).toFixed(2)}s` 
+          : `${Math.round(q.duration_ms)}ms`;
+
+        let tokenDisplay = '';
+        if (q.status === 'error' && !q.total_tokens) {
+          tokenDisplay = '<span class="text-xs text-base-content/50">N/A</span>';
+        } else {
+          const totalFormatted = (q.total_tokens || 0).toLocaleString();
+          const promptCount = (q.prompt_tokens || 0).toLocaleString();
+          const compCount = (q.completion_tokens || 0).toLocaleString();
+          tokenDisplay = `
+            <div>
+              <span class="font-bold">${totalFormatted}</span>
+              <div class="text-[11px] text-base-content/60" title="Prompt: ${promptCount} / Completion: ${compCount}">
+                ${promptCount} in / ${compCount} out
+              </div>
+            </div>
+          `;
+        }
+
+        const errorHtml = q.error_message 
+          ? `<div class="text-[11px] text-error truncate max-w-xs" title="${escapeHtml(q.error_message)}">${escapeHtml(q.error_message)}</div>`
+          : '';
+
+        const resolvedNote = (q.resolved_model && q.resolved_model !== q.model && q.resolved_model !== 'unknown')
+          ? `<div class="text-[11px] text-base-content/60">&rarr; ${escapeHtml(q.resolved_model)}</div>`
+          : '';
+
+        html += `
+          <tr class="hover">
+            <td>
+              <span class="badge badge-sm ${badgeClass} uppercase font-mono text-[10px]">${escapeHtml(q.status)}</span>
+            </td>
+            <td class="text-xs text-base-content/70 whitespace-nowrap" title="${escapeHtml(q.timestamp)}">
+              ${escapeHtml(timeStr)}
+            </td>
+            <td>
+              <div class="font-bold text-xs">${escapeHtml(q.model)}</div>
+              ${resolvedNote}
+              ${errorHtml}
+            </td>
+            <td>
+              <span class="badge badge-ghost badge-sm font-mono text-xs">${escapeHtml(q.backend || 'antigravity')}</span>
+            </td>
+            <td class="text-xs font-mono whitespace-nowrap">${escapeHtml(durationStr)}</td>
+            <td class="text-xs whitespace-nowrap">${tokenDisplay}</td>
+          </tr>
+        `;
+      });
+
+      html += '</tbody></table></div>';
+      container.innerHTML = html;
+    } catch (err) {
+      container.innerHTML = '<p class="text-xs text-error">Failed to load history.</p>';
+    }
+  }
+</script>
