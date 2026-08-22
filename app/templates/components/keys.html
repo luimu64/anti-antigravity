@@ -1,0 +1,184 @@
+{% import 'macros/components.html' as ui %}
+
+<!-- Bridge API Keys Widget -->
+{% call ui.section_card('keys-card') %}
+  <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+    <h2 class="card-title text-lg font-bold">Bridge API Keys</h2>
+    <label class="label cursor-pointer p-0 gap-2">
+      <span class="label-text text-sm font-semibold">Enforce Auth</span>
+      <input type="checkbox" id="enforce-toggle" class="toggle toggle-primary toggle-sm" onchange="toggleEnforcement(this.checked)" {{ 'checked' if enforce_keys else '' }}>
+    </label>
+  </div>
+
+  <p class="text-xs text-base-content/70 mb-4">
+    Protect incoming requests. Clients supply key via <code class="badge badge-neutral text-xs">Authorization: Bearer &lt;key&gt;</code>.
+  </p>
+
+  <form onsubmit="event.preventDefault(); createNewKey();" class="join w-full mb-4">
+    <input type="text" id="new-key-name" placeholder="Key description (e.g. Cursor, Production)" class="input input-bordered input-sm join-item flex-1">
+    <button type="submit" class="btn btn-primary btn-sm join-item">Create Key</button>
+  </form>
+
+  <div id="keys-container">
+    {{ ui.loading_placeholder('Loading API keys...') }}
+  </div>
+{% endcall %}
+
+<!-- Create Key Modal Dialog -->
+<dialog id="key-modal" class="modal">
+  <div class="modal-box" id="key-modal-box">
+    <!-- Populated dynamically by showKeyModal -->
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>
+
+<script>
+  // Toggle API Key Enforcement
+  async function toggleEnforcement(enabled) {
+    try {
+      const res = await fetch('/api/keys/enforcement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enforce: enabled })
+      });
+      if (res.ok) {
+        showToast(`API key enforcement ${enabled ? 'enabled' : 'disabled'}`);
+      } else {
+        showToast('Failed to update enforcement setting', 'error');
+        document.getElementById('enforce-toggle').checked = !enabled;
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+      document.getElementById('enforce-toggle').checked = !enabled;
+    }
+  }
+
+  // Create New Key
+  async function createNewKey() {
+    const nameInput = document.getElementById('new-key-name');
+    const name = nameInput.value.trim();
+    if (!name) return;
+
+    try {
+      const res = await fetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        nameInput.value = '';
+        showToast('API Key generated!');
+        loadKeys();
+        showKeyModal(data.key.key, data.key.name);
+      } else {
+        showToast('Failed to create key', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  }
+
+  // Revoke Key
+  async function revokeKey(keyId, name) {
+    if (!confirm(`Revoke key "${name}"? Any client using this key will immediately fail.`)) return;
+
+    try {
+      const res = await fetch(`/api/keys/${keyId}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast('Key revoked');
+        loadKeys();
+      } else {
+        showToast('Failed to revoke key', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  }
+
+  // Load Keys
+  async function loadKeys() {
+    const container = document.getElementById('keys-container');
+    try {
+      const res = await fetch('/api/keys');
+      const data = await res.json();
+      const keys = data.keys || [];
+
+      if (keys.length === 0) {
+        container.innerHTML = '<p class="text-xs text-base-content/70">No API keys created yet. Create one above to secure your endpoint.</p>';
+        return;
+      }
+
+      let html = `
+        <div class="overflow-x-auto">
+          <table class="table table-zebra table-sm w-full">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Key</th>
+                <th>Created</th>
+                <th>Last Used</th>
+                <th class="text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      keys.forEach(k => {
+        const created = new Date(k.created_at * 1000).toLocaleDateString();
+        const lastUsed = k.last_used_at 
+          ? new Date(k.last_used_at * 1000).toLocaleDateString()
+          : 'Never';
+
+        html += `
+          <tr class="hover">
+            <td class="font-bold">${escapeHtml(k.name)}</td>
+            <td><code class="badge badge-neutral font-mono text-xs">${escapeHtml(k.key_preview)}</code></td>
+            <td class="text-xs text-base-content/70">${created}</td>
+            <td class="text-xs text-base-content/70">${lastUsed}</td>
+            <td class="text-right">
+              <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn btn-error btn-xs" title="Revoke key">Revoke</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      html += '</tbody></table></div>';
+      container.innerHTML = html;
+    } catch (err) {
+      container.innerHTML = '<p class="text-xs text-error">Failed to load keys.</p>';
+    }
+  }
+
+  // Show Created Key Modal Dialog
+  function showKeyModal(rawKey, name) {
+    let modal = document.getElementById('key-modal');
+    if (!modal) {
+      modal = document.createElement('dialog');
+      modal.id = 'key-modal';
+      modal.className = 'modal';
+      document.body.appendChild(modal);
+    }
+
+    modal.innerHTML = `
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-2">Save Your API Key</h3>
+        <p class="text-sm text-base-content/80 mb-4">Key for <strong>${escapeHtml(name)}</strong> created. Copy it now; you won't be able to see the full key again!</p>
+        <div class="join w-full mb-4">
+          <input type="text" id="raw-key-input" value="${escapeHtml(rawKey)}" readonly class="input input-bordered input-sm join-item flex-1 font-mono">
+          <button type="button" class="btn btn-primary btn-sm join-item" onclick="copyText('${escapeHtml(rawKey)}', 'Key copied!')">Copy</button>
+        </div>
+        <div class="modal-action">
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('key-modal').close()">Done</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    `;
+
+    modal.showModal();
+  }
+</script>

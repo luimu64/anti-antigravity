@@ -1,0 +1,271 @@
+{% import 'macros/components.html' as ui %}
+
+<!-- Available Models Catalog -->
+{% call ui.section_card('models-card') %}
+  <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
+    <div class="flex items-center gap-2">
+      <h2 class="card-title text-lg font-bold">✨ Available Models</h2>
+      <span id="models-count-badge" class="badge badge-info badge-sm hidden"></span>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="label cursor-pointer p-0 gap-1.5 text-xs text-base-content/70 hover:text-base-content" title="Show/hide internal and tab completion models">
+        <span>Show Hidden</span>
+        <input type="checkbox" id="toggle-hidden-models" class="checkbox checkbox-xs checkbox-primary" onchange="toggleHiddenModels(this.checked)">
+      </label>
+      {{ ui.action_button('Refresh Models', 'loadModels()', title='Refresh models list') }}
+    </div>
+  </div>
+
+  <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
+    <div class="flex-1 min-w-[260px]">
+      <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" class="input input-bordered input-sm w-full">
+    </div>
+    <div class="text-xs text-base-content/70">
+      Click any <strong>Model ID</strong> to copy it to clipboard.
+    </div>
+  </div>
+
+  <div id="models-container">
+    {{ ui.loading_placeholder('Loading available models...') }}
+  </div>
+{% endcall %}
+
+<script>
+  // Available Models Management
+  window._allAvailableModels = [];
+  window._showHiddenModels = false;
+
+  function toggleHiddenModels(show) {
+    window._showHiddenModels = !!show;
+    const searchInput = document.getElementById('models-search-input');
+    const query = searchInput ? searchInput.value.trim() : '';
+    if (query) {
+      filterModels(query);
+    } else {
+      renderModels(window._allAvailableModels);
+    }
+  }
+
+  async function loadModels() {
+    const container = document.getElementById('models-container');
+    const countBadge = document.getElementById('models-count-badge');
+    if (!container) return;
+
+    try {
+      const res = await fetch('/api/models');
+      const data = await res.json();
+      const models = data.models || [];
+      window._allAvailableModels = models;
+
+      const visibleModels = window._showHiddenModels ? models : models.filter(m => !m.hidden);
+
+      if (countBadge) {
+        if (visibleModels.length > 0) {
+          countBadge.innerText = `${visibleModels.length} Model${visibleModels.length === 1 ? '' : 's'}`;
+          countBadge.classList.remove('hidden');
+        } else {
+          countBadge.classList.add('hidden');
+        }
+      }
+
+      const searchInput = document.getElementById('models-search-input');
+      const query = searchInput ? searchInput.value.trim() : '';
+      if (query) {
+        filterModels(query);
+      } else {
+        renderModels(models);
+      }
+    } catch (err) {
+      console.error('Failed to load models:', err);
+      container.innerHTML = '<p class="text-xs text-error">Failed to load available models.</p>';
+    }
+  }
+
+  function renderModelTableRows(items) {
+    if (!items || items.length === 0) {
+      return `<tr><td colspan="8" class="text-center text-xs text-base-content/50 py-4">No models available in this category.</td></tr>`;
+    }
+    return items.map(model => {
+      const sources = model.available_sources || [];
+      const hasAgy = sources.includes('Antigravity') || (model.providers && model.providers.includes('antigravity'));
+      const hasApi = sources.includes('Gemini API') || (model.providers && model.providers.includes('gemini_api'));
+      const hasWeb = sources.includes('Gemini Web') || (model.providers && model.providers.includes('gemini_web'));
+
+      // Context Window formatting
+      let contextText = '1M tokens';
+      const ctxVal = model.context_window || model.maxTokens;
+      if (ctxVal) {
+        if (ctxVal >= 1048576) {
+          const mVal = ctxVal / 1048576;
+          contextText = `${mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1)}M tokens`;
+        } else if (ctxVal >= 1024) {
+          contextText = `${Math.round(ctxVal / 1024)}k tokens`;
+        } else {
+          contextText = `${ctxVal} tokens`;
+        }
+      }
+
+      // Capabilities emojis
+      let emojis = '';
+      const caps = model.capabilities || [];
+      const isEmbed = caps.includes('embeddings') || (model.id && model.id.includes('embedding'));
+      const isThinking = caps.includes('thinking') || (model.id && (model.id.includes('thinking') || model.id.includes('3.7')));
+
+      if (isThinking) emojis += '🧠 ';
+      if (!isEmbed && (caps.includes('tools') || model.supportsTools !== false)) emojis += '🛠️ ';
+      if (!isEmbed && (caps.includes('vision') || model.supportsVision !== false)) emojis += '👁️ ';
+      if (isEmbed) emojis += '🔢 ';
+      emojis = emojis.trim();
+
+      // Reasoning levels badges
+      let reasoningBadges = '<span class="text-base-content/40">—</span>';
+      if (model.reasoning_levels && model.reasoning_levels.length > 0) {
+        reasoningBadges = model.reasoning_levels.map(lvl => {
+          let color = 'badge-neutral';
+          if (lvl === 'High') color = 'badge-secondary';
+          else if (lvl === 'Medium') color = 'badge-primary';
+          else if (lvl === 'Low' || lvl === 'Extra Low') color = 'badge-info';
+          else if (lvl === 'Dynamic' || lvl === 'Thinking') color = 'badge-accent';
+          return `<span class="badge ${color} badge-xs font-mono font-medium">${escapeHtml(lvl)}</span>`;
+        }).join(' ');
+      }
+
+      const modelId = model.id || (model.selectable_model_ids ? model.selectable_model_ids[0] : '');
+      const displayName = model.base_model_name || model.displayName || modelId;
+
+      const hiddenBadge = model.hidden
+        ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Experimental</span>'
+        : '';
+
+      return `
+        <tr class="hover">
+          <td class="font-bold whitespace-nowrap flex items-center">
+            <span>${escapeHtml(displayName)}</span>
+            ${hiddenBadge}
+          </td>
+          <td>
+            <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-center gap-1 w-fit" onclick="copyText('${escapeHtml(modelId)}', 'Model ID copied to clipboard!')" title="Click to copy '${escapeHtml(modelId)}'">
+              <span>${escapeHtml(modelId)}</span>
+              <span class="text-xs opacity-60">📋</span>
+            </button>
+          </td>
+          <td class="whitespace-nowrap">${reasoningBadges}</td>
+          <td class="text-xs whitespace-nowrap">${contextText}</td>
+          <td class="text-sm whitespace-nowrap" title="Model capabilities">${emojis || '—'}</td>
+          <td class="text-center">${hasAgy ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+          <td class="text-center">${hasApi ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+          <td class="text-center">${hasWeb ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function renderModels(models) {
+    const container = document.getElementById('models-container');
+    if (!container) return;
+
+    const activeList = (models || []).filter(m => window._showHiddenModels || !m.hidden);
+
+    if (!activeList || activeList.length === 0) {
+      container.innerHTML = '<p class="text-xs text-base-content/70">No models found from currently enabled backends. Enable and configure at least one backend above to see available models.</p>';
+      return;
+    }
+
+    // Partition into Gemini vs Non-Google models
+    const geminiList = activeList.filter(m => (m.id || '').includes('gemini') || (m.base_model_name || '').toLowerCase().includes('gemini'));
+    const nonGoogleList = activeList.filter(m => !geminiList.includes(m));
+
+    let html = `
+      <div class="space-y-6">
+        <!-- Category 1: Google Gemini Models -->
+        <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <h3 class="text-sm font-bold flex items-center gap-2">
+              <span>✨ Google Gemini Models</span>
+              <span class="badge badge-primary badge-xs">${geminiList.length}</span>
+            </h3>
+          </div>
+          <div class="overflow-x-auto bg-base-100 rounded-box border border-base-300">
+            <table class="table table-zebra table-sm w-full">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Model ID</th>
+                  <th>Reasoning Levels</th>
+                  <th>Context</th>
+                  <th>Capabilities</th>
+                  <th class="text-center">Antigravity</th>
+                  <th class="text-center">Gemini API</th>
+                  <th class="text-center">Gemini Web</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${renderModelTableRows(geminiList)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Category 2: Non-Google Models (Claude, GPT-OSS, etc.) -->
+        <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <h3 class="text-sm font-bold flex items-center gap-2">
+              <span>🚀 Non-Google Models (Claude, GPT, OSS)</span>
+              <span class="badge badge-secondary badge-xs">${nonGoogleList.length}</span>
+            </h3>
+          </div>
+          <div class="overflow-x-auto bg-base-100 rounded-box border border-base-300">
+            <table class="table table-zebra table-sm w-full">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Model ID</th>
+                  <th>Reasoning Levels</th>
+                  <th>Context</th>
+                  <th>Capabilities</th>
+                  <th class="text-center">Antigravity</th>
+                  <th class="text-center">Gemini API</th>
+                  <th class="text-center">Gemini Web</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${renderModelTableRows(nonGoogleList)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card bg-base-100 p-3 rounded-box flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-xs border border-base-300">
+          <span class="font-semibold text-base-content/80">Capabilities Legend:</span>
+          <span class="inline-flex items-center gap-1.5"><span>🧠</span><span>Reasoning / Thinking</span></span>
+          <span class="inline-flex items-center gap-1.5"><span>🛠️</span><span>Tool Calling</span></span>
+          <span class="inline-flex items-center gap-1.5"><span>👁️</span><span>Multimodal / Vision</span></span>
+          <span class="inline-flex items-center gap-1.5"><span>🔢</span><span>Text Embeddings</span></span>
+        </div>
+      </div>
+    `;
+    container.innerHTML = html;
+  }
+
+  function filterModels(query) {
+    if (!window._allAvailableModels) return;
+    const q = (query || '').toLowerCase().trim();
+    const baseList = window._allAvailableModels.filter(m => window._showHiddenModels || !m.hidden);
+
+    if (!q) {
+      renderModels(baseList);
+      return;
+    }
+
+    const filtered = baseList.filter(m => {
+      const nameMatch = (m.base_model_name || m.displayName || m.id || '').toLowerCase().includes(q);
+      const ids = m.selectable_model_ids || [m.id || ''];
+      const idMatch = ids.some(mid => mid.toLowerCase().includes(q));
+      const sources = m.available_sources || m.providers || [];
+      const providerMatch = sources.some(p => p.toLowerCase().includes(q));
+      return nameMatch || idMatch || providerMatch;
+    });
+
+    renderModels(filtered);
+  }
+</script>

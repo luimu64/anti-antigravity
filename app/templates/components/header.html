@@ -1,0 +1,22 @@
+<!-- Header Navbar -->
+<header class="navbar bg-base-200 shadow-md rounded-box mb-6 px-4 flex flex-col sm:flex-row gap-4 justify-between items-center">
+  <div class="flex-1">
+    <h1 class="text-xl font-bold flex items-center gap-2">🚀 Antigravity API Bridge</h1>
+  </div>
+  <div class="flex-none">
+    <button type="button" class="btn btn-sm btn-outline gap-2 font-mono" onclick="copyBaseUrl()" title="Click to copy base URL">
+      <code>{{ base_url or 'http://localhost:8000/v1' }}</code>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<script>
+  function copyBaseUrl() {
+    const url = `http://${window.location.host}/v1`;
+    copyText(url, 'Base URL copied to clipboard!');
+  }
+</script>

@@ -1,0 +1,70 @@
+{% import 'macros/components.html' as ui %}
+
+<!-- Usage & Quotas Widget -->
+{% call ui.section_card('quotas-card') %}
+  <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
+    <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
+    {{ ui.action_button('Refresh', 'loadQuotas()') }}
+  </div>
+
+  <div id="quotas-container">
+    {{ ui.loading_placeholder('Loading quotas...') }}
+  </div>
+{% endcall %}
+
+<script>
+  // Load Quotas
+  async function loadQuotas() {
+    const container = document.getElementById('quotas-container');
+    try {
+      const res = await fetch('/api/quotas');
+      const data = await res.json();
+      
+      if (!res.ok) {
+        container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load quotas')}</p>`;
+        return;
+      }
+
+      const groups = data.groups || [];
+      if (groups.length === 0) {
+        container.innerHTML = '<p class="text-xs text-base-content/70">No active quota buckets reported by backend.</p>';
+        return;
+      }
+
+      let html = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">';
+      groups.forEach(g => {
+        const frac = g.fraction_used != null ? g.fraction_used : 0;
+        const pct = Math.round(frac * 100);
+        const resetSecs = g.reset_time_seconds ? `${Math.round(g.reset_time_seconds)}s` : 'N/A';
+        
+        let progressColor = 'progress-primary';
+        let badgeColor = 'badge-ghost';
+        if (pct >= 90) {
+          progressColor = 'progress-error';
+          badgeColor = 'badge-error';
+        } else if (pct >= 70) {
+          progressColor = 'progress-warning';
+          badgeColor = 'badge-warning';
+        }
+
+        html += `
+          <div class="card bg-base-100 p-4 border border-base-300 rounded-box shadow-sm">
+            <div class="flex justify-between items-center mb-1">
+              <strong class="text-sm">${escapeHtml(g.display_name)}</strong>
+              <span class="badge badge-sm ${badgeColor}">${pct}% used</span>
+            </div>
+            <progress class="progress ${progressColor} w-full mb-2" value="${pct}" max="100"></progress>
+            <div class="flex justify-between text-xs text-base-content/70">
+              <span>Reset: ${resetSecs}</span>
+              <span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    } catch (err) {
+      container.innerHTML = '<p class="text-xs text-error">Failed to load quotas.</p>';
+    }
+  }
+</script>
