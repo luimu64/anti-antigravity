@@ -301,6 +301,9 @@ class MultiBackendRouter(BaseAdapter):
                     else {},
                     "has_api_key": bool(self.gemini_api.api_key),
                     "masked_key": mask_secret(self.gemini_api.api_key),
+                    # Billing plan of the key: "free", "payg", or None (unknown
+                    # until a 429 quota payload has been observed upstream).
+                    "plan": self.gemini_api.plan,
                 },
                 "gemini_web": {
                     "id": "gemini_web",
@@ -317,9 +320,37 @@ class MultiBackendRouter(BaseAdapter):
                     "has_psid": bool(self.gemini_web.psid),
                     "has_psidts": bool(self.gemini_web.psidts),
                     "masked_psid": mask_secret(self.gemini_web.psid),
+                    # Scraped session identity (all best-effort, may be None).
+                    "account_id": self.gemini_web.account_id,
+                    "user_email": self.gemini_web.user_email,
+                    "profile_picture_url": self.gemini_web.profile_picture_url,
                 },
             },
         }
+
+    def reset_credentials(self, backend: str) -> dict[str, Any]:
+        """
+        Wipe stored credentials for a backend and disable it.
+        Returns the fresh router status so callers can re-render the UI.
+        """
+        if backend == "gemini_api":
+            self.gemini_api.api_key = ""
+            self.gemini_api.plan = None
+            self.gemini_api.enabled = False
+        elif backend == "gemini_web":
+            self.gemini_web.psid = ""
+            self.gemini_web.psidts = ""
+            self.gemini_web.sapisid = ""
+            self.gemini_web.account_id = None
+            self.gemini_web.user_email = None
+            self.gemini_web.profile_picture_url = None
+            self.gemini_web.enabled = False
+        else:
+            raise ValueError(f"Unknown backend '{backend}'")
+
+        self.save_config()
+        logger.info(f"Credentials wiped and backend disabled: {backend}")
+        return self.get_status()
 
     def clear_all_cooldowns(self, backend: str | None = None) -> None:
         """Clear cooldown status for specific backend or all backends."""
@@ -343,6 +374,21 @@ class MultiBackendRouter(BaseAdapter):
         if clean_model in DEPRECATED_MODELS:
             return False
 
+        resolved = (
+            OpenAITranslator.resolve_model(clean_model)
+            .lower()
+            .replace("models/", "")
+            .strip()
+        )
+        canon = (
+            CANONICAL_MODEL_MAP.get(
+                resolved, CANONICAL_MODEL_MAP.get(clean_model, clean_model)
+            )
+            .lower()
+            .replace("models/", "")
+            .strip()
+        )
+
         if is_embedding:
             if not hasattr(adapter, "embed_contents"):
                 return False
@@ -357,6 +403,7 @@ class MultiBackendRouter(BaseAdapter):
                         "text-embedding-ada-002",
                     )
                     or "embedding" in clean_model
+                    or "embedding" in resolved
                 )
             if adapter.name == "gemini_api":
                 if clean_model:
@@ -364,15 +411,24 @@ class MultiBackendRouter(BaseAdapter):
                     if (
                         isinstance(probed, dict)
                         and "models" in probed
-                        and clean_model in probed["models"]
+                        and (
+                            clean_model in probed["models"]
+                            or resolved in probed["models"]
+                        )
                     ):
+                        m_obj = probed["models"].get(clean_model) or probed[
+                            "models"
+                        ].get(resolved, {})
                         return bool(
-                            probed["models"][clean_model].get("isEmbedding", False)
+                            m_obj.get("isEmbedding", False)
                             or "embed" in clean_model
+                            or "embed" in resolved
                         )
                     return (
                         "embedding" in clean_model
+                        or "embedding" in resolved
                         or clean_model == "text-embedding-004"
+                        or resolved == "text-embedding-004"
                     )
                 return True
             return False
@@ -382,19 +438,17 @@ class MultiBackendRouter(BaseAdapter):
 
         # 1. Antigravity Adapter
         if adapter.name == "antigravity":
-            resolved = OpenAITranslator.resolve_model(clean_model)
-            resolved_clean = resolved.lower().replace("models/", "").strip()
-
             probed = getattr(adapter, "_cached_models", None)
             if isinstance(probed, dict) and "models" in probed:
                 probed_models = {
                     k.lower().replace("models/", ""): v
                     for k, v in probed["models"].items()
                 }
-                if clean_model in probed_models or resolved_clean in probed_models:
-                    return True
-                canon = CANONICAL_MODEL_MAP.get(resolved_clean, resolved_clean)
-                if canon in probed_models:
+                if (
+                    clean_model in probed_models
+                    or resolved in probed_models
+                    or canon in probed_models
+                ):
                     return True
                 if clean_model in MODEL_ALIASES:
                     target = MODEL_ALIASES[clean_model].lower().replace("models/", "")
@@ -413,6 +467,7 @@ class MultiBackendRouter(BaseAdapter):
                     "gemini-3.6-flash-medium",
                     "gemini-3.6-flash-low",
                     "gemini-3.5-flash",
+                    "gemini-3.5-flash-high",
                     "gemini-3-flash-agent",
                     "gemini-3.1-pro",
                     "gemini-3.1-pro-high",
@@ -436,10 +491,29 @@ class MultiBackendRouter(BaseAdapter):
                     "gemini-1.5-pro",
                     "gemini-1.5-flash",
                 }
-                return clean_model in known_agy or resolved_clean in known_agy
+                return (
+                    clean_model in known_agy
+                    or resolved in known_agy
+                    or canon in known_agy
+                    or any(
+                        clean_model.startswith(k)
+                        for k in (
+                            "gemini-",
+                            "claude-",
+                            "gpt-",
+                            "o1",
+                            "o3",
+                            "vision",
+                        )
+                    )
+                )
 
         # 2. Gemini API Adapter
         if adapter.name == "gemini_api":
+            # Exclude non-Google models that Gemini API does not natively support
+            if any(k in clean_model or k in resolved for k in ("claude", "gpt-oss")):
+                return False
+
             probed = getattr(adapter, "_cached_models", None)
             probed_models = {}
             if isinstance(probed, dict) and "models" in probed:
@@ -459,52 +533,67 @@ class MultiBackendRouter(BaseAdapter):
                     return not probed_models[clean_model].get("isEmbedding", False)
                 if normalized in probed_models:
                     return not probed_models[normalized].get("isEmbedding", False)
-                if clean_model in MODEL_ALIASES and normalized in probed_models:
-                    return not probed_models[normalized].get("isEmbedding", False)
+                if resolved in probed_models:
+                    return not probed_models[resolved].get("isEmbedding", False)
+                if canon in probed_models:
+                    return not probed_models[canon].get("isEmbedding", False)
+                if clean_model in MODEL_ALIASES:
+                    target = MODEL_ALIASES[clean_model].lower().replace("models/", "")
+                    if target in probed_models:
+                        return not probed_models[target].get("isEmbedding", False)
                 return False
             else:
                 from app.providers.gemini_api import FALLBACK_MODELS as API_FALLBACK
 
-                return (
+                if (
                     clean_model in API_FALLBACK
                     or normalized in API_FALLBACK
-                    or clean_model
-                    in (
-                        "gpt-4o",
-                        "gpt-4o-mini",
-                        "vision",
-                        "claude-sonnet-4-6",
-                        "claude-opus-4-6-thinking",
-                        "gemini-2.0-flash",
-                        "gemini-1.5-pro",
-                        "gemini-1.5-flash",
-                    )
-                )
+                    or resolved in API_FALLBACK
+                    or canon in API_FALLBACK
+                ):
+                    return True
+                return any(
+                    m.startswith("gemini-") or m.startswith("vision")
+                    for m in (clean_model, resolved, canon, normalized)
+                ) or clean_model in ("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini")
 
         # 3. Gemini Web Adapter
         if adapter.name == "gemini_web":
+            if is_embedding:
+                return False
+
+            # Exclude non-Google models that Gemini Web does not support
+            if any(
+                k in clean_model or k in resolved
+                for k in ("claude", "gpt-oss", "embedding")
+            ):
+                return False
+
             probed = getattr(adapter, "_discovered_models", None)
             if isinstance(probed, dict):
                 probed_models = {
                     k.lower().replace("models/", ""): v for k, v in probed.items()
                 }
-                if clean_model in probed_models:
+                if (
+                    clean_model in probed_models
+                    or resolved in probed_models
+                    or canon in probed_models
+                ):
                     return True
+
             from app.providers.gemini_web import FALLBACK_MODELS as WEB_FALLBACK
 
-            if clean_model in WEB_FALLBACK:
+            if (
+                clean_model in WEB_FALLBACK
+                or resolved in WEB_FALLBACK
+                or canon in WEB_FALLBACK
+            ):
                 return True
+
             return any(
-                clean_model.startswith(k)
-                for k in (
-                    "gemini-3.7",
-                    "gemini-3.5",
-                    "gemini-3.1",
-                    "gemini-2.0",
-                    "gemini-1.5",
-                    "vision",
-                )
-            )
+                m.startswith("gemini-") or m.startswith("vision")
+                for m in (clean_model, resolved, canon)
+            ) or clean_model in ("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini")
 
         return True
 
@@ -551,8 +640,8 @@ class MultiBackendRouter(BaseAdapter):
             self._rr_counter += 1
             return available[idx:] + available[:idx]
 
-        # Default "free_first": Gemini Web -> Gemini AI Studio API -> Antigravity
-        priority_order = [self.gemini_web, self.gemini_api, self.antigravity]
+        # Default "free_first": Gemini AI Studio API -> Gemini Web -> Antigravity
+        priority_order = [self.gemini_api, self.gemini_web, self.antigravity]
         return [a for a in priority_order if a in available]
 
     def check_availability(
@@ -616,6 +705,55 @@ class MultiBackendRouter(BaseAdapter):
             or "resource_exhausted" in msg
             or "quota" in msg
             or "too many requests" in msg
+            or "rate limit" in msg
+            or "ratelimit" in msg
+        )
+
+    def _is_auth_exception(self, e: Exception) -> bool:
+        """Check if exception represents an authentication / session failure (401/403/invalid cookie)."""
+        if isinstance(e, RateLimitError) and getattr(e, "status_code", 429) in (
+            401,
+            403,
+        ):
+            return True
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (
+            401,
+            403,
+        ):
+            return True
+        msg = str(e).lower()
+        return (
+            "unauthenticated" in msg
+            or "unauthorized" in msg
+            or "invalid api key" in msg
+            or "api_key_invalid" in msg
+            or "expired" in msg
+            or "session initialization failed" in msg
+            or "401" in msg
+            or "403" in msg
+        )
+
+    def _is_service_or_network_exception(self, e: Exception) -> bool:
+        """Check if exception represents a 5xx or network/connection drop."""
+        if isinstance(
+            e, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError)
+        ):
+            return True
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500:
+            return True
+        msg = str(e).lower()
+        return any(
+            k in msg
+            for k in (
+                "500",
+                "502",
+                "503",
+                "504",
+                "timeout",
+                "connection refused",
+                "connect error",
+                "server error",
+            )
         )
 
     async def generate_content(
@@ -661,6 +799,16 @@ class MultiBackendRouter(BaseAdapter):
                         f"Backend '{adapter.name}' hit rate limit: {e}. Falling back to next backend..."
                     )
                     adapter.set_cooldown(retry_after)
+                elif self._is_auth_exception(e):
+                    logger.warning(
+                        f"Backend '{adapter.name}' hit auth/session error: {e}. Cooling down and attempting fallback..."
+                    )
+                    adapter.set_cooldown(60.0)
+                elif self._is_service_or_network_exception(e):
+                    logger.warning(
+                        f"Backend '{adapter.name}' hit service/network error: {e}. Cooling down and attempting fallback..."
+                    )
+                    adapter.set_cooldown(15.0)
                 else:
                     logger.warning(
                         f"Backend '{adapter.name}' failed with error: {e}. Attempting fallback..."
@@ -723,7 +871,7 @@ class MultiBackendRouter(BaseAdapter):
                     tools=tools,
                 )
 
-                # Peek first item to ensure connection and catch immediate rate limit
+                # Peek first item to ensure connection and catch immediate rate limit / errors
                 async for chunk in stream_gen:
                     yield chunk
                     success = True
@@ -746,15 +894,28 @@ class MultiBackendRouter(BaseAdapter):
 
             except Exception as e:
                 is_rate_limit = self._is_rate_limit_exception(e)
+                is_auth = self._is_auth_exception(e)
+                is_service = self._is_service_or_network_exception(e)
+
                 if is_rate_limit:
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
                     logger.warning(
                         f"Backend '{adapter.name}' streaming hit rate limit: {e}. Falling back..."
                     )
                     adapter.set_cooldown(retry_after)
+                elif is_auth:
+                    logger.warning(
+                        f"Backend '{adapter.name}' streaming hit auth/session error: {e}. Cooling down and falling back..."
+                    )
+                    adapter.set_cooldown(60.0)
+                elif is_service:
+                    logger.warning(
+                        f"Backend '{adapter.name}' streaming hit network/service error: {e}. Cooling down and falling back..."
+                    )
+                    adapter.set_cooldown(15.0)
 
                 if not success:
-                    if not is_rate_limit:
+                    if not is_rate_limit and not is_auth and not is_service:
                         logger.warning(
                             f"Backend '{adapter.name}' stream failed before data: {e}. Falling back..."
                         )
@@ -812,6 +973,16 @@ class MultiBackendRouter(BaseAdapter):
                         f"Backend '{adapter.name}' embeddings hit rate limit: {e}. Falling back..."
                     )
                     adapter.set_cooldown(retry_after)
+                elif self._is_auth_exception(e):
+                    logger.warning(
+                        f"Backend '{adapter.name}' embeddings hit auth error: {e}. Cooling down and falling back..."
+                    )
+                    adapter.set_cooldown(60.0)
+                elif self._is_service_or_network_exception(e):
+                    logger.warning(
+                        f"Backend '{adapter.name}' embeddings hit network error: {e}. Cooling down and falling back..."
+                    )
+                    adapter.set_cooldown(15.0)
                 else:
                     logger.warning(
                         f"Backend '{adapter.name}' embeddings failed: {e}. Falling back..."

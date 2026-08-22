@@ -40,6 +40,26 @@ FALLBACK_MODELS = {
         "modelNumber": 5,
         "hexId": "2c8a",
     },
+    "gemini-3.6-flash": {
+        "displayName": "Gemini 3.6 Flash (Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "supportsTools": True,
+        "supportsVision": True,
+        "isEmbedding": False,
+        "modelNumber": 5,
+        "hexId": "2c8a",
+    },
+    "gemini-3.5-flash": {
+        "displayName": "Gemini 3.5 Flash (Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "supportsTools": True,
+        "supportsVision": True,
+        "isEmbedding": False,
+        "modelNumber": 1,
+        "hexId": "2c8d",
+    },
     "gemini-3.5-flash-lite": {
         "displayName": "Gemini 3.5 Flash-Lite (Web)",
         "maxTokens": 1048576,
@@ -79,6 +99,16 @@ FALLBACK_MODELS = {
         "isEmbedding": False,
         "modelNumber": 3,
         "hexId": "2c8e",
+    },
+    "vision": {
+        "displayName": "Gemini Vision (Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "supportsTools": True,
+        "supportsVision": True,
+        "isEmbedding": False,
+        "modelNumber": 5,
+        "hexId": "2c8a",
     },
 }
 
@@ -132,6 +162,10 @@ class GeminiWebAdapter(BaseAdapter):
         self._capacity_field: int = 12
         self._discovered_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
+        # Best-effort scraped account identity from the Gemini Web session page.
+        self.account_id: str | None = None
+        self.user_email: str | None = None
+        self.profile_picture_url: str | None = None
 
     def is_configured(self) -> bool:
         return bool(self.psid and self.psid.strip())
@@ -218,12 +252,45 @@ class GeminiWebAdapter(BaseAdapter):
                 if match_sess:
                     self._session_id = match_sess.group(1)
 
+                self._scrape_account_identity(resp.text)
+
                 return self._snlm0e_token
         except RateLimitError:
             raise
         except Exception as e:
             logger.debug(f"Could not extract SNlM0e token: {e}")
         return self._snlm0e_token
+
+    def _scrape_account_identity(self, page_html: str) -> None:
+        """Best-effort scrape of account id / email / avatar from the session page.
+
+        Gemini Web embeds the signed-in account in WIZ_global_data and account
+        arrays; patterns are undocumented, so every field stays optional.
+        """
+        try:
+            if not self.account_id:
+                m = re.search(r'"oPEP7c":"(\d{10,})"', page_html)
+                if not m:
+                    m = re.search(r'accountIds.*?"(\d{10,})"', page_html)
+                if m:
+                    self.account_id = m.group(1)
+
+            if not self.user_email:
+                m = re.search(
+                    r'"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"',
+                    page_html,
+                )
+                if m:
+                    self.user_email = m.group(1)
+
+            if not self.profile_picture_url:
+                m = re.search(
+                    r'"(https://lh3\.googleusercontent\.com/[^"]+)"', page_html
+                )
+                if m:
+                    self.profile_picture_url = m.group(1)
+        except Exception as e:
+            logger.debug(f"Account identity scraping skipped: {e}")
 
     def _extract_prompt_text(
         self,
@@ -389,6 +456,8 @@ class GeminiWebAdapter(BaseAdapter):
             return ("2c8a", 5, 2)
         if "3.7" in clean_model:
             return ("2c8a", 5, 2)
+        if "3.6" in clean_model:
+            return ("2c8a", 5, 2)
         if "3.5" in clean_model or "lite" in clean_model:
             return ("2c8b", 6, 1)
         if "3.1" in clean_model:
@@ -416,7 +485,13 @@ class GeminiWebAdapter(BaseAdapter):
             raise ValueError("Gemini Web cookies (__Secure-1PSID) are not configured.")
 
         prompt_text = self._extract_prompt_text(contents, system_instruction)
-        at_token = await self._init_session() or "placeholder_at"
+        at_token = await self._init_session()
+        if not at_token:
+            raise RateLimitError(
+                "Gemini Web session initialization failed (invalid or expired cookies)",
+                status_code=401,
+                retry_after=60.0,
+            )
         hex_id, model_num, default_thinking = self._resolve_model_metadata(model)
 
         # Determine thinking level (1 = standard, 2 = extended mode)

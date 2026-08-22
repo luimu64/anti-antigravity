@@ -106,6 +106,23 @@ class GeminiApiAdapter(BaseAdapter):
         self._http_client: httpx.AsyncClient | None = None
         self._cached_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
+        # Billing plan classification: "free", "payg", or None (unknown).
+        # Derived from upstream 429 quota payloads; no public tier endpoint exists.
+        self.plan: str | None = None
+
+    def classify_plan_from_error(self, error_text: str) -> str | None:
+        """Classify the key's billing plan from a 429 quota error payload.
+
+        Free-tier quota violations carry quotaIds like
+        'GenerateContentInputTokensPerModelPerMinute-FreeTier'; paid keys
+        report PaidTier / non-free quota ids instead.
+        """
+        lowered = (error_text or "").lower()
+        if "freetier" in lowered or "free_tier" in lowered:
+            self.plan = "free"
+        elif "paidtier" in lowered or "paid_tier" in lowered or "quotaid" in lowered:
+            self.plan = "payg"
+        return self.plan
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key.strip())
@@ -124,17 +141,26 @@ class GeminiApiAdapter(BaseAdapter):
             return clean
 
         mapping = {
+            "gemini-3.7-flash": "gemini-2.0-flash",
             "gemini-3.7-flash-high": "gemini-2.0-flash",
             "gemini-3.7-flash-medium": "gemini-2.0-flash",
             "gemini-3.7-flash-low": "gemini-2.0-flash",
             "gemini-3.7-flash-image": "gemini-2.0-flash",
             "vision": "gemini-2.0-flash",
+            "gemini-3.6-flash": "gemini-2.0-flash",
             "gemini-3.6-flash-high": "gemini-2.0-flash",
             "gemini-3.6-flash-medium": "gemini-2.0-flash",
-            "gemini-3.1-pro-high": "gemini-1.5-pro",
+            "gemini-3.6-flash-low": "gemini-2.0-flash",
+            "gemini-3.5-flash": "gemini-2.0-flash",
+            "gemini-3.5-flash-high": "gemini-2.0-flash",
             "gemini-3-flash-agent": "gemini-2.0-flash",
+            "gemini-3.1-pro": "gemini-1.5-pro",
+            "gemini-3.1-pro-high": "gemini-1.5-pro",
+            "gemini-3.1-pro-low": "gemini-1.5-pro",
             "gpt-4o": "gemini-2.0-flash",
             "gpt-4o-mini": "gemini-2.0-flash",
+            "gpt-4-turbo": "gemini-1.5-pro",
+            "o3-mini": "gemini-2.0-flash",
             "claude-sonnet-4-6": "gemini-1.5-pro",
             "claude-opus-4-6-thinking": "gemini-1.5-pro",
             "gpt-oss-120b-medium": "gemini-2.0-flash",
@@ -180,6 +206,7 @@ class GeminiApiAdapter(BaseAdapter):
                 resp = await http.get(url, params=params, headers=self._get_headers())
                 if resp.status_code == 429:
                     retry_after = _extract_retry_after(resp, self.default_cooldown)
+                    self.classify_plan_from_error(resp.text)
                     self.set_cooldown(retry_after)
                     if self._cached_models:
                         return self._cached_models
@@ -304,8 +331,9 @@ class GeminiApiAdapter(BaseAdapter):
         ) as resp:
             if resp.status_code == 429:
                 retry_after = _extract_retry_after(resp, self.default_cooldown)
-                self.set_cooldown(retry_after)
                 err_text = (await resp.aread()).decode("utf-8", errors="replace")
+                self.classify_plan_from_error(err_text)
+                self.set_cooldown(retry_after)
                 raise RateLimitError(
                     f"Gemini API rate limited (429): {err_text}",
                     status_code=429,
@@ -459,6 +487,7 @@ class GeminiApiAdapter(BaseAdapter):
 
         if resp.status_code == 429:
             retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.classify_plan_from_error(resp.text)
             self.set_cooldown(retry_after)
             raise RateLimitError(
                 f"Gemini API embedding rate limited (429): {resp.text}",

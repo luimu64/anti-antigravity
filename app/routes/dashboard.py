@@ -132,6 +132,20 @@ async def toggle_backend(backend_id: str, payload: ToggleBackendRequest):
     raise HTTPException(status_code=500, detail="Router not available")
 
 
+@router.post("/api/backends/{backend_id}/reset")
+async def reset_backend_credentials(backend_id: str):
+    """
+    Wipe stored credentials for a backend and disable it.
+    """
+    if not hasattr(client, "reset_credentials"):
+        raise HTTPException(status_code=500, detail="Router not available")
+    try:
+        status = client.reset_credentials(backend_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"status": "reset", "backend": backend_id, "config": status}
+
+
 @router.post("/api/backends/strategy")
 async def set_routing_strategy(payload: SetStrategyRequest):
     """

@@ -14,7 +14,7 @@
     </div>
     <div class="w-full sm:w-auto min-w-[280px]">
       <select id="routing-strategy-select" onchange="setRoutingStrategy(this.value)" class="select select-bordered select-sm w-full">
-        <option value="free_first">Free First (Web &rarr; Studio API &rarr; Antigravity Fallback)</option>
+        <option value="free_first">Free First (Studio API &rarr; Web &rarr; Antigravity Fallback)</option>
         <option value="round_robin">Round Robin (Distribute across available backends)</option>
       </select>
     </div>
@@ -23,19 +23,40 @@
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <!-- 1. Google Gemini AI Studio API Card -->
     {% call ui.provider_card('card-gemini-api', 'Gemini AI Studio API', 'toggle-gemini-api', 'gemini_api', 'status-gemini-api') %}
-      <form onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
+      <div id="gemini-api-details" class="text-xs flex flex-col gap-1 mb-3" style="display:none;">
+        {{ ui.info_row('API Key', '', id='gemini-api-key-display', max_w='max-w-[160px]') }}
+        <div class="flex justify-between items-center">
+          <span class="text-base-content/70">Plan:</span>
+          <span id="gemini-api-plan-display" class="badge badge-ghost badge-xs">Unknown</span>
+        </div>
+      </div>
+      <form id="gemini-api-cred-form" onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
         <input type="password" id="gemini-api-key-input" placeholder="AIzaSy..." class="input input-bordered input-sm join-item flex-1">
         <button type="submit" class="btn btn-primary btn-sm join-item">Save</button>
       </form>
+      <button type="button" id="gemini-api-reset-btn" onclick="resetBackendCredentials('gemini_api')" class="btn btn-error btn-sm w-full mt-2" style="display:none;">Reset Credentials</button>
     {% endcall %}
 
     <!-- 2. Google Gemini Web UI Card -->
     {% call ui.provider_card('card-gemini-web', 'Gemini Web Interface', 'toggle-gemini-web', 'gemini_web', 'status-gemini-web') %}
-      <form onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
+      <div id="gemini-web-details" class="mb-3" style="display:none;">
+        <div class="flex items-center gap-3 mb-2">
+          <img id="gemini-web-avatar" src="" alt="" class="w-9 h-9 rounded-full border border-base-300 bg-base-200" style="display:none;">
+          <div class="min-w-0">
+            <div id="gemini-web-email" class="font-bold text-xs truncate"></div>
+            <div class="text-[10px] text-base-content/60">Gemini Web Session</div>
+          </div>
+        </div>
+        <div class="text-xs flex flex-col gap-1">
+          {{ ui.info_row('Account ID', '', id='gemini-web-account-id', max_w='max-w-[160px]') }}
+        </div>
+      </div>
+      <form id="gemini-web-cred-form" onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
         <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value" class="input input-bordered input-sm w-full">
         <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)" class="input input-bordered input-sm w-full">
         <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
       </form>
+      <button type="button" id="gemini-web-reset-btn" onclick="resetBackendCredentials('gemini_web')" class="btn btn-error btn-sm w-full mt-2" style="display:none;">Reset Credentials</button>
     {% endcall %}
 
     <!-- 3. Antigravity OAuth Backend Card -->
@@ -102,6 +123,82 @@
   }
 
   // Multi-Backend Management
+  // Dynamically adjust the Gemini API card: show key + plan details and swap
+  // the credential form for a reset button when a valid key is stored.
+  function updateGeminiApiCard(gApi) {
+    const hasKey = !!gApi.has_api_key;
+    const details = document.getElementById('gemini-api-details');
+    const form = document.getElementById('gemini-api-cred-form');
+    const resetBtn = document.getElementById('gemini-api-reset-btn');
+    if (details) details.style.display = hasKey ? '' : 'none';
+    if (form) form.style.display = hasKey ? 'none' : '';
+    if (resetBtn) resetBtn.style.display = hasKey ? '' : 'none';
+    if (hasKey) {
+      const keyDisp = document.getElementById('gemini-api-key-display');
+      if (keyDisp && gApi.masked_key) keyDisp.textContent = gApi.masked_key;
+      const planBadge = document.getElementById('gemini-api-plan-display');
+      if (planBadge) {
+        if (gApi.plan === 'free') {
+          planBadge.textContent = 'Free';
+          planBadge.className = 'badge badge-success badge-xs';
+        } else if (gApi.plan === 'payg') {
+          planBadge.textContent = 'Pay-as-you-go';
+          planBadge.className = 'badge badge-info badge-xs';
+        } else {
+          planBadge.textContent = 'Unknown';
+          planBadge.className = 'badge badge-ghost badge-xs';
+        }
+      }
+    }
+  }
+
+  // Dynamically adjust the Gemini Web card: show scraped account identity and
+  // swap the cookie form for a reset button when valid cookies are stored.
+  function updateGeminiWebCard(gWeb) {
+    const hasCreds = !!gWeb.configured;
+    const details = document.getElementById('gemini-web-details');
+    const form = document.getElementById('gemini-web-cred-form');
+    const resetBtn = document.getElementById('gemini-web-reset-btn');
+    if (details) details.style.display = hasCreds ? '' : 'none';
+    if (form) form.style.display = hasCreds ? 'none' : '';
+    if (resetBtn) resetBtn.style.display = hasCreds ? '' : 'none';
+    if (hasCreds) {
+      const emailEl = document.getElementById('gemini-web-email');
+      if (emailEl) emailEl.textContent = gWeb.user_email || 'Signed in';
+      const acctEl = document.getElementById('gemini-web-account-id');
+      if (acctEl) acctEl.textContent = gWeb.account_id || 'N/A';
+      const avatar = document.getElementById('gemini-web-avatar');
+      if (avatar) {
+        if (gWeb.profile_picture_url) {
+          avatar.src = gWeb.profile_picture_url;
+          avatar.alt = gWeb.user_email || 'Profile picture';
+          avatar.style.display = '';
+        } else {
+          avatar.style.display = 'none';
+        }
+      }
+    }
+  }
+
+  // Wipe stored credentials for a provider and disable its backend.
+  async function resetBackendCredentials(backendId) {
+    if (!confirm(`Wipe stored credentials for ${backendId} and disable this backend?`)) return;
+    try {
+      const res = await fetch(`/api/backends/${backendId}/reset`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(`Credentials wiped — ${backendId} disabled`);
+        loadBackends();
+        loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
+      } else {
+        showToast('Reset failed: ' + (data.detail || 'Unknown error'), 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  }
+
   async function loadBackends() {
     try {
       const res = await fetch('/api/backends');
@@ -125,6 +222,7 @@
         else if (gApi.cooldown_remaining > 0) statusApi.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(gApi.cooldown_remaining)}s)</span>`;
         else statusApi.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
       }
+      updateGeminiApiCard(gApi);
 
       // 3. Gemini Web Backend
       const gWeb = backends.gemini_web || {};
@@ -137,6 +235,7 @@
         else if (gWeb.cooldown_remaining > 0) statusWeb.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(gWeb.cooldown_remaining)}s)</span>`;
         else statusWeb.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
       }
+      updateGeminiWebCard(gWeb);
 
       // 4. Antigravity Backend
       const agy = backends.antigravity || {};
