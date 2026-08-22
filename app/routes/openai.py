@@ -20,6 +20,11 @@ router = APIRouter(tags=["OpenAI"])
 
 
 def get_active_backend_name() -> str:
+    # Prefer the backend that actually served the last request (accurate when
+    # the router fell back from the preferred one); fall back to priority head.
+    served_by = getattr(client, "last_served_by", None)
+    if served_by:
+        return served_by
     if hasattr(client, "get_ordered_adapters"):
         adapters = client.get_ordered_adapters()
         if adapters:
@@ -237,12 +242,18 @@ async def chat_completions(request: ChatCompletionRequest):
     # 1. Streaming response
     if request.stream:
         try:
+            served_backends: list[str] = []
+
+            def _on_served(name: str) -> None:
+                served_backends.append(name)
+
             event_stream = client.stream_generate_content(
                 model=internal_model,
                 contents=contents,
                 system_instruction=system_instruction,
                 generation_config=generation_config,
                 tools=tools,
+                on_backend_served=_on_served,
             )
             usage_collector: dict = {}
             openai_chunks = OpenAITranslator.internal_stream_to_openai_chunks(
@@ -274,7 +285,7 @@ async def chat_completions(request: ChatCompletionRequest):
                     history_manager.record(
                         model=request.model,
                         resolved_model=internal_model,
-                        backend=get_active_backend_name(),
+                        backend=served_backends[-1] if served_backends else backend,
                         duration_ms=duration_ms,
                         status=stream_status,
                         prompt_tokens=usage_collector.get("prompt_tokens", 0),
@@ -411,13 +422,16 @@ async def chat_completions(request: ChatCompletionRequest):
 
     # 2. Non-streaming response
     try:
+        served_backends: list[str] = []
         result = await client.generate_content(
             model=internal_model,
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
             tools=tools,
+            on_backend_served=served_backends.append,
         )
+        backend = served_backends[-1] if served_backends else backend
         response_json = OpenAITranslator.internal_to_openai_response(
             result=result, requested_model=request.model
         )
@@ -426,7 +440,7 @@ async def chat_completions(request: ChatCompletionRequest):
         history_manager.record(
             model=request.model,
             resolved_model=internal_model,
-            backend=get_active_backend_name(),
+            backend=served_backends[-1] if served_backends else backend,
             duration_ms=duration_ms,
             status="success",
             prompt_tokens=usage.get("prompt_tokens", 0),
@@ -660,12 +674,18 @@ async def legacy_completions(request: Request):
     # 1. Streaming response
     if stream:
         try:
+            served_backends: list[str] = []
+
+            def _on_served(name: str) -> None:
+                served_backends.append(name)
+
             event_stream = client.stream_generate_content(
                 model=internal_model,
                 contents=contents,
                 system_instruction=system_instruction,
                 generation_config=generation_config,
                 tools=tools,
+                on_backend_served=_on_served,
             )
             usage_collector: dict = {}
             openai_chunks = OpenAITranslator.internal_stream_to_openai_text_chunks(
@@ -697,7 +717,7 @@ async def legacy_completions(request: Request):
                     history_manager.record(
                         model=model_name,
                         resolved_model=internal_model,
-                        backend=get_active_backend_name(),
+                        backend=served_backends[-1] if served_backends else backend,
                         duration_ms=duration_ms,
                         status=stream_status,
                         prompt_tokens=usage_collector.get("prompt_tokens", 0),
@@ -834,13 +854,16 @@ async def legacy_completions(request: Request):
 
     # 2. Non-streaming response
     try:
+        served_backends: list[str] = []
         result = await client.generate_content(
             model=internal_model,
             contents=contents,
             system_instruction=system_instruction,
             generation_config=generation_config,
             tools=tools,
+            on_backend_served=served_backends.append,
         )
+        backend = served_backends[-1] if served_backends else backend
         response_json = OpenAITranslator.internal_to_openai_text_completion(
             result=result, requested_model=model_name
         )
@@ -849,7 +872,7 @@ async def legacy_completions(request: Request):
         history_manager.record(
             model=model_name,
             resolved_model=internal_model,
-            backend=get_active_backend_name(),
+            backend=served_backends[-1] if served_backends else backend,
             duration_ms=duration_ms,
             status="success",
             prompt_tokens=usage.get("prompt_tokens", 0),
