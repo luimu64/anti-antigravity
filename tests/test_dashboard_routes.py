@@ -172,3 +172,20 @@ async def test_dashboard_models_transformed():
             assert "base_model_name" in item
             assert "selectable_model_ids" in item
             assert "available_sources" in item
+
+
+@pytest.mark.asyncio
+async def test_dashboard_renders_query_component():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/")
+        assert resp.status_code == 200
+        text = resp.text.lower()
+        assert "query-card" in resp.text
+        assert "query playground" in text or "query" in text
+        assert "/v1/chat/completions" in resp.text
+        assert "query-prompt-input" in resp.text
+        assert "query-model-select" in resp.text
+        assert "query-submit-btn" in resp.text
+        assert "query-response-output" in resp.text
+
