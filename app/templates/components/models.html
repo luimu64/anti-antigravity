@@ -75,10 +75,6 @@
       } else {
         renderModels(models);
       }
-
-      if (typeof populateQueryModels === 'function') {
-        populateQueryModels(models);
-      }
     } catch (err) {
       console.error('Failed to load models:', err);
       container.innerHTML = '<p class="text-xs text-error">Failed to load available models.</p>';

@@ -18,7 +18,6 @@
     <main>
       {% include 'components/backends.html' %}
       {% include 'components/models.html' %}
-      {% include 'components/query.html' %}
       {% include 'components/quotas.html' %}
       {% include 'components/keys.html' %}
       {% include 'components/history.html' %}
@@ -33,9 +32,6 @@
       loadQuotas();
       loadKeys();
       loadHistory();
-      if (typeof initQueryWidget === 'function') {
-        initQueryWidget();
-      }
     });
   </script>
 </body>
