@@ -438,7 +438,9 @@ def _parse_reset_time_seconds(reset_time_val: Any) -> float | None:
     return None
 
 
-def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
+def transform_quota_summary(
+    raw_data: Any, backend: str = "antigravity"
+) -> dict[str, Any]:
     """
     Transform and normalize upstream Antigravity quota responses into the
     structure expected by the dashboard UI:
@@ -447,6 +449,8 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
       reset_time_seconds (float | None)
       display_name (str)
       model_id (str)
+      backend (str)
+      source (str)
     """
     if not isinstance(raw_data, (dict, list)):
         return {"groups": []}
@@ -509,6 +513,13 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                     or bucket.get("bucketId")
                     or ""
                 )
+                item_backend = (
+                    bucket.get("backend")
+                    or bucket.get("source")
+                    or group.get("backend")
+                    or group.get("source")
+                    or backend
+                )
                 fraction_used = _compute_fraction_used(bucket)
                 remaining_fraction = _compute_remaining_fraction(bucket)
                 reset_time_seconds = _parse_reset_time_seconds(
@@ -525,6 +536,8 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                         "fraction_remaining": remaining_fraction,
                         "reset_time_seconds": reset_time_seconds,
                         "model_id": model_id,
+                        "backend": item_backend,
+                        "source": item_backend,
                     }
                 )
         else:
@@ -536,6 +549,7 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                 or "Unknown Quota"
             )
             model_id = group.get("modelId") or group.get("model_id") or group_id
+            item_backend = group.get("backend") or group.get("source") or backend
             fraction_used = _compute_fraction_used(group)
             remaining_fraction = _compute_remaining_fraction(group)
             reset_time_seconds = _parse_reset_time_seconds(
@@ -552,6 +566,8 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                     "fraction_remaining": remaining_fraction,
                     "reset_time_seconds": reset_time_seconds,
                     "model_id": model_id,
+                    "backend": item_backend,
+                    "source": item_backend,
                 }
             )
 

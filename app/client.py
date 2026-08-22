@@ -3,7 +3,7 @@ import logging
 from app.providers.antigravity import AntigravityAdapter
 from app.providers.router import router_client
 
-logger = logging.getLogger("agy_to_api.client")
+logger = logging.getLogger("google_gate.client")
 
 # Backwards compatibility alias
 AntigravityClient = AntigravityAdapter

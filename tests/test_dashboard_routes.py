@@ -15,7 +15,7 @@ async def test_dashboard_page():
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.get("/")
         assert resp.status_code == 200
-        assert "Antigravity API" in resp.text
+        assert "Google Gate" in resp.text
 
         # Test with HOST environment variable set
         with patch.dict(os.environ, {"HOST": "192.168.1.100"}):
@@ -31,8 +31,9 @@ async def test_dashboard_health():
         resp = await ac.get("/health")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "healthy"
-        assert data["service"] == "agy-to-api"
+        assert data["status"] == "ok"
+        assert data["service"] == "google-gate"
+        assert data["version"] == "1.0.0"
         assert "authenticated" in data
         assert "project_id" in data
         assert "api_key_enforcement" in data
@@ -56,7 +57,7 @@ async def test_api_keys_management():
         assert create_data["status"] == "created"
         created_key = create_data["key"]
         assert created_key["name"] == "Dashboard Test Key"
-        assert created_key["key"].startswith("sk-agy-")
+        assert created_key["key"].startswith("sk-gate-")
         key_id = created_key["id"]
 
         # 3. Revoke existing key

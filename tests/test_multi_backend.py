@@ -1,6 +1,6 @@
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -893,3 +893,148 @@ async def test_antigravity_quota_summary_exhaustion_trigger():
 
     # Cooldown should now be active
     assert adapter.get_cooldown_remaining() > 0.0
+
+
+def test_base_adapter_get_rate_limit_quotas():
+    """Verify BaseAdapter.get_rate_limit_quotas computes normalized quota and rate limit items."""
+    api_adapter = GeminiApiAdapter(api_key="AIzaSyTest", enabled=True)
+    # Default rates: rpm=15, tpm=1000000, rpd=1500
+    quotas = api_adapter.get_rate_limit_quotas()
+    assert len(quotas) == 3
+
+    rpm_q = next(q for q in quotas if "RPM" in q["display_name"])
+    assert rpm_q["fraction_used"] == 0.0
+    assert rpm_q["remaining_fraction"] == 1.0
+    assert rpm_q["fraction_remaining"] == 1.0
+    assert rpm_q["backend"] == "gemini_api"
+    assert rpm_q["source"] == "gemini_api"
+    assert rpm_q["model_id"] == "gemini_api"
+
+    # Record usage
+    api_adapter.record_usage(tokens=250000)
+    quotas_used = api_adapter.get_rate_limit_quotas()
+    rpm_used = next(q for q in quotas_used if "RPM" in q["display_name"])
+    tpm_used = next(q for q in quotas_used if "TPM" in q["display_name"])
+
+    assert rpm_used["fraction_used"] > 0.0
+    assert rpm_used["remaining_fraction"] < 1.0
+    assert rpm_used["reset_time_seconds"] > 0.0
+
+    assert pytest.approx(tpm_used["fraction_used"], 0.001) == 0.25
+    assert pytest.approx(tpm_used["remaining_fraction"], 0.001) == 0.75
+
+    # Test cooldown state
+    api_adapter.set_cooldown(45.0)
+    quotas_cd = api_adapter.get_rate_limit_quotas()
+    for q in quotas_cd:
+        assert q["fraction_used"] == 1.0
+        assert q["remaining_fraction"] == 0.0
+        assert pytest.approx(q["reset_time_seconds"], 1.0) == 45.0
+
+    # Gemini Web (rpm=60, tpm=500000, rpd=0)
+    web_adapter = GeminiWebAdapter(psid="test-psid", enabled=True)
+    web_quotas = web_adapter.get_rate_limit_quotas()
+    assert len(web_quotas) == 2
+    web_names = [q["display_name"] for q in web_quotas]
+    assert "Requests Per Minute (RPM)" in web_names
+    assert "Tokens Per Minute (TPM)" in web_names
+    for q in web_quotas:
+        assert q["backend"] == "gemini_web"
+        assert q["source"] == "gemini_web"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_api_quotas_multi_backend_aggregation():
+    """Verify /api/quotas aggregates quotas from Antigravity and enabled multi-backends."""
+    transport = httpx.ASGITransport(app=app)
+
+    mock_agy_quotas = {
+        "groups": [
+            {
+                "groupId": "antigravity_general",
+                "buckets": [
+                    {
+                        "bucketId": "weekly",
+                        "displayName": "Weekly Quota",
+                        "remainingFraction": 0.80,
+                        "resetTime": "2030-01-01T00:00:00Z",
+                    }
+                ],
+            }
+        ]
+    }
+
+    # Temporarily enable gemini_api and gemini_web on global client
+    client.gemini_api.enabled = True
+    client.gemini_web.enabled = True
+    client.gemini_api.rate_limiter.reset()
+    client.gemini_web.rate_limiter.reset()
+    client.gemini_api.clear_cooldown()
+    client.gemini_web.clear_cooldown()
+
+    try:
+        with patch.object(
+            client,
+            "retrieve_user_quota_summary",
+            new_callable=AsyncMock,
+            return_value=mock_agy_quotas,
+        ):
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as ac:
+                res = await ac.get("/api/quotas")
+                assert res.status_code == 200
+                data = res.json()
+                assert "groups" in data
+                groups = data["groups"]
+
+                # 1 antigravity bucket + 3 gemini_api buckets + 2 gemini_web buckets = 6 items
+                assert len(groups) == 6
+
+                backends_in_groups = [g["backend"] for g in groups]
+                assert "antigravity" in backends_in_groups
+                assert "gemini_api" in backends_in_groups
+                assert "gemini_web" in backends_in_groups
+
+                # Check antigravity item
+                agy_item = next(g for g in groups if g["backend"] == "antigravity")
+                assert agy_item["display_name"] == "Weekly Quota"
+                assert agy_item["remaining_fraction"] == 0.80
+
+                # Check gemini_api item
+                api_item = next(g for g in groups if g["backend"] == "gemini_api")
+                assert (
+                    "RPM" in api_item["display_name"]
+                    or "TPM" in api_item["display_name"]
+                )
+                assert api_item["model_id"] == "gemini_api"
+
+                # Check gemini_web item
+                web_item = next(g for g in groups if g["backend"] == "gemini_web")
+                assert (
+                    "RPM" in web_item["display_name"]
+                    or "TPM" in web_item["display_name"]
+                )
+                assert web_item["model_id"] == "gemini_web"
+
+        # When Antigravity fails but Gemini API is enabled, still return multi-backend quotas
+        with patch.object(
+            client,
+            "retrieve_user_quota_summary",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Google OAuth expired"),
+        ):
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as ac:
+                res_fail = await ac.get("/api/quotas")
+                assert res_fail.status_code == 200
+                data_fail = res_fail.json()
+                assert len(data_fail["groups"]) == 5  # 3 gemini_api + 2 gemini_web
+                assert all(
+                    g["backend"] in ("gemini_api", "gemini_web")
+                    for g in data_fail["groups"]
+                )
+    finally:
+        client.gemini_api.enabled = False
+        client.gemini_web.enabled = False

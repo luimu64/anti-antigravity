@@ -24,7 +24,7 @@ from app.routes.openai import router as openai_router
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
-logger = logging.getLogger("agy_to_api")
+logger = logging.getLogger("google_gate")
 
 
 @asynccontextmanager
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     """
     Startup & shutdown lifespan events.
     """
-    logger.info("Initializing Antigravity to OpenAI API bridge...")
+    logger.info("Initializing Google Gate bridge...")
 
     # Check authentication state
     if auth_manager.access_token or auth_manager.refresh_token:
@@ -50,12 +50,12 @@ async def lifespan(app: FastAPI):
         )
 
     yield
-    logger.info("Shutting down Antigravity to OpenAI API bridge...")
+    logger.info("Shutting down Google Gate bridge...")
 
 
 app = FastAPI(
-    title="Antigravity OpenAI API Bridge",
-    description="Maps Google Antigravity internal API into standard OpenAI API schema.",
+    title="Google Gate",
+    description="Unified OpenAI API gateway for Google AI backends (Antigravity, Gemini API, Gemini Web).",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -138,7 +138,7 @@ def cli_login():
     CLI interactive login flow.
     """
     print("\n" + "=" * 60)
-    print("      Antigravity Google OAuth Login      ")
+    print("      Google Gate OAuth Login      ")
     print("=" * 60)
 
     redirect_uri = f"http://localhost:{SERVER_PORT}/auth/callback"
@@ -194,7 +194,7 @@ def show_status():
     """
     status = auth_manager.get_status()
     print("\n" + "=" * 50)
-    print("  Antigravity OpenAI Bridge Status")
+    print("  Google Gate Status")
     print("=" * 50)
     print(f"  Authenticated: {status['authenticated']}")
     print(f"  User Email:    {status['user_email']}")
@@ -206,7 +206,9 @@ def show_status():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity OpenAI API Bridge Server")
+    parser = argparse.ArgumentParser(
+        description="Google Gate OpenAI API Gateway Server"
+    )
     parser.add_argument(
         "--login",
         action="store_true",
@@ -244,9 +246,7 @@ def main():
         display_host = env_host if (env_host and env_host != "0.0.0.0") else "localhost"
 
     print("\n" + "=" * 60)
-    print(
-        f"🚀 Starting Antigravity OpenAI API Bridge on http://{display_host}:{args.port}"
-    )
+    print(f"🚀 Starting Google Gate on http://{display_host}:{args.port}")
     print(f"📊 Web Dashboard: http://{display_host}:{args.port}/")
     print(f"🤖 OpenAI Endpoint: http://{display_host}:{args.port}/v1/chat/completions")
     print(f"🔐 OAuth Login: http://{display_host}:{args.port}/auth/login")

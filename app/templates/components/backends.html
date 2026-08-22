@@ -183,6 +183,7 @@
         showToast(`Backend ${backendId} ${enabled ? 'enabled' : 'disabled'}`);
         loadBackends();
         loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
       } else {
         showToast(`Failed to update backend ${backendId}`, 'error');
       }
@@ -210,6 +211,7 @@
         keyInput.value = '';
         loadBackends();
         loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
       } else {
         showToast('Failed to save API key', 'error');
       }
@@ -245,6 +247,7 @@
         if (psidtsInput) psidtsInput.value = '';
         loadBackends();
         loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
       } else {
         showToast('Failed to save cookies', 'error');
       }
@@ -264,6 +267,7 @@
         showToast('Cooldown timers cleared!');
         loadBackends();
         loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
       } else {
         showToast('Failed to clear cooldowns', 'error');
       }

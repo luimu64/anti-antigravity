@@ -13,7 +13,7 @@ import httpx
 from app.config import PROVIDER_RATE_LIMITS
 from app.providers.base import BaseAdapter, RateLimitError
 
-logger = logging.getLogger("agy_to_api.providers.gemini_web")
+logger = logging.getLogger("google_gate.providers.gemini_web")
 
 
 def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:

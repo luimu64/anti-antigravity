@@ -10,7 +10,7 @@ from app.auth import OAuthManager, auth_manager
 from app.config import CLOUD_CODE_BASE_URL, PROVIDER_RATE_LIMITS, USER_AGENT
 from app.providers.base import BaseAdapter, RateLimitError
 
-logger = logging.getLogger("agy_to_api.providers.antigravity")
+logger = logging.getLogger("google_gate.providers.antigravity")
 
 
 def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:

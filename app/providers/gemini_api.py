@@ -9,7 +9,7 @@ import httpx
 from app.config import PROVIDER_RATE_LIMITS
 from app.providers.base import BaseAdapter, RateLimitError
 
-logger = logging.getLogger("agy_to_api.providers.gemini_api")
+logger = logging.getLogger("google_gate.providers.gemini_api")
 
 
 def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:
@@ -80,7 +80,7 @@ class GeminiApiAdapter(BaseAdapter):
         return {
             "x-goog-api-key": self.api_key or "",
             "Content-Type": "application/json",
-            "User-Agent": "agy-to-api/1.0.0 (GeminiApiAdapter)",
+            "User-Agent": "google-gate/1.0.0 (GeminiApiAdapter)",
         }
 
     async def fetch_available_models(

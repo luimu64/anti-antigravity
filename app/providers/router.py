@@ -19,7 +19,7 @@ from app.providers.base import BaseAdapter, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
 
-logger = logging.getLogger("agy_to_api.providers.router")
+logger = logging.getLogger("google_gate.providers.router")
 
 
 def _extract_model_version(model_id: str) -> tuple[int, ...]:

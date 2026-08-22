@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.config import DATA_DIR
 
-logger = logging.getLogger("agy_to_api.keys")
+logger = logging.getLogger("google_gate.keys")
 API_KEYS_FILE = Path(os.getenv("API_KEYS_FILE", str(DATA_DIR / "api_keys.json")))
 
 
@@ -52,7 +52,7 @@ class APIKeyManager:
                 self.keys = {}
         else:
             # Generate a default initial key if none exists
-            initial_key = os.getenv("API_KEY") or f"sk-agy-{secrets.token_hex(16)}"
+            initial_key = os.getenv("API_KEY") or f"sk-gate-{secrets.token_hex(16)}"
             key_id = f"key_{uuid.uuid4().hex[:8]}"
             self.keys[key_id] = {
                 "id": key_id,
@@ -79,7 +79,7 @@ class APIKeyManager:
 
     def create_key(self, name: str = "New Key") -> dict[str, Any]:
         """Create a new API key for client access to the bridge."""
-        raw_key = f"sk-agy-{secrets.token_hex(20)}"
+        raw_key = f"sk-gate-{secrets.token_hex(20)}"
         key_id = f"key_{uuid.uuid4().hex[:8]}"
         created_at = int(time.time())
 

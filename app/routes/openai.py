@@ -15,7 +15,7 @@ from app.keys import api_key_manager
 from app.providers.base import RateLimitError
 from app.translator import ChatCompletionRequest, EmbeddingRequest, OpenAITranslator
 
-logger = logging.getLogger("agy_to_api.openai")
+logger = logging.getLogger("google_gate.openai")
 router = APIRouter(tags=["OpenAI"])
 
 

@@ -1,7 +1,7 @@
 [project]
-name = "agy-to-api"
+name = "google-gate"
 version = "1.0.0"
-description = "Antigravity CLI (agy) internal API mapped into standard OpenAI API schema"
+description = "Unified OpenAI-compatible gateway for Google AI backends (Antigravity, Gemini API, Gemini Web)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

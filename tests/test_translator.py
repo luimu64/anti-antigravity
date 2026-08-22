@@ -23,6 +23,12 @@ def test_resolve_model():
     )
 
 
+def test_system_fingerprint():
+    fp = OpenAITranslator.get_system_fingerprint("gpt-4o")
+    assert fp.startswith("fp_gate_")
+    assert len(fp) == 16  # fp_gate_ + 8 hex chars
+
+
 def test_openai_to_internal_simple_messages():
     req = ChatCompletionRequest(
         model="gpt-4o",

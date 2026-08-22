@@ -53,11 +53,32 @@
           badgeColor = 'badge-warning';
         }
 
+        let backendKey = (g.backend || g.source || 'antigravity').toLowerCase();
+        let backendLabel = 'Antigravity';
+        let sourceBadgeClass = 'badge-primary badge-outline';
+
+        if (backendKey.includes('api') || backendKey === 'gemini_api') {
+          backendLabel = 'Gemini API';
+          sourceBadgeClass = 'badge-secondary badge-outline';
+        } else if (backendKey.includes('web') || backendKey === 'gemini_web') {
+          backendLabel = 'Gemini Web';
+          sourceBadgeClass = 'badge-accent badge-outline';
+        } else if (backendKey.includes('antigravity')) {
+          backendLabel = 'Antigravity';
+          sourceBadgeClass = 'badge-primary badge-outline';
+        } else {
+          backendLabel = g.backend || g.source || 'Antigravity';
+          sourceBadgeClass = 'badge-ghost badge-outline';
+        }
+
         html += `
           <div class="card bg-base-100 p-4 border border-base-300 rounded-box shadow-sm">
-            <div class="flex justify-between items-center mb-1">
-              <strong class="text-sm">${escapeHtml(g.display_name)}</strong>
-              <span class="badge badge-sm ${badgeColor}">${pct}% available</span>
+            <div class="flex justify-between items-start gap-2 mb-1">
+              <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+                <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
+                <span class="badge ${sourceBadgeClass} badge-xs font-semibold shrink-0">${escapeHtml(backendLabel)}</span>
+              </div>
+              <span class="badge badge-sm ${badgeColor} shrink-0">${pct}% available</span>
             </div>
             <progress class="progress ${progressColor} w-full mb-2" value="${pct}" max="100"></progress>
             <div class="flex justify-between text-xs text-base-content/70">

@@ -1,11 +1,11 @@
 version: '3.8'
 
 services:
-  agy-to-api:
+  google-gate:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: agy-to-api
+    container_name: google-gate
     restart: unless-stopped
     ports:
       - "8000:8000"

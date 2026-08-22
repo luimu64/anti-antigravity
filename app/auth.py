@@ -21,7 +21,7 @@ from app.config import (
     REDIRECT_URI,
 )
 
-logger = logging.getLogger("agy_to_api.auth")
+logger = logging.getLogger("google_gate.auth")
 
 
 class OAuthManager:
@@ -77,9 +77,9 @@ class OAuthManager:
         # Generate stable/friendly device_id and device_name
         dev_id = (
             device_id
-            or f"agy-bridge-{hashlib.sha256((self.client_id + redirect_uri).encode()).hexdigest()[:12]}"
+            or f"gate-bridge-{hashlib.sha256((self.client_id + redirect_uri).encode()).hexdigest()[:12]}"
         )
-        dev_name = device_name or "Antigravity Bridge"
+        dev_name = device_name or "Google Gate Bridge"
 
         params = {
             "client_id": self.client_id,

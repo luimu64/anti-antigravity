@@ -1,12 +1,12 @@
 # Developer & AI Agent Guide (`AGENTS.md`)
 
-This guide is intended for AI coding agents and human developers maintaining, debugging, or extending the **`agy-to-api`** bridge codebase.
+This guide is intended for AI coding agents and human developers maintaining, debugging, or extending the **`google-gate`** gateway codebase.
 
 ---
 
 ## 1. Project Purpose & Architecture
 
-`agy-to-api` translates the internal Google Cloud Code / Jetski API utilized by the **Antigravity CLI (`agy`)** into standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
+`google-gate` translates internal Google Cloud Code / Jetski API (Antigravity), Google Gemini AI Studio API, and Gemini Web backends into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
 
 ### Data Flow Diagram
 
@@ -18,29 +18,30 @@ graph LR
         WebUI[Open WebUI]
     end
 
-    subgraph Bridge["agy-to-api Bridge (FastAPI)"]
+    subgraph Gateway["Google Gate (FastAPI)"]
         AuthMid[API Key Enforcement]
         Routes["Routes (/v1/chat/completions)"]
         Trans[OpenAITranslator]
-        Client[AntigravityClient]
+        Router[MultiBackendRouter]
         AuthMgr[OAuthManager]
         KeyMgr[APIKeyManager]
     end
 
-    subgraph Upstream["Google Cloud Code Backend"]
-        GooglePa["daily-cloudcode-pa.googleapis.com"]
-        Models["Gemini 3.7 / Claude Sonnet / GPT-OSS"]
+    subgraph Backends["Google AI Backends"]
+        Antigravity["Antigravity / Cloud Code Backend"]
+        GeminiApi["Gemini AI Studio API"]
+        GeminiWeb["Gemini Web Interface"]
     end
 
-    Clients -->|HTTP Bearer sk-agy-...| AuthMid
+    Clients -->|HTTP Bearer sk-gate-...| AuthMid
     AuthMid --> Routes
     Routes --> Trans
-    Trans --> Client
-    AuthMgr -.->|Bearer google_token| Client
-    Client -->|POST /v1internal:streamGenerateContent| GooglePa
-    GooglePa --> Models
-    GooglePa -->|SSE Stream| Client
-    Client --> Trans
+    Trans --> Router
+    AuthMgr -.->|Bearer google_token| Router
+    Router --> Antigravity
+    Router --> GeminiApi
+    Router --> GeminiWeb
+    Router --> Trans
     Trans -->|OpenAI SSE Chunk| Clients
 ```
 
@@ -49,13 +50,19 @@ graph LR
 ## 2. Directory Layout & Key Modules
 
 ```
-agy-to-api/
+google-gate/
 ├── app/
 │   ├── config.py             # Constants, URLs, model aliases, OAuth client IDs
 │   ├── auth.py               # Google OAuth 2.0 PKCE flow, secret-tool auto-import, token refresh
-│   ├── keys.py               # Bridge API key registry, generation, revocation, and enforcement
-│   ├── client.py             # HTTP client for Google backend (streamGenerateContent, fetchModels, quotas)
+│   ├── keys.py               # Gateway API key registry, generation (sk-gate-), revocation, and enforcement
+│   ├── client.py             # Router client singleton & backwards compatibility aliases
 │   ├── translator.py         # OpenAI <-> Google internal schema converter, thinking tokens, tools
+│   ├── providers/
+│   │   ├── base.py           # BaseAdapter, RateLimitError, InMemoryRateTracker
+│   │   ├── router.py         # MultiBackendRouter, fallback & routing strategies
+│   │   ├── antigravity.py    # AntigravityAdapter (Cloud Code internal backend)
+│   │   ├── gemini_api.py     # GeminiApiAdapter (Google AI Studio API)
+│   │   └── gemini_web.py     # GeminiWebAdapter (Gemini Web cookies & RPC)
 │   ├── routes/
 │   │   ├── openai.py         # /v1/chat/completions, /v1/models, /v1/completions, /v1/embeddings
 │   │   ├── auth_routes.py    # /auth/login, /auth/callback, /auth/status, /auth/refresh, /auth/logout
@@ -67,6 +74,7 @@ agy-to-api/
 │   ├── test_api_endpoints.py
 │   ├── test_api_keys.py
 │   ├── test_auth.py
+│   ├── test_multi_backend.py
 │   └── test_translator.py
 ├── test_large_prompt.py      # 500k+ token benchmark & needle-in-a-haystack verification script
 ├── Dockerfile                # Production multi-stage container
@@ -90,7 +98,7 @@ agy-to-api/
 - **Persistence**: Persists tokens to `data/credentials.json`.
 
 ### 3.2 API Key Management (`app/keys.py`)
-- Manages client access tokens (`sk-agy-...`) protecting the bridge.
+- Manages client access tokens (`sk-gate-...` and legacy `sk-agy-...`) protecting the bridge.
 - Enforces Bearer auth on all `/v1/*` routes when `enforce_keys` is `True`.
 - Returns standard OpenAI 401 error payloads on authentication failure.
 
@@ -170,16 +178,16 @@ python test_large_prompt.py
 ### Building & Testing Docker Container
 ```bash
 # Build image
-docker build -t agy-to-api:latest .
+docker build -t google-gate:latest .
 
 # Run container
-docker run -d --rm -p 8081:8000 -v $(pwd)/data:/app/data --name agy-dev agy-to-api:latest
+docker run -d --rm -p 8081:8000 -v $(pwd)/data:/app/data --name gate-dev google-gate:latest
 
 # Healthcheck
 curl http://localhost:8081/health
 
 # Stop container
-docker stop agy-dev
+docker stop gate-dev
 ```
 
 ---

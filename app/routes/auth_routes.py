@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from app.auth import auth_manager
 from app.client import client
 
-logger = logging.getLogger("agy_to_api.auth_routes")
+logger = logging.getLogger("google_gate.auth_routes")
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
@@ -138,7 +138,7 @@ async def auth_login(
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Google Sign-In - Antigravity API</title>
+          <title>Google Sign-In - Google Gate</title>
           <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
           <script src="https://cdn.tailwindcss.com"></script>
         </head>
@@ -266,7 +266,7 @@ async def auth_callback(
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>OAuth Error - Antigravity API</title>
+              <title>OAuth Error - Google Gate</title>
               <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
               <script src="https://cdn.tailwindcss.com"></script>
             </head>
@@ -313,7 +313,7 @@ async def auth_callback(
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Login Successful - Antigravity API</title>
+              <title>Login Successful - Google Gate</title>
               <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
               <script src="https://cdn.tailwindcss.com"></script>
               <meta http-equiv="refresh" content="3;url=/">
@@ -325,7 +325,7 @@ async def auth_callback(
                     <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     <span class="font-bold">Authentication Successful!</span>
                   </div>
-                  <p class="text-sm text-base-content/80 mb-2">Your Google account has been connected to Antigravity API.</p>
+                  <p class="text-sm text-base-content/80 mb-2">Your Google account has been connected to Google Gate.</p>
                   <p class="text-sm mb-1">Project ID: <strong>{auth_manager.project_id or "Auto-discovered"}</strong></p>
                   <p class="text-sm mb-4">Account: <strong>{auth_manager.user_email or "Authenticated"}</strong></p>
                   <div class="card-actions justify-between items-center">
@@ -347,7 +347,7 @@ async def auth_callback(
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Authentication Error - Antigravity API</title>
+              <title>Authentication Error - Google Gate</title>
               <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
               <script src="https://cdn.tailwindcss.com"></script>
             </head>

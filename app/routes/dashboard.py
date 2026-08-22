@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -14,7 +15,7 @@ from app.history import history_manager
 from app.keys import api_key_manager
 from app.transformer import transform_model_catalog, transform_quota_summary
 
-logger = logging.getLogger("agy_to_api.dashboard")
+logger = logging.getLogger("google_gate.dashboard")
 router = APIRouter(tags=["Dashboard"])
 
 templates_dir = Path(__file__).resolve().parent.parent / "templates"
@@ -234,15 +235,39 @@ async def clear_query_history():
 @router.get("/api/quotas")
 async def get_quotas():
     """
-    Retrieve user quota usage.
+    Retrieve user quota usage and rate limits across configured backends.
     """
+    groups: list[dict[str, Any]] = []
+    antigravity_err = None
+
+    # 1. Antigravity Quota
     try:
         data = await client.retrieve_user_quota_summary()
-        normalized = transform_quota_summary(data)
-        return JSONResponse(content=normalized)
+        normalized = transform_quota_summary(data, backend="antigravity")
+        groups.extend(normalized.get("groups", []))
     except Exception as e:
-        logger.warning(f"Failed to fetch quotas: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e), "groups": []})
+        logger.warning(f"Failed to fetch Antigravity quotas: {e}")
+        antigravity_err = e
+
+    # 2. Multi-backend rate limit quotas (gemini_api, gemini_web, etc.)
+    if hasattr(client, "adapters"):
+        for name, adapter in client.adapters.items():
+            if name == "antigravity":
+                continue
+            if not adapter.enabled:
+                continue
+            try:
+                if hasattr(adapter, "get_rate_limit_quotas"):
+                    groups.extend(adapter.get_rate_limit_quotas())
+            except Exception as e:
+                logger.warning(f"Failed to get rate limit quotas for '{name}': {e}")
+
+    if not groups and antigravity_err:
+        return JSONResponse(
+            status_code=500, content={"error": str(antigravity_err), "groups": []}
+        )
+
+    return JSONResponse(content={"groups": groups})
 
 
 @router.get("/api/models")
@@ -341,8 +366,9 @@ async def health_check():
     status = auth_manager.get_status()
     backend_status = client.get_status() if hasattr(client, "get_status") else {}
     return {
-        "status": "healthy",
-        "service": "agy-to-api",
+        "status": "ok",
+        "service": "google-gate",
+        "version": "1.0.0",
         "authenticated": status["authenticated"],
         "project_id": status["project_id"],
         "api_key_enforcement": api_key_manager.enforce_keys,

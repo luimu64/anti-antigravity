@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import ANTIGRAVITY_TIER_MAP, CANONICAL_MODEL_MAP, MODEL_ALIASES
 
-logger = logging.getLogger("agy_to_api.translator")
+logger = logging.getLogger("google_gate.translator")
 
 # Cache to store thought signatures across turns for multi-turn function calling
 _thought_signature_cache: dict[str, str] = {}
@@ -67,8 +67,12 @@ class EmbeddingRequest(BaseModel):
 
 class OpenAITranslator:
     @staticmethod
-    def _generate_fingerprint(model: str) -> str:
-        return f"fp_agy_{abs(hash(model)) & 0xFFFFFFFF:08x}"
+    def get_system_fingerprint(model: str) -> str:
+        return f"fp_gate_{abs(hash(model)) & 0xFFFFFFFF:08x}"
+
+    @classmethod
+    def _generate_fingerprint(cls, model: str) -> str:
+        return cls.get_system_fingerprint(model)
 
     @staticmethod
     def resolve_model(requested_model: str, reasoning_effort: str | None = None) -> str:
@@ -935,3 +939,7 @@ class OpenAITranslator:
             yield f"data: {json.dumps(usage_chunk)}\n\n"
 
         yield "data: [DONE]\n\n"
+
+
+# Alias for backwards compatibility / alternate naming
+Translator = OpenAITranslator

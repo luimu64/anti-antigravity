@@ -12,12 +12,26 @@ def test_api_key_manager_crud(tmp_path):
     # 1. Create key
     created = mgr.create_key(name="Test Client")
     assert created["name"] == "Test Client"
-    assert created["key"].startswith("sk-agy-")
+    assert created["key"].startswith("sk-gate-")
     assert storage.exists()
 
-    # 2. Validate key
+    # 2. Validate key (both sk-gate- and legacy sk-agy-)
     assert mgr.validate_key(created["key"]) is True
     assert mgr.validate_key("invalid_key_123") is False
+
+    # 2b. Legacy sk-agy- key validation
+    legacy_key_id = "key_legacy_1"
+    legacy_raw_key = "sk-agy-0123456789abcdef0123456789abcdef"
+    mgr.keys[legacy_key_id] = {
+        "id": legacy_key_id,
+        "name": "Legacy Key",
+        "key": legacy_raw_key,
+        "key_preview": "sk-agy-012...cdef",
+        "created_at": 1700000000,
+        "last_used_at": None,
+        "is_active": True,
+    }
+    assert mgr.validate_key(legacy_raw_key) is True
 
     # 3. List keys
     keys = mgr.list_keys()

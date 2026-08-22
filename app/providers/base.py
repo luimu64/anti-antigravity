@@ -5,7 +5,7 @@ from collections import deque
 from collections.abc import AsyncGenerator
 from typing import Any
 
-logger = logging.getLogger("agy_to_api.providers.base")
+logger = logging.getLogger("google_gate.providers.base")
 
 
 class RateLimitError(Exception):
@@ -178,6 +178,116 @@ class BaseAdapter(ABC):
         if hasattr(self, "rate_limiter") and not self.rate_limiter.has_capacity():
             return self.rate_limiter.get_window_reset_remaining()
         return 0.0
+
+    def get_rate_limit_quotas(self) -> list[dict[str, Any]]:
+        """Return normalized rate limit and cooldown quota items for this adapter."""
+        if not hasattr(self, "rate_limiter"):
+            return []
+        items: list[dict[str, Any]] = []
+        now = time.time()
+        cooldown = self.get_cooldown_remaining()
+        rl = self.rate_limiter
+        rl._prune(now)
+
+        if rl.rpm > 0:
+            used = len(rl._minute_requests)
+            frac_used = (
+                1.0 if cooldown > 0 else min(1.0, max(0.0, round(used / rl.rpm, 4)))
+            )
+            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
+            reset_secs = (
+                round(cooldown, 1)
+                if cooldown > 0
+                else (
+                    max(0.0, round(60.0 - (now - rl._minute_requests[0]), 1))
+                    if rl._minute_requests
+                    else 0.0
+                )
+            )
+            items.append(
+                {
+                    "display_name": "Requests Per Minute (RPM)",
+                    "fraction_used": frac_used,
+                    "remaining_fraction": rem_frac,
+                    "fraction_remaining": rem_frac,
+                    "reset_time_seconds": reset_secs,
+                    "model_id": self.name,
+                    "backend": self.name,
+                    "source": self.name,
+                }
+            )
+
+        if rl.tpm > 0:
+            used = sum(t[1] for t in rl._minute_tokens)
+            frac_used = (
+                1.0 if cooldown > 0 else min(1.0, max(0.0, round(used / rl.tpm, 4)))
+            )
+            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
+            reset_secs = (
+                round(cooldown, 1)
+                if cooldown > 0
+                else (
+                    max(0.0, round(60.0 - (now - rl._minute_tokens[0][0]), 1))
+                    if rl._minute_tokens
+                    else 0.0
+                )
+            )
+            items.append(
+                {
+                    "display_name": "Tokens Per Minute (TPM)",
+                    "fraction_used": frac_used,
+                    "remaining_fraction": rem_frac,
+                    "fraction_remaining": rem_frac,
+                    "reset_time_seconds": reset_secs,
+                    "model_id": self.name,
+                    "backend": self.name,
+                    "source": self.name,
+                }
+            )
+
+        if rl.rpd > 0:
+            used = len(rl._day_requests)
+            frac_used = (
+                1.0 if cooldown > 0 else min(1.0, max(0.0, round(used / rl.rpd, 4)))
+            )
+            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
+            reset_secs = (
+                round(cooldown, 1)
+                if cooldown > 0
+                else (
+                    max(0.0, round(86400.0 - (now - rl._day_requests[0]), 1))
+                    if rl._day_requests
+                    else 0.0
+                )
+            )
+            items.append(
+                {
+                    "display_name": "Requests Per Day (RPD)",
+                    "fraction_used": frac_used,
+                    "remaining_fraction": rem_frac,
+                    "fraction_remaining": rem_frac,
+                    "reset_time_seconds": reset_secs,
+                    "model_id": self.name,
+                    "backend": self.name,
+                    "source": self.name,
+                }
+            )
+
+        if not items and cooldown > 0:
+            items.append(
+                {
+                    "display_name": "Cooldown",
+                    "fraction_used": 1.0,
+                    "remaining_fraction": 0.0,
+                    "fraction_remaining": 0.0,
+                    "reset_time_seconds": round(cooldown, 1),
+                    "model_id": self.name,
+                    "backend": self.name,
+                    "source": self.name,
+                }
+            )
+
+        return items
 
     def record_usage(self, tokens: int = 0) -> None:
         """Record proactive usage."""
