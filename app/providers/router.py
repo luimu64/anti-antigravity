@@ -273,6 +273,9 @@ class MultiBackendRouter(BaseAdapter):
                     "cooldown_remaining": round(
                         self.antigravity.get_cooldown_remaining(), 1
                     ),
+                    "rate_limits": self.antigravity.rate_limiter.get_stats()
+                    if hasattr(self.antigravity, "rate_limiter")
+                    else {},
                     "authenticated": bool(
                         self.antigravity.auth.access_token
                         or self.antigravity.auth.refresh_token
@@ -290,6 +293,9 @@ class MultiBackendRouter(BaseAdapter):
                     "cooldown_remaining": round(
                         self.gemini_api.get_cooldown_remaining(), 1
                     ),
+                    "rate_limits": self.gemini_api.rate_limiter.get_stats()
+                    if hasattr(self.gemini_api, "rate_limiter")
+                    else {},
                     "has_api_key": bool(self.gemini_api.api_key),
                     "masked_key": mask_secret(self.gemini_api.api_key),
                 },
@@ -302,6 +308,9 @@ class MultiBackendRouter(BaseAdapter):
                     "cooldown_remaining": round(
                         self.gemini_web.get_cooldown_remaining(), 1
                     ),
+                    "rate_limits": self.gemini_web.rate_limiter.get_stats()
+                    if hasattr(self.gemini_web, "rate_limiter")
+                    else {},
                     "has_psid": bool(self.gemini_web.psid),
                     "has_psidts": bool(self.gemini_web.psidts),
                     "masked_psid": mask_secret(self.gemini_web.psid),
@@ -320,32 +329,109 @@ class MultiBackendRouter(BaseAdapter):
     def get_adapter(self, name: str) -> BaseAdapter | None:
         return self.adapters.get(name)
 
-    def get_available_adapters(self) -> list[BaseAdapter]:
-        available = [a for a in self.adapters.values() if a.is_available()]
-        if not available:
-            # If all are in cooldown but configured & enabled, fallback to configured
-            available = [
-                a for a in self.adapters.values() if a.enabled and a.is_configured()
-            ]
-        return available
+    def supports_model(
+        self, adapter: BaseAdapter, model: str | None = None, is_embedding: bool = False
+    ) -> bool:
+        """Check if a backend adapter is capable of handling the specified model / task."""
+        if is_embedding:
+            return hasattr(adapter, "embed_contents") and adapter.name in (
+                "antigravity",
+                "gemini_api",
+            )
+        if not model:
+            return True
+        clean_model = model.lower().replace("models/", "")
+        if adapter.name == "gemini_web":
+            # Gemini web only handles Google Gemini models and vision
+            return any(k in clean_model for k in ("gemini", "vision", "image"))
+        return True
 
-    def get_ordered_adapters(self) -> list[BaseAdapter]:
-        """Order adapters according to the selected routing strategy."""
+    def get_capable_adapters(
+        self, model: str | None = None, is_embedding: bool = False
+    ) -> list[BaseAdapter]:
+        """Return all adapters that are enabled, configured, and capable of the request."""
+        return [
+            a
+            for a in self.adapters.values()
+            if a.enabled
+            and a.is_configured()
+            and self.supports_model(a, model=model, is_embedding=is_embedding)
+        ]
+
+    def get_available_adapters(
+        self,
+        model: str | None = None,
+        is_embedding: bool = False,
+        estimated_tokens: int = 0,
+    ) -> list[BaseAdapter]:
+        """Return capable adapters with proactive capacity and not in reactive cooldown."""
+        capable = self.get_capable_adapters(model=model, is_embedding=is_embedding)
+        return [a for a in capable if a.is_available(estimated_tokens=estimated_tokens)]
+
+    def get_ordered_adapters(
+        self,
+        model: str | None = None,
+        is_embedding: bool = False,
+        estimated_tokens: int = 0,
+    ) -> list[BaseAdapter]:
+        """Order available adapters according to the selected routing strategy."""
+        available = self.get_available_adapters(
+            model=model,
+            is_embedding=is_embedding,
+            estimated_tokens=estimated_tokens,
+        )
+
+        if not available:
+            return []
+
         if self.routing_strategy == "round_robin":
-            available = self.get_available_adapters()
-            if not available:
-                return [self.antigravity]
             idx = self._rr_counter % len(available)
             self._rr_counter += 1
             return available[idx:] + available[:idx]
 
         # Default "free_first": Gemini Web -> Gemini AI Studio API -> Antigravity
         priority_order = [self.gemini_web, self.gemini_api, self.antigravity]
-        available = [a for a in priority_order if a.is_available()]
-        if not available:
-            # Fallback to any enabled/configured
-            available = [a for a in priority_order if a.enabled and a.is_configured()]
-        return available or [self.antigravity]
+        return [a for a in priority_order if a in available]
+
+    def check_availability(
+        self,
+        model: str,
+        is_embedding: bool = False,
+        estimated_tokens: int = 0,
+    ) -> list[BaseAdapter]:
+        """
+        Evaluate hybrid capacity (proactive in-memory counters + reactive cooldowns).
+        Returns ordered candidate adapters or immediately raises RateLimitError (429) / ValueError (503).
+        """
+        capable = self.get_capable_adapters(model=model, is_embedding=is_embedding)
+        if not capable:
+            raise ValueError(
+                f"No configured or enabled backends available for model '{model}'."
+            )
+
+        candidates = self.get_ordered_adapters(
+            model=model,
+            is_embedding=is_embedding,
+            estimated_tokens=estimated_tokens,
+        )
+
+        if not candidates:
+            min_cooldown = min(
+                (
+                    a.get_cooldown_remaining()
+                    for a in capable
+                    if a.get_cooldown_remaining() > 0
+                ),
+                default=60.0,
+            )
+            retry_after = max(1.0, min_cooldown)
+            raise RateLimitError(
+                f"All backends for model '{model}' are exhausted or in cooldown. Please retry after {int(retry_after)} seconds.",
+                status_code=429,
+                retry_after=retry_after,
+            )
+
+        return candidates
 
     def _is_rate_limit_exception(self, e: Exception) -> bool:
         """Check if exception represents a 429 / rate limit / quota exceeded."""
@@ -369,8 +455,16 @@ class MultiBackendRouter(BaseAdapter):
         generation_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Execute non-streaming content generation with automatic 429 fallback."""
-        candidates = self.get_ordered_adapters()
+        """Execute non-streaming content generation with automatic 429 fallback and capacity checking."""
+        estimated_tokens = sum(
+            len(p.get("text", "")) // 4
+            for c in contents
+            for p in c.get("parts", [])
+            if isinstance(p, dict)
+        )
+        candidates = self.check_availability(
+            model=model, is_embedding=False, estimated_tokens=estimated_tokens
+        )
         last_exception = None
 
         for adapter in candidates:
@@ -378,13 +472,17 @@ class MultiBackendRouter(BaseAdapter):
                 logger.info(
                     f"Routing generate_content (strategy={self.routing_strategy}) to '{adapter.name}'"
                 )
-                return await adapter.generate_content(
+                res = await adapter.generate_content(
                     model=model,
                     contents=contents,
                     system_instruction=system_instruction,
                     generation_config=generation_config,
                     tools=tools,
                 )
+                usage = res.get("usageMetadata", {})
+                tokens_used = usage.get("totalTokenCount") or estimated_tokens or 1
+                adapter.record_usage(tokens=tokens_used)
+                return res
             except Exception as e:
                 if self._is_rate_limit_exception(e):
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
@@ -400,6 +498,22 @@ class MultiBackendRouter(BaseAdapter):
                 continue
 
         if last_exception:
+            if self._is_rate_limit_exception(last_exception):
+                capable = self.get_capable_adapters(model=model, is_embedding=False)
+                min_cooldown = min(
+                    (
+                        a.get_cooldown_remaining()
+                        for a in capable
+                        if a.get_cooldown_remaining() > 0
+                    ),
+                    default=60.0,
+                )
+                retry_after = max(1.0, min_cooldown)
+                raise RateLimitError(
+                    f"All backends for model '{model}' are exhausted or rate limited. Please retry after {int(retry_after)} seconds.",
+                    status_code=429,
+                    retry_after=retry_after,
+                )
             raise last_exception
         raise ValueError("No backends available to fulfill generate_content request.")
 
@@ -412,11 +526,20 @@ class MultiBackendRouter(BaseAdapter):
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream generated content with automatic fallback if initial connect fails with 429."""
-        candidates = self.get_ordered_adapters()
+        estimated_tokens = sum(
+            len(p.get("text", "")) // 4
+            for c in contents
+            for p in c.get("parts", [])
+            if isinstance(p, dict)
+        )
+        candidates = self.check_availability(
+            model=model, is_embedding=False, estimated_tokens=estimated_tokens
+        )
         last_exception = None
 
         for adapter in candidates:
             success = False
+            tokens_used = estimated_tokens or 1
             try:
                 logger.info(
                     f"Routing stream_generate_content (strategy={self.routing_strategy}) to '{adapter.name}'"
@@ -433,11 +556,21 @@ class MultiBackendRouter(BaseAdapter):
                 async for chunk in stream_gen:
                     yield chunk
                     success = True
+                    if "usageMetadata" in chunk:
+                        tokens_used = (
+                            chunk["usageMetadata"].get("totalTokenCount") or tokens_used
+                        )
                     break
 
                 if success:
                     async for chunk in stream_gen:
+                        if "usageMetadata" in chunk:
+                            tokens_used = (
+                                chunk["usageMetadata"].get("totalTokenCount")
+                                or tokens_used
+                            )
                         yield chunk
+                    adapter.record_usage(tokens=tokens_used)
                     return
 
             except Exception as e:
@@ -463,6 +596,22 @@ class MultiBackendRouter(BaseAdapter):
                     raise
 
         if last_exception:
+            if self._is_rate_limit_exception(last_exception):
+                capable = self.get_capable_adapters(model=model, is_embedding=False)
+                min_cooldown = min(
+                    (
+                        a.get_cooldown_remaining()
+                        for a in capable
+                        if a.get_cooldown_remaining() > 0
+                    ),
+                    default=60.0,
+                )
+                retry_after = max(1.0, min_cooldown)
+                raise RateLimitError(
+                    f"All backends for model '{model}' are exhausted or rate limited. Please retry after {int(retry_after)} seconds.",
+                    status_code=429,
+                    retry_after=retry_after,
+                )
             raise last_exception
         raise ValueError(
             "No backends available to fulfill stream_generate_content request."
@@ -472,16 +621,19 @@ class MultiBackendRouter(BaseAdapter):
         self, model: str, texts: list[str], dimensions: int | None = None
     ) -> dict[str, Any]:
         """Route embedding requests to available backend supporting embeddings."""
-        candidates = [
-            a for a in self.get_ordered_adapters() if hasattr(a, "embed_contents")
-        ]
+        estimated_tokens = sum(max(1, len(t) // 4) for t in texts)
+        candidates = self.check_availability(
+            model=model, is_embedding=True, estimated_tokens=estimated_tokens
+        )
         last_exception = None
 
         for adapter in candidates:
             try:
-                return await adapter.embed_contents(
+                res = await adapter.embed_contents(
                     model=model, texts=texts, dimensions=dimensions
                 )
+                adapter.record_usage(tokens=estimated_tokens)
+                return res
             except Exception as e:
                 if self._is_rate_limit_exception(e):
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
@@ -497,6 +649,22 @@ class MultiBackendRouter(BaseAdapter):
                 continue
 
         if last_exception:
+            if self._is_rate_limit_exception(last_exception):
+                capable = self.get_capable_adapters(model=model, is_embedding=True)
+                min_cooldown = min(
+                    (
+                        a.get_cooldown_remaining()
+                        for a in capable
+                        if a.get_cooldown_remaining() > 0
+                    ),
+                    default=60.0,
+                )
+                retry_after = max(1.0, min_cooldown)
+                raise RateLimitError(
+                    f"All backends for embedding model '{model}' are exhausted or rate limited. Please retry after {int(retry_after)} seconds.",
+                    status_code=429,
+                    retry_after=retry_after,
+                )
             raise last_exception
         raise ValueError("No backends available for embeddings.")
 

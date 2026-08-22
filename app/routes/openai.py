@@ -12,6 +12,7 @@ from app.client import client
 from app.config import MODEL_ALIASES
 from app.history import history_manager
 from app.keys import api_key_manager
+from app.providers.base import RateLimitError
 from app.translator import ChatCompletionRequest, EmbeddingRequest, OpenAITranslator
 
 logger = logging.getLogger("agy_to_api.openai")
@@ -215,6 +216,10 @@ async def chat_completions(request: ChatCompletionRequest):
                 try:
                     async for chunk in openai_chunks:
                         yield chunk
+                except RateLimitError as stream_err:
+                    stream_status = "rate_limited"
+                    error_msg = str(stream_err)
+                    raise
                 except asyncio.CancelledError:
                     stream_status = "stream-aborted"
                     raise
@@ -247,6 +252,75 @@ async def chat_completions(request: ChatCompletionRequest):
                     "X-Accel-Buffering": "no",
                 },
             )
+        except RateLimitError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=request.model,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="rate_limited",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
+            logger.warning(f"Streaming chat rate limited: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {
+                        "message": str(e),
+                        "type": "requests",
+                        "param": None,
+                        "code": "rate_limit_exceeded",
+                    }
+                },
+                headers={
+                    "Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))
+                },
+            ) from e
+        except ValueError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=request.model,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="error",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
+            status_code = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if "No backends" in str(e) or "No configured" in str(e)
+                else status.HTTP_400_BAD_REQUEST
+            )
+            code_str = (
+                "service_unavailable"
+                if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+                else "invalid_request_error"
+            )
+            err_type = (
+                "api_error"
+                if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+                else "invalid_request_error"
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "error": {
+                        "message": str(e),
+                        "type": err_type,
+                        "param": None,
+                        "code": code_str,
+                    }
+                },
+            ) from e
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
             history_manager.record(
@@ -293,6 +367,73 @@ async def chat_completions(request: ChatCompletionRequest):
             request_id=response_json.get("id") or req_id,
         )
         return JSONResponse(content=response_json)
+    except RateLimitError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=request.model,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="rate_limited",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
+        logger.warning(f"Non-streaming chat rate limited: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "requests",
+                    "param": None,
+                    "code": "rate_limit_exceeded",
+                }
+            },
+            headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
+        ) from e
+    except ValueError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=request.model,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if "No backends" in str(e) or "No configured" in str(e)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        code_str = (
+            "service_unavailable"
+            if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            else "invalid_request_error"
+        )
+        err_type = (
+            "api_error"
+            if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            else "invalid_request_error"
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": err_type,
+                    "param": None,
+                    "code": code_str,
+                }
+            },
+        ) from e
     except Exception as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
         history_manager.record(
@@ -421,6 +562,10 @@ async def legacy_completions(request: Request):
                 try:
                     async for chunk in openai_chunks:
                         yield chunk
+                except RateLimitError as stream_err:
+                    stream_status = "rate_limited"
+                    error_msg = str(stream_err)
+                    raise
                 except asyncio.CancelledError:
                     stream_status = "stream-aborted"
                     raise
@@ -453,6 +598,75 @@ async def legacy_completions(request: Request):
                     "X-Accel-Buffering": "no",
                 },
             )
+        except RateLimitError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=model_name,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="rate_limited",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
+            logger.warning(f"Streaming text completion rate limited: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {
+                        "message": str(e),
+                        "type": "requests",
+                        "param": None,
+                        "code": "rate_limit_exceeded",
+                    }
+                },
+                headers={
+                    "Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))
+                },
+            ) from e
+        except ValueError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            history_manager.record(
+                model=model_name,
+                resolved_model=internal_model,
+                backend=backend,
+                duration_ms=duration_ms,
+                status="error",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                error_message=str(e),
+                request_id=req_id,
+            )
+            status_code = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if "No backends" in str(e) or "No configured" in str(e)
+                else status.HTTP_400_BAD_REQUEST
+            )
+            code_str = (
+                "service_unavailable"
+                if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+                else "invalid_request_error"
+            )
+            err_type = (
+                "api_error"
+                if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+                else "invalid_request_error"
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "error": {
+                        "message": str(e),
+                        "type": err_type,
+                        "param": None,
+                        "code": code_str,
+                    }
+                },
+            ) from e
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
             history_manager.record(
@@ -499,6 +713,73 @@ async def legacy_completions(request: Request):
             request_id=response_json.get("id") or req_id,
         )
         return JSONResponse(content=response_json)
+    except RateLimitError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=model_name,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="rate_limited",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
+        logger.warning(f"Non-streaming text completion rate limited: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "requests",
+                    "param": None,
+                    "code": "rate_limit_exceeded",
+                }
+            },
+            headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
+        ) from e
+    except ValueError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        history_manager.record(
+            model=model_name,
+            resolved_model=internal_model,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=str(e),
+            request_id=req_id,
+        )
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if "No backends" in str(e) or "No configured" in str(e)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        code_str = (
+            "service_unavailable"
+            if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            else "invalid_request_error"
+        )
+        err_type = (
+            "api_error"
+            if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            else "invalid_request_error"
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": err_type,
+                    "param": None,
+                    "code": code_str,
+                }
+            },
+        ) from e
     except Exception as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
         history_manager.record(
@@ -565,6 +846,47 @@ async def create_embeddings(request: EmbeddingRequest):
         raw_result = await client.embed_contents(
             model=resolved_model, texts=texts, dimensions=request.dimensions
         )
+    except RateLimitError as e:
+        logger.warning(f"Embedding rate limited: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "requests",
+                    "param": None,
+                    "code": "rate_limit_exceeded",
+                }
+            },
+            headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
+        ) from e
+    except ValueError as e:
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if "No backends" in str(e) or "No configured" in str(e)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        code_str = (
+            "service_unavailable"
+            if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            else "invalid_request_error"
+        )
+        err_type = (
+            "api_error"
+            if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            else "invalid_request_error"
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": err_type,
+                    "param": None,
+                    "code": code_str,
+                }
+            },
+        ) from e
     except Exception as e:
         logger.error(f"Embedding error: {e}")
         raise HTTPException(

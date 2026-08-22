@@ -328,7 +328,12 @@ def transform_model_catalog(
 def _compute_remaining_fraction(bucket: dict[str, Any]) -> float:
     """Compute remaining_fraction bounded between 0.0 and 1.0 from bucket fields."""
     # 1. remainingFraction / remaining_fraction / fraction_remaining
-    for key in ("remainingFraction", "remaining_fraction", "fraction_remaining", "remaining"):
+    for key in (
+        "remainingFraction",
+        "remaining_fraction",
+        "fraction_remaining",
+        "remaining",
+    ):
         val = bucket.get(key)
         if val is not None:
             try:

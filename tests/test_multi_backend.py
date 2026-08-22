@@ -692,3 +692,204 @@ def test_vision_model_mapping_across_all_adapters():
     )
     assert hex_id_img == "2c8a"
     assert model_num_img == 5
+
+
+def test_in_memory_rate_tracker_sliding_window():
+    """Verify in-memory proactive rate limit accounting, sliding windows, and resets."""
+    from app.providers.base import InMemoryRateTracker
+
+    tracker = InMemoryRateTracker(rpm=3, tpm=100, rpd=5)
+    now = 1000.0
+
+    # Initial state
+    assert tracker.has_capacity(estimated_tokens=10, now=now) is True
+    assert tracker.get_window_reset_remaining(now=now) == 0.0
+
+    # Record 3 requests within the same minute
+    tracker.record_usage(tokens=30, now=now)
+    tracker.record_usage(tokens=30, now=now + 10)
+    tracker.record_usage(tokens=30, now=now + 20)
+
+    # RPM limit (3) is reached
+    assert tracker.has_capacity(estimated_tokens=5, now=now + 25) is False
+    reset_wait = tracker.get_window_reset_remaining(now=now + 25)
+    assert 34.0 <= reset_wait <= 36.0  # 60 - (1025 - 1000) = 35s
+
+    # Advance time past the first request (> 60s from t=1000)
+    now_next = now + 65.0
+    assert tracker.has_capacity(estimated_tokens=5, now=now_next) is True
+
+    # Test TPM limit
+    tracker.record_usage(
+        tokens=50, now=now_next
+    )  # total tokens now: 30+30+50 = 110 > 100
+    assert tracker.has_capacity(estimated_tokens=10, now=now_next) is False
+
+    # Stats snapshot
+    stats = tracker.get_stats(now=now_next)
+    assert stats["rpm_limit"] == 3
+    assert stats["tpm_limit"] == 100
+    assert stats["has_capacity"] is False
+
+    # Reset clears all in-memory counters
+    tracker.reset()
+    assert tracker.has_capacity(estimated_tokens=50, now=now_next) is True
+    assert tracker.get_stats(now=now_next)["rpm_used"] == 0
+
+
+def test_adapter_proactive_capacity_and_cooldown_hybrid():
+    """Verify BaseAdapter evaluates proactive rate limits and reactive cooldowns."""
+    from app.providers.gemini_api import GeminiApiAdapter
+
+    adapter = GeminiApiAdapter(api_key="test-key", enabled=True)
+    adapter.rate_limiter.rpm = 2
+    assert adapter.is_available() is True
+
+    # Consume capacity
+    adapter.record_usage(tokens=10)
+    adapter.record_usage(tokens=10)
+    assert adapter.is_available() is False
+    assert adapter.get_cooldown_remaining() > 0.0
+
+    # Clear cooldown resets rate limiter too
+    adapter.clear_cooldown()
+    assert adapter.is_available() is True
+
+
+@pytest.mark.asyncio
+async def test_hybrid_routing_proactive_exhaustion_fallback():
+    """Verify router transparently falls back to next backend when first backend reaches proactive rate limit."""
+    mock_web = MagicMock(spec=GeminiWebAdapter)
+    mock_web.name = "gemini_web"
+    mock_web.enabled = True
+    mock_web.is_configured.return_value = True
+    mock_web.cooldown_until = 0.0
+    mock_web.get_cooldown_remaining.return_value = 0.0
+    # Simulate web backend having capacity for only 2 requests
+    web_calls = 0
+
+    def web_is_available(*args, **kwargs):
+        return web_calls < 2
+
+    mock_web.is_available = MagicMock(side_effect=web_is_available)
+    mock_web.record_usage = MagicMock()
+
+    async def web_generate(*args, **kwargs):
+        nonlocal web_calls
+        web_calls += 1
+        return {"backend": "gemini_web"}
+
+    mock_web.generate_content = AsyncMock(side_effect=web_generate)
+
+    mock_api = MagicMock(spec=GeminiApiAdapter)
+    mock_api.name = "gemini_api"
+    mock_api.enabled = True
+    mock_api.is_configured.return_value = True
+    mock_api.is_available.return_value = True
+    mock_api.cooldown_until = 0.0
+    mock_api.get_cooldown_remaining.return_value = 0.0
+    mock_api.record_usage = MagicMock()
+    mock_api.generate_content = AsyncMock(return_value={"backend": "gemini_api"})
+
+    mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.name = "antigravity"
+    mock_agy.enabled = False
+
+    router = MultiBackendRouter(
+        antigravity=mock_agy,
+        gemini_api=mock_api,
+        gemini_web=mock_web,
+        routing_strategy="free_first",
+    )
+
+    # First two requests go to gemini_web
+    res1 = await router.generate_content(
+        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "1"}]}]
+    )
+    res2 = await router.generate_content(
+        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "2"}]}]
+    )
+    assert res1["backend"] == "gemini_web"
+    assert res2["backend"] == "gemini_web"
+
+    # Third request proactively skips gemini_web (out of capacity) and routes to gemini_api!
+    res3 = await router.generate_content(
+        model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": "3"}]}]
+    )
+    assert res3["backend"] == "gemini_api"
+
+
+@pytest.mark.asyncio
+async def test_all_backends_exhausted_immediate_429():
+    """Verify router immediately raises RateLimitError (429) when all capable backends are exhausted."""
+    mock_web = MagicMock(spec=GeminiWebAdapter)
+    mock_web.name = "gemini_web"
+    mock_web.enabled = True
+    mock_web.is_configured.return_value = True
+    mock_web.is_available.return_value = False
+    mock_web.get_cooldown_remaining.return_value = 45.0
+
+    mock_api = MagicMock(spec=GeminiApiAdapter)
+    mock_api.name = "gemini_api"
+    mock_api.enabled = True
+    mock_api.is_configured.return_value = True
+    mock_api.is_available.return_value = False
+    mock_api.get_cooldown_remaining.return_value = 30.0
+
+    mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.name = "antigravity"
+    mock_agy.enabled = False
+
+    router = MultiBackendRouter(
+        antigravity=mock_agy,
+        gemini_api=mock_api,
+        gemini_web=mock_web,
+        routing_strategy="free_first",
+    )
+
+    with pytest.raises(RateLimitError) as exc_info:
+        await router.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": [{"text": "hi"}]}],
+        )
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.retry_after == 30.0  # min cooldown remaining
+
+
+@pytest.mark.asyncio
+async def test_antigravity_quota_summary_exhaustion_trigger():
+    """Verify AntigravityAdapter triggers cooldown when quota bucket is exhausted."""
+    adapter = AntigravityAdapter()
+    adapter.min_quota_fraction = 0.05
+    adapter.default_cooldown = 120.0
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "groups": [
+            {
+                "groupId": "antigravity_general",
+                "buckets": [
+                    {
+                        "bucketId": "weekly",
+                        "displayName": "Weekly Limit",
+                        "remainingFraction": 0.02,  # < 0.05 min threshold
+                        "resetTime": "2030-01-01T00:00:00Z",
+                    }
+                ],
+            }
+        ]
+    }
+
+    adapter._get_headers = AsyncMock(return_value={})
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.is_closed = False
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    await adapter.retrieve_user_quota_summary()
+
+    # Cooldown should now be active
+    assert adapter.get_cooldown_remaining() > 0.0

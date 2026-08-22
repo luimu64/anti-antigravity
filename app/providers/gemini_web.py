@@ -10,9 +10,21 @@ from typing import Any
 
 import httpx
 
+from app.config import PROVIDER_RATE_LIMITS
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("agy_to_api.providers.gemini_web")
+
+
+def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:
+    header = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+    if header:
+        try:
+            return max(1.0, float(header.strip()))
+        except ValueError:
+            pass
+    return default
+
 
 DEFAULT_BUILD_LABEL = "boq_assistant-bard-web-server_20250220.08_p0"
 
@@ -81,7 +93,15 @@ class GeminiWebAdapter(BaseAdapter):
         sapisid: str | None = None,
         enabled: bool = False,
     ):
-        super().__init__(enabled=enabled)
+        limits = PROVIDER_RATE_LIMITS.get("gemini_web", {})
+        super().__init__(
+            enabled=enabled,
+            rpm=limits.get("rpm", 60),
+            tpm=limits.get("tpm", 500000),
+            rpd=limits.get("rpd", 0),
+            default_cooldown=limits.get("default_cooldown", 60.0),
+            min_quota_fraction=limits.get("min_quota_fraction", 0.0),
+        )
         self.psid = (
             psid
             or os.getenv("GEMINI_WEB_PSID")
@@ -169,9 +189,12 @@ class GeminiWebAdapter(BaseAdapter):
                 "https://gemini.google.com/app", headers=self._get_headers()
             )
             if resp.status_code == 429:
-                self.set_cooldown(60.0)
+                retry_after = _extract_retry_after(resp, self.default_cooldown)
+                self.set_cooldown(retry_after)
                 raise RateLimitError(
-                    "Gemini Web rate limited (429) during session init"
+                    "Gemini Web rate limited (429) during session init",
+                    status_code=429,
+                    retry_after=retry_after,
                 )
 
             if resp.status_code in (401, 403):
@@ -459,8 +482,13 @@ class GeminiWebAdapter(BaseAdapter):
             raise RateLimitError(f"Gemini Web network error: {e}") from e
 
         if resp.status_code in (429, 403, 401):
-            self.set_cooldown(60.0)
-            raise RateLimitError(f"Gemini Web returned status {resp.status_code}")
+            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.set_cooldown(retry_after)
+            raise RateLimitError(
+                f"Gemini Web returned status {resp.status_code}",
+                status_code=429 if resp.status_code == 429 else resp.status_code,
+                retry_after=retry_after,
+            )
 
         if resp.status_code != 200:
             logger.error(f"Gemini Web error ({resp.status_code}): {resp.text[:200]}")

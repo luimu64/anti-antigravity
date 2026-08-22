@@ -6,9 +6,20 @@ from typing import Any
 
 import httpx
 
+from app.config import PROVIDER_RATE_LIMITS
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("agy_to_api.providers.gemini_api")
+
+
+def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:
+    header = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+    if header:
+        try:
+            return max(1.0, float(header.strip()))
+        except ValueError:
+            pass
+    return default
 
 
 class GeminiApiAdapter(BaseAdapter):
@@ -20,7 +31,15 @@ class GeminiApiAdapter(BaseAdapter):
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
         enabled: bool = False,
     ):
-        super().__init__(enabled=enabled)
+        limits = PROVIDER_RATE_LIMITS.get("gemini_api", {})
+        super().__init__(
+            enabled=enabled,
+            rpm=limits.get("rpm", 15),
+            tpm=limits.get("tpm", 1000000),
+            rpd=limits.get("rpd", 1500),
+            default_cooldown=limits.get("default_cooldown", 60.0),
+            min_quota_fraction=limits.get("min_quota_fraction", 0.0),
+        )
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.base_url = base_url.rstrip("/")
         self._http_client: httpx.AsyncClient | None = None
@@ -205,7 +224,8 @@ class GeminiApiAdapter(BaseAdapter):
                 url = f"{self.base_url}/models"
                 resp = await http.get(url, params=params, headers=self._get_headers())
                 if resp.status_code == 429:
-                    self.set_cooldown(60.0)
+                    retry_after = _extract_retry_after(resp, self.default_cooldown)
+                    self.set_cooldown(retry_after)
                     return {"models": models_dict or fallback_models}
 
                 if resp.status_code != 200:
@@ -315,9 +335,14 @@ class GeminiApiAdapter(BaseAdapter):
             "POST", url, json=payload, headers=self._get_headers()
         ) as resp:
             if resp.status_code == 429:
-                self.set_cooldown(60.0)
+                retry_after = _extract_retry_after(resp, self.default_cooldown)
+                self.set_cooldown(retry_after)
                 err_text = (await resp.aread()).decode("utf-8", errors="replace")
-                raise RateLimitError(f"Gemini API rate limited (429): {err_text}")
+                raise RateLimitError(
+                    f"Gemini API rate limited (429): {err_text}",
+                    status_code=429,
+                    retry_after=retry_after,
+                )
 
             if resp.status_code != 200:
                 err_text = (await resp.aread()).decode("utf-8", errors="replace")
@@ -465,9 +490,12 @@ class GeminiApiAdapter(BaseAdapter):
         resp = await http.post(url, json=payload, headers=self._get_headers())
 
         if resp.status_code == 429:
-            self.set_cooldown(60.0)
+            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.set_cooldown(retry_after)
             raise RateLimitError(
-                f"Gemini API embedding rate limited (429): {resp.text}"
+                f"Gemini API embedding rate limited (429): {resp.text}",
+                status_code=429,
+                retry_after=retry_after,
             )
 
         if resp.status_code != 200:

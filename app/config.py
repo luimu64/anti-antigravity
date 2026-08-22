@@ -157,3 +157,30 @@ HIDDEN_MODELS = {
     "gemini-3.7-flash-medium",
     "gemini-3.1-pro-low",
 }
+
+# Provider rate limits, quota thresholds, and cooldown defaults (configurable via env vars)
+PROVIDER_RATE_LIMITS = {
+    "antigravity": {
+        "rpm": int(os.getenv("ANTIGRAVITY_RPM", "100")),
+        "tpm": int(os.getenv("ANTIGRAVITY_TPM", "1000000")),
+        "rpd": int(os.getenv("ANTIGRAVITY_RPD", "0")),
+        "min_quota_fraction": float(
+            os.getenv("ANTIGRAVITY_MIN_QUOTA_FRACTION", "0.01")
+        ),
+        "default_cooldown": float(os.getenv("ANTIGRAVITY_DEFAULT_COOLDOWN", "60.0")),
+    },
+    "gemini_api": {
+        "rpm": int(os.getenv("GEMINI_API_RPM", "15")),
+        "tpm": int(os.getenv("GEMINI_API_TPM", "1000000")),
+        "rpd": int(os.getenv("GEMINI_API_RPD", "1500")),
+        "min_quota_fraction": float(os.getenv("GEMINI_API_MIN_QUOTA_FRACTION", "0.0")),
+        "default_cooldown": float(os.getenv("GEMINI_API_DEFAULT_COOLDOWN", "60.0")),
+    },
+    "gemini_web": {
+        "rpm": int(os.getenv("GEMINI_WEB_RPM", "60")),
+        "tpm": int(os.getenv("GEMINI_WEB_TPM", "500000")),
+        "rpd": int(os.getenv("GEMINI_WEB_RPD", "0")),
+        "min_quota_fraction": float(os.getenv("GEMINI_WEB_MIN_QUOTA_FRACTION", "0.0")),
+        "default_cooldown": float(os.getenv("GEMINI_WEB_DEFAULT_COOLDOWN", "60.0")),
+    },
+}

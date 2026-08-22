@@ -5,7 +5,71 @@ import pytest
 
 from app.client import client
 from app.keys import api_key_manager
+from app.providers.base import RateLimitError
 from main import app
+
+
+@pytest.mark.asyncio
+async def test_openai_error_structure_429_rate_limit_exceeded():
+    """Verify 429 error returned with Retry-After header and OpenAI error structure."""
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+    with patch.object(
+        client,
+        "generate_content",
+        new_callable=AsyncMock,
+        side_effect=RateLimitError(
+            "All backends for model 'gpt-4o' are exhausted or rate limited.",
+            status_code=429,
+            retry_after=45.0,
+        ),
+    ):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "test"}],
+                },
+            )
+            assert resp.status_code == 429
+            assert resp.headers.get("retry-after") == "45"
+            data = resp.json()
+            assert "error" in data
+            err = data["error"]
+            assert err["type"] == "requests"
+            assert err["code"] == "rate_limit_exceeded"
+            assert "exhausted" in err["message"]
+
+
+@pytest.mark.asyncio
+async def test_openai_error_structure_503_service_unavailable():
+    """Verify 503 error returned when no backend is configured or enabled."""
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+    with patch.object(
+        client,
+        "generate_content",
+        new_callable=AsyncMock,
+        side_effect=ValueError(
+            "No configured or enabled backends available for model 'gpt-4o'."
+        ),
+    ):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "test"}],
+                },
+            )
+            assert resp.status_code == 503
+            data = resp.json()
+            assert "error" in data
+            assert data["error"]["code"] == "service_unavailable"
+            assert data["error"]["type"] == "api_error"
 
 
 @pytest.mark.asyncio

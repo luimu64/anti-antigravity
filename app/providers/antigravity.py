@@ -1,3 +1,4 @@
+import datetime
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -6,10 +7,20 @@ from typing import Any
 import httpx
 
 from app.auth import OAuthManager, auth_manager
-from app.config import CLOUD_CODE_BASE_URL, USER_AGENT
+from app.config import CLOUD_CODE_BASE_URL, PROVIDER_RATE_LIMITS, USER_AGENT
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("agy_to_api.providers.antigravity")
+
+
+def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:
+    header = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+    if header:
+        try:
+            return max(1.0, float(header.strip()))
+        except ValueError:
+            pass
+    return default
 
 
 class AntigravityAdapter(BaseAdapter):
@@ -21,7 +32,15 @@ class AntigravityAdapter(BaseAdapter):
         auth: OAuthManager = auth_manager,
         enabled: bool = False,
     ):
-        super().__init__(enabled=enabled)
+        limits = PROVIDER_RATE_LIMITS.get("antigravity", {})
+        super().__init__(
+            enabled=enabled,
+            rpm=limits.get("rpm", 100),
+            tpm=limits.get("tpm", 1000000),
+            rpd=limits.get("rpd", 0),
+            default_cooldown=limits.get("default_cooldown", 60.0),
+            min_quota_fraction=limits.get("min_quota_fraction", 0.01),
+        )
         self.base_url = base_url.rstrip("/")
         self.auth = auth
         self._cached_models: dict[str, Any] | None = None
@@ -62,8 +81,13 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            self.set_cooldown(60.0)
-            raise RateLimitError(f"Antigravity rate limited (429): {resp.text}")
+            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.set_cooldown(retry_after)
+            raise RateLimitError(
+                f"Antigravity rate limited (429): {resp.text}",
+                status_code=429,
+                retry_after=retry_after,
+            )
 
         if resp.status_code != 200:
             logger.error(f"loadCodeAssist failed: {resp.status_code} {resp.text}")
@@ -77,6 +101,15 @@ class AntigravityAdapter(BaseAdapter):
         current_tier = data.get("currentTier", {})
         if current_tier:
             self.auth.tier_name = current_tier.get("name") or current_tier.get("id")
+
+        user_limits = data.get("userLimits", {})
+        if isinstance(user_limits, dict) and "rateLimit" in user_limits:
+            try:
+                discovered_rpm = int(user_limits["rateLimit"])
+                if discovered_rpm > 0 and hasattr(self, "rate_limiter"):
+                    self.rate_limiter.rpm = discovered_rpm
+            except Exception:
+                pass
 
         self.auth.save_credentials()
         return data
@@ -112,8 +145,13 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json={}, headers=headers)
 
         if resp.status_code == 429:
-            self.set_cooldown(60.0)
-            raise RateLimitError(f"Antigravity rate limited (429): {resp.text}")
+            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.set_cooldown(retry_after)
+            raise RateLimitError(
+                f"Antigravity rate limited (429): {resp.text}",
+                status_code=429,
+                retry_after=retry_after,
+            )
 
         if resp.status_code != 200:
             logger.error(f"fetchAvailableModels failed: {resp.status_code} {resp.text}")
@@ -139,8 +177,13 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json={}, headers=headers)
 
         if resp.status_code == 429:
-            self.set_cooldown(60.0)
-            raise RateLimitError(f"Antigravity rate limited (429): {resp.text}")
+            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.set_cooldown(retry_after)
+            raise RateLimitError(
+                f"Antigravity rate limited (429): {resp.text}",
+                status_code=429,
+                retry_after=retry_after,
+            )
 
         if resp.status_code != 200:
             logger.error(
@@ -149,7 +192,36 @@ class AntigravityAdapter(BaseAdapter):
             raise ValueError(
                 f"retrieveUserQuotaSummary failed: {resp.status_code} {resp.text}"
             )
-        return resp.json()
+
+        data = resp.json()
+        groups = data.get("groups", [])
+        for grp in groups:
+            for bucket in grp.get("buckets", []):
+                rem = bucket.get("remainingFraction")
+                if rem is not None and rem <= self.min_quota_fraction:
+                    cooldown_secs = self.default_cooldown
+                    reset_time_str = bucket.get("resetTime")
+                    if reset_time_str:
+                        try:
+                            dt = datetime.datetime.fromisoformat(
+                                reset_time_str.replace("Z", "+00:00")
+                            )
+                            delta = (
+                                dt.timestamp()
+                                - datetime.datetime.now(
+                                    datetime.timezone.utc
+                                ).timestamp()
+                            )
+                            if delta > 0:
+                                cooldown_secs = min(delta, 86400.0)
+                        except Exception:
+                            pass
+                    self.set_cooldown(cooldown_secs)
+                    logger.warning(
+                        f"Antigravity quota bucket '{bucket.get('displayName', bucket.get('bucketId'))}' exhausted "
+                        f"({rem * 100:.1f}% remaining). Placed in cooldown for {cooldown_secs:.1f}s."
+                    )
+        return data
 
     async def stream_generate_content(
         self,
@@ -188,9 +260,14 @@ class AntigravityAdapter(BaseAdapter):
                     "POST", url, json=payload, headers=headers
                 ) as retry_resp:
                     if retry_resp.status_code == 429:
-                        self.set_cooldown(60.0)
+                        retry_after = _extract_retry_after(
+                            retry_resp, self.default_cooldown
+                        )
+                        self.set_cooldown(retry_after)
                         raise RateLimitError(
-                            f"Antigravity rate limited (429): {await retry_resp.aread()}"
+                            f"Antigravity rate limited (429): {await retry_resp.aread()}",
+                            status_code=429,
+                            retry_after=retry_after,
                         )
                     if retry_resp.status_code != 200:
                         err_body = await retry_resp.aread()
@@ -217,10 +294,13 @@ class AntigravityAdapter(BaseAdapter):
                 return
 
             if resp.status_code == 429:
-                self.set_cooldown(60.0)
+                retry_after = _extract_retry_after(resp, self.default_cooldown)
+                self.set_cooldown(retry_after)
                 err_body = await resp.aread()
                 raise RateLimitError(
-                    f"Antigravity rate limited (429): {err_body.decode('utf-8', errors='replace')}"
+                    f"Antigravity rate limited (429): {err_body.decode('utf-8', errors='replace')}",
+                    status_code=429,
+                    retry_after=retry_after,
                 )
 
             if resp.status_code != 200:
@@ -387,9 +467,12 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            self.set_cooldown(60.0)
+            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            self.set_cooldown(retry_after)
             raise RateLimitError(
-                f"Antigravity embedding rate limited (429): {resp.text}"
+                f"Antigravity embedding rate limited (429): {resp.text}",
+                status_code=429,
+                retry_after=retry_after,
             )
 
         if resp.status_code != 200:
