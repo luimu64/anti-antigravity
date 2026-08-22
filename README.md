@@ -1,23 +1,5 @@
 # Google Gate
 
-<p align="center">
-  <img src="https://img.shields.io/badge/OpenAI_API-Drop--in_Compatible-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI Compatible" />
-  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python Version" />
-  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Ready" />
-  <img src="https://img.shields.io/badge/License-MIT-brightgreen?style=for-the-badge" alt="License" />
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Google_OAuth-PKCE_Auto--Refresh-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Google OAuth" />
-  <img src="https://img.shields.io/badge/Thinking_Tokens-Gemini_3.7_%7C_Claude_Opus-8A2BE2?style=for-the-badge&logo=anthropic&logoColor=white" alt="Reasoning Support" />
-  <img src="https://img.shields.io/badge/Prompt_Caching-Supported-FF6F00?style=for-the-badge&logo=lightning&logoColor=white" alt="Prompt Caching" />
-  <img src="https://img.shields.io/badge/Tests-Passing-2ea44f?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests Passing" />
-  <img src="https://img.shields.io/badge/PRs-Welcome-blueviolet?style=for-the-badge&logo=github" alt="PRs Welcome" />
-</p>
-
----
-
 A lightweight, high-performance API gateway that translates **Google AI backends** (Antigravity CLI OAuth backend, Gemini AI Studio API, and Gemini Web session cookies) into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
 
 Supports all **Google and partner models** (Gemini 3.7 Flash with reasoning, Claude Sonnet 4.6, Claude Opus 4.6 Thinking, Gemini 3.1 Pro, GPT-OSS 120B), multi-turn conversations, tool/function calling, multimodal input, real-time Server-Sent Events (SSE) streaming, Google OAuth 2.0 PKCE authentication, and dedicated **Bridge API Key Management & Enforcement**.
@@ -63,33 +45,24 @@ Supports all **Google and partner models** (Gemini 3.7 Flash with reasoning, Cla
 
 ---
 
-## Web Dashboard
-
-The built-in interactive web dashboard provides real-time connection status, quota monitoring, Google OAuth token management, and Bridge API key generation/enforcement:
-
-| Authenticated Dashboard | Login / Logged Out View |
-| :---: | :---: |
-| ![Authenticated Dashboard](img/logged-in.png) | ![Logged Out Dashboard](img/logged-out.png) |
-
----
-
 ## Supported Models & Aliases
 
-| Model Name | Internal Target | Features |
+| Model ID / Alias | Backend Target | Capabilities / Details |
 |---|---|---|
-| `gemini-3.7-flash-high` | Gemini 3.7 Flash (High) | Thinking/Reasoning, Vision, High Speed, 1M Context |
-| `gemini-3.7-flash-medium` | Gemini 3.7 Flash (Medium) | Balanced Reasoning, Vision |
-| `gemini-3.7-flash-low` | Gemini 3.7 Flash (Low) | Fast Thinking, Vision |
-| `claude-sonnet-4-6` | Claude Sonnet 4.6 (Thinking) | Anthropic Sonnet, Code & Reasoning |
-| `claude-opus-4-6-thinking` | Claude Opus 4.6 (Thinking) | Anthropic Opus, Deep Reasoning |
-| `gemini-3.1-pro-high` | Gemini 3.1 Pro (High) | Advanced Pro tier model |
-| `gemini-3.6-flash-high` | Gemini 3.6 Flash (High) | Ultra-fast Flash model |
-| `gpt-oss-120b-medium` | GPT-OSS 120B | 120B Open Model |
-| `gpt-4o` *(Alias)* | `gemini-3.7-flash-high` | Standard OpenAI drop-in alias |
-| `gpt-4o-mini` *(Alias)* | `gemini-3.6-flash-high` | Fast OpenAI drop-in alias |
-| `claude-3-7-sonnet` *(Alias)* | `claude-sonnet-4-6` | Claude drop-in alias |
-| `claude-3-opus` *(Alias)* | `claude-opus-4-6-thinking` | Claude Opus drop-in alias |
-| `o1` / `o3-mini` *(Aliases)* | `gemini-3.7-flash-high` | Reasoning drop-in alias |
+| `gemini-3.7-flash` | Gemini 3.7 Flash | Reasoning / Thinking, Vision, Tool Calling, 1M Context |
+| `gemini-3.6-flash` | Gemini 3.6 Flash | Fast Flash reasoning tier |
+| `gemini-3.5-flash` | Gemini 3.5 Flash | High-speed agent model |
+| `gemini-3.1-pro` | Gemini 3.1 Pro | Advanced Pro tier model, 2M Context |
+| `gemini-2.5-pro` | Gemini 2.5 Pro | Advanced reasoning and analysis |
+| `gemini-2.5-flash` | Gemini 2.5 Flash | Standard flash model |
+| `claude-3-7-sonnet` / `claude-sonnet-4-6` | Claude Sonnet 4.6 (Thinking) | Anthropic Sonnet, Code & Reasoning |
+| `claude-3-opus` / `claude-opus-4-6-thinking` | Claude Opus 4.6 (Thinking) | Anthropic Opus, Deep Reasoning |
+| `gpt-oss-120b` | GPT-OSS 120B | 120B Open Model |
+| `gpt-4o` *(Alias)* | `gemini-3.7-flash` | Standard OpenAI drop-in alias |
+| `gpt-4o-mini` *(Alias)* | `gemini-3.6-flash` | Fast OpenAI drop-in alias |
+| `o1` / `o3-mini` *(Aliases)* | `gemini-3.7-flash` / `claude-opus` | Reasoning drop-in aliases |
+| `vision` *(Alias)* | `gemini-3.7-flash-image` | Multimodal / Vision alias |
+| `text-embedding-004` / `text-embedding-3-*` | Text Embedding 004 | Text Embeddings |
 
 ---
 
