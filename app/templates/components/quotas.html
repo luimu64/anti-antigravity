@@ -33,18 +33,22 @@
 
       let html = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">';
       groups.forEach(g => {
-        const frac = g.fraction_used != null ? g.fraction_used : 0;
-        const pct = Math.round(frac * 100);
+        const remainingFrac = g.remaining_fraction != null
+          ? g.remaining_fraction
+          : (g.fraction_remaining != null
+            ? g.fraction_remaining
+            : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0));
+        const pct = Math.max(0, Math.min(100, Math.round(remainingFrac * 100)));
         const resetSecs = (g.reset_time_seconds != null && g.reset_time_seconds >= 0)
           ? `${Math.round(g.reset_time_seconds)}s`
           : 'N/A';
         
         let progressColor = 'progress-primary';
         let badgeColor = 'badge-ghost';
-        if (pct >= 90) {
+        if (pct <= 10) {
           progressColor = 'progress-error';
           badgeColor = 'badge-error';
-        } else if (pct >= 70) {
+        } else if (pct <= 30) {
           progressColor = 'progress-warning';
           badgeColor = 'badge-warning';
         }
@@ -53,7 +57,7 @@
           <div class="card bg-base-100 p-4 border border-base-300 rounded-box shadow-sm">
             <div class="flex justify-between items-center mb-1">
               <strong class="text-sm">${escapeHtml(g.display_name)}</strong>
-              <span class="badge badge-sm ${badgeColor}">${pct}% used</span>
+              <span class="badge badge-sm ${badgeColor}">${pct}% available</span>
             </div>
             <progress class="progress ${progressColor} w-full mb-2" value="${pct}" max="100"></progress>
             <div class="flex justify-between text-xs text-base-content/70">

@@ -325,12 +325,52 @@ def transform_model_catalog(
     }
 
 
+def _compute_remaining_fraction(bucket: dict[str, Any]) -> float:
+    """Compute remaining_fraction bounded between 0.0 and 1.0 from bucket fields."""
+    # 1. remainingFraction / remaining_fraction / fraction_remaining
+    for key in ("remainingFraction", "remaining_fraction", "fraction_remaining", "remaining"):
+        val = bucket.get(key)
+        if val is not None:
+            try:
+                return max(0.0, min(1.0, round(float(val), 4)))
+            except (ValueError, TypeError):
+                pass
+
+    # 2. fraction_used / fractionUsed -> remaining = 1.0 - fraction_used
+    for key in ("fraction_used", "fractionUsed"):
+        val = bucket.get(key)
+        if val is not None:
+            try:
+                return max(0.0, min(1.0, round(1.0 - float(val), 4)))
+            except (ValueError, TypeError):
+                pass
+
+    # 3. used & total/quota/limit -> remaining = 1.0 - (used / total)
+    used = bucket.get("used")
+    total = bucket.get("quota") or bucket.get("total") or bucket.get("limit")
+    if used is not None and total is not None:
+        try:
+            used_val = float(used)
+            total_val = float(total)
+            if total_val > 0:
+                frac_used = used_val / total_val
+                return max(0.0, min(1.0, round(1.0 - frac_used, 4)))
+        except (ValueError, TypeError):
+            pass
+
+    return 1.0
+
+
 def _compute_fraction_used(bucket: dict[str, Any]) -> float:
     """Compute fraction_used bounded between 0.0 and 1.0 from bucket fields."""
     # 1. remainingFraction / remaining_fraction -> fraction_used = 1.0 - remainingFraction
     rem = bucket.get("remainingFraction")
     if rem is None:
         rem = bucket.get("remaining_fraction")
+    if rem is None:
+        rem = bucket.get("fraction_remaining")
+    if rem is None:
+        rem = bucket.get("remaining")
     if rem is not None:
         try:
             val = 1.0 - float(rem)
@@ -398,6 +438,7 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
     Transform and normalize upstream Antigravity quota responses into the
     structure expected by the dashboard UI:
       fraction_used (float, 0.0 - 1.0)
+      remaining_fraction (float, 0.0 - 1.0)
       reset_time_seconds (float | None)
       display_name (str)
       model_id (str)
@@ -421,6 +462,8 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                     "displayName",
                     "display_name",
                     "remainingFraction",
+                    "remaining_fraction",
+                    "fraction_remaining",
                     "fraction_used",
                     "quota",
                     "buckets",
@@ -462,6 +505,7 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                     or ""
                 )
                 fraction_used = _compute_fraction_used(bucket)
+                remaining_fraction = _compute_remaining_fraction(bucket)
                 reset_time_seconds = _parse_reset_time_seconds(
                     bucket.get("resetTime")
                     or bucket.get("reset_time")
@@ -472,6 +516,8 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                     {
                         "display_name": display_name,
                         "fraction_used": fraction_used,
+                        "remaining_fraction": remaining_fraction,
+                        "fraction_remaining": remaining_fraction,
                         "reset_time_seconds": reset_time_seconds,
                         "model_id": model_id,
                     }
@@ -486,6 +532,7 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
             )
             model_id = group.get("modelId") or group.get("model_id") or group_id
             fraction_used = _compute_fraction_used(group)
+            remaining_fraction = _compute_remaining_fraction(group)
             reset_time_seconds = _parse_reset_time_seconds(
                 group.get("resetTime")
                 or group.get("reset_time")
@@ -496,6 +543,8 @@ def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
                 {
                     "display_name": display_name,
                     "fraction_used": fraction_used,
+                    "remaining_fraction": remaining_fraction,
+                    "fraction_remaining": remaining_fraction,
                     "reset_time_seconds": reset_time_seconds,
                     "model_id": model_id,
                 }

@@ -128,12 +128,14 @@ async def test_quotas_endpoint():
             # Bucket 1
             assert groups[0]["display_name"] == "Weekly Limit"
             assert pytest.approx(groups[0]["fraction_used"], 0.001) == 0.15
+            assert pytest.approx(groups[0]["remaining_fraction"], 0.001) == 0.85
             assert groups[0]["reset_time_seconds"] > 0
             assert groups[0]["model_id"] == "antigravity_general"
 
             # Bucket 2
             assert groups[1]["display_name"] == "5-Hour Burst Limit"
             assert pytest.approx(groups[1]["fraction_used"], 0.001) == 0.02
+            assert pytest.approx(groups[1]["remaining_fraction"], 0.001) == 0.98
             assert groups[1]["reset_time_seconds"] > 0
             assert groups[1]["model_id"] == "antigravity_general"
 
