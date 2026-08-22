@@ -11,7 +11,7 @@ from app.auth import auth_manager
 from app.client import client
 from app.config import SERVER_PORT
 from app.keys import api_key_manager
-from app.transformer import transform_model_catalog
+from app.transformer import transform_model_catalog, transform_quota_summary
 
 logger = logging.getLogger("agy_to_api.dashboard")
 router = APIRouter(tags=["Dashboard"])
@@ -212,7 +212,8 @@ async def get_quotas():
     """
     try:
         data = await client.retrieve_user_quota_summary()
-        return JSONResponse(content=data)
+        normalized = transform_quota_summary(data)
+        return JSONResponse(content=normalized)
     except Exception as e:
         logger.warning(f"Failed to fetch quotas: {e}")
         return JSONResponse(status_code=500, content={"error": str(e), "groups": []})

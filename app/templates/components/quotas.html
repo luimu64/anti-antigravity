@@ -35,7 +35,9 @@
       groups.forEach(g => {
         const frac = g.fraction_used != null ? g.fraction_used : 0;
         const pct = Math.round(frac * 100);
-        const resetSecs = g.reset_time_seconds ? `${Math.round(g.reset_time_seconds)}s` : 'N/A';
+        const resetSecs = (g.reset_time_seconds != null && g.reset_time_seconds >= 0)
+          ? `${Math.round(g.reset_time_seconds)}s`
+          : 'N/A';
         
         let progressColor = 'progress-primary';
         let badgeColor = 'badge-ghost';

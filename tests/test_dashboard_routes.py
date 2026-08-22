@@ -90,17 +90,52 @@ async def test_api_keys_enforcement_toggle():
 @pytest.mark.asyncio
 async def test_quotas_endpoint():
     transport = httpx.ASGITransport(app=app)
-    mock_quotas = {"groups": [{"name": "Gemini 3.7 Pro", "quota": 100, "used": 42}]}
+    mock_upstream_quotas = {
+        "groups": [
+            {
+                "groupId": "antigravity_general",
+                "buckets": [
+                    {
+                        "bucketId": "weekly",
+                        "displayName": "Weekly Limit",
+                        "remainingFraction": 0.85,
+                        "resetTime": "2030-01-01T00:00:00Z",
+                    },
+                    {
+                        "bucketId": "5hr",
+                        "displayName": "5-Hour Burst Limit",
+                        "remainingFraction": 0.98,
+                        "resetTime": "2030-01-01T05:00:00Z",
+                    },
+                ],
+            }
+        ]
+    }
     with patch.object(
         client,
         "retrieve_user_quota_summary",
         new_callable=AsyncMock,
-        return_value=mock_quotas,
+        return_value=mock_upstream_quotas,
     ):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             resp = await ac.get("/api/quotas")
             assert resp.status_code == 200
-            assert resp.json()["groups"][0]["name"] == "Gemini 3.7 Pro"
+            data = resp.json()
+            assert "groups" in data
+            groups = data["groups"]
+            assert len(groups) == 2
+
+            # Bucket 1
+            assert groups[0]["display_name"] == "Weekly Limit"
+            assert pytest.approx(groups[0]["fraction_used"], 0.001) == 0.15
+            assert groups[0]["reset_time_seconds"] > 0
+            assert groups[0]["model_id"] == "antigravity_general"
+
+            # Bucket 2
+            assert groups[1]["display_name"] == "5-Hour Burst Limit"
+            assert pytest.approx(groups[1]["fraction_used"], 0.001) == 0.02
+            assert groups[1]["reset_time_seconds"] > 0
+            assert groups[1]["model_id"] == "antigravity_general"
 
     # Quota endpoint failure -> 500 JSON
     with patch.object(

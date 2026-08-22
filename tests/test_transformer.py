@@ -2,6 +2,7 @@ from app.transformer import (
     derive_base_model_id,
     derive_base_model_name,
     transform_model_catalog,
+    transform_quota_summary,
 )
 
 
@@ -209,3 +210,98 @@ def test_lite_models_visible_and_experimental_models_hidden():
         m for m in gemini_models if "exp" in m["id"].lower() and "flash" in m["id"]
     )
     assert g20_flash_exp["hidden"] is True
+
+
+def test_transform_quota_summary_upstream_antigravity():
+    raw_data = {
+        "groups": [
+            {
+                "groupId": "antigravity_general",
+                "buckets": [
+                    {
+                        "bucketId": "weekly",
+                        "displayName": "Weekly Limit",
+                        "remainingFraction": 0.85,
+                        "resetTime": "2030-08-24T00:00:00Z",
+                    },
+                    {
+                        "bucketId": "5hr",
+                        "displayName": "5-Hour Burst Limit",
+                        "remainingFraction": 0.98,
+                        "resetTime": "2030-08-17T21:00:00Z",
+                    },
+                ],
+            }
+        ]
+    }
+
+    result = transform_quota_summary(raw_data)
+    assert "groups" in result
+    items = result["groups"]
+    assert len(items) == 2
+
+    assert items[0]["display_name"] == "Weekly Limit"
+    assert round(items[0]["fraction_used"], 2) == 0.15
+    assert items[0]["reset_time_seconds"] > 0
+    assert items[0]["model_id"] == "antigravity_general"
+
+    assert items[1]["display_name"] == "5-Hour Burst Limit"
+    assert round(items[1]["fraction_used"], 2) == 0.02
+    assert items[1]["reset_time_seconds"] > 0
+    assert items[1]["model_id"] == "antigravity_general"
+
+
+def test_transform_quota_summary_edge_cases():
+    # 1. Missing optional fields
+    raw = {
+        "groups": [
+            {
+                "buckets": [
+                    {
+                        "remainingFraction": 0.5,
+                    }
+                ]
+            }
+        ]
+    }
+    res = transform_quota_summary(raw)
+    assert len(res["groups"]) == 1
+    item = res["groups"][0]
+    assert item["display_name"] == "Unknown Quota"
+    assert item["fraction_used"] == 0.5
+    assert item["reset_time_seconds"] is None
+    assert item["model_id"] == ""
+
+    # 2. Clamped fraction_used
+    raw_clamped = {
+        "groups": [
+            {"buckets": [{"remainingFraction": -0.5}]},
+            {"buckets": [{"remainingFraction": 1.5}]},
+        ]
+    }
+    res_clamped = transform_quota_summary(raw_clamped)
+    assert res_clamped["groups"][0]["fraction_used"] == 1.0
+    assert res_clamped["groups"][1]["fraction_used"] == 0.0
+
+    # 3. Numeric reset_time_seconds and direct fraction_used
+    raw_direct = {
+        "groups": [
+            {
+                "displayName": "Direct Item",
+                "fraction_used": 0.42,
+                "reset_time_seconds": 120.0,
+                "model_id": "test-model",
+            }
+        ]
+    }
+    res_direct = transform_quota_summary(raw_direct)
+    assert len(res_direct["groups"]) == 1
+    assert res_direct["groups"][0]["display_name"] == "Direct Item"
+    assert res_direct["groups"][0]["fraction_used"] == 0.42
+    assert res_direct["groups"][0]["reset_time_seconds"] == 120.0
+    assert res_direct["groups"][0]["model_id"] == "test-model"
+
+    # 4. Invalid input types
+    assert transform_quota_summary(None) == {"groups": []}
+    assert transform_quota_summary("invalid") == {"groups": []}
+    assert transform_quota_summary({}) == {"groups": []}

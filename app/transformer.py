@@ -5,6 +5,7 @@ partitioning into Gemini vs Non-Google models, and separate category sorting.
 """
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from app.config import CANONICAL_MODEL_MAP
@@ -322,3 +323,182 @@ def transform_model_catalog(
         "the_rest": non_google_models,
         "non_google_models": non_google_models,
     }
+
+
+def _compute_fraction_used(bucket: dict[str, Any]) -> float:
+    """Compute fraction_used bounded between 0.0 and 1.0 from bucket fields."""
+    # 1. remainingFraction / remaining_fraction -> fraction_used = 1.0 - remainingFraction
+    rem = bucket.get("remainingFraction")
+    if rem is None:
+        rem = bucket.get("remaining_fraction")
+    if rem is not None:
+        try:
+            val = 1.0 - float(rem)
+            return max(0.0, min(1.0, round(val, 4)))
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Direct fraction_used / fractionUsed
+    frac = bucket.get("fraction_used")
+    if frac is None:
+        frac = bucket.get("fractionUsed")
+    if frac is not None:
+        try:
+            return max(0.0, min(1.0, round(float(frac), 4)))
+        except (ValueError, TypeError):
+            pass
+
+    # 3. used & total/quota/limit
+    used = bucket.get("used")
+    total = bucket.get("quota") or bucket.get("total") or bucket.get("limit")
+    if used is not None and total is not None:
+        try:
+            used_val = float(used)
+            total_val = float(total)
+            if total_val > 0:
+                return max(0.0, min(1.0, round(used_val / total_val, 4)))
+        except (ValueError, TypeError):
+            pass
+
+    return 0.0
+
+
+def _parse_reset_time_seconds(reset_time_val: Any) -> float | None:
+    """Compute reset_time_seconds delta from ISO 8601 string or numeric seconds."""
+    if reset_time_val is None:
+        return None
+    if isinstance(reset_time_val, (int, float)):
+        return max(0.0, float(reset_time_val))
+    if isinstance(reset_time_val, str):
+        s = reset_time_val.strip()
+        if not s:
+            return None
+        # Numeric string
+        try:
+            return max(0.0, float(s))
+        except ValueError:
+            pass
+        # ISO timestamp string
+        try:
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            delta = (dt - now).total_seconds()
+            return max(0.0, round(delta, 1))
+        except Exception:
+            return None
+    return None
+
+
+def transform_quota_summary(raw_data: Any) -> dict[str, Any]:
+    """
+    Transform and normalize upstream Antigravity quota responses into the
+    structure expected by the dashboard UI:
+      fraction_used (float, 0.0 - 1.0)
+      reset_time_seconds (float | None)
+      display_name (str)
+      model_id (str)
+    """
+    if not isinstance(raw_data, (dict, list)):
+        return {"groups": []}
+
+    raw_groups: list[dict[str, Any]] = []
+    if isinstance(raw_data, list):
+        raw_groups = [g for g in raw_data if isinstance(g, dict)]
+    elif isinstance(raw_data, dict):
+        groups_field = raw_data.get("groups")
+        if isinstance(groups_field, list):
+            raw_groups = [g for g in groups_field if isinstance(g, dict)]
+        elif isinstance(raw_data.get("buckets"), list):
+            raw_groups = [{"buckets": raw_data["buckets"]}]
+        else:
+            if any(
+                k in raw_data
+                for k in (
+                    "displayName",
+                    "display_name",
+                    "remainingFraction",
+                    "fraction_used",
+                    "quota",
+                    "buckets",
+                )
+            ):
+                raw_groups = [raw_data]
+
+    normalized_items: list[dict[str, Any]] = []
+
+    for group in raw_groups:
+        buckets = group.get("buckets")
+        group_id = group.get("groupId") or group.get("group_id") or ""
+        group_name = (
+            group.get("displayName")
+            or group.get("display_name")
+            or group.get("name")
+            or ""
+        )
+        group_model_id = group.get("modelId") or group.get("model_id") or group_id
+
+        if isinstance(buckets, list) and buckets:
+            for bucket in buckets:
+                if not isinstance(bucket, dict):
+                    continue
+                display_name = (
+                    bucket.get("displayName")
+                    or bucket.get("display_name")
+                    or bucket.get("name")
+                    or bucket.get("bucketId")
+                    or group_name
+                    or group_id
+                    or "Unknown Quota"
+                )
+                model_id = (
+                    bucket.get("modelId")
+                    or bucket.get("model_id")
+                    or group_model_id
+                    or bucket.get("bucketId")
+                    or ""
+                )
+                fraction_used = _compute_fraction_used(bucket)
+                reset_time_seconds = _parse_reset_time_seconds(
+                    bucket.get("resetTime")
+                    or bucket.get("reset_time")
+                    or bucket.get("reset_time_seconds")
+                    or bucket.get("resetTimeSeconds")
+                )
+                normalized_items.append(
+                    {
+                        "display_name": display_name,
+                        "fraction_used": fraction_used,
+                        "reset_time_seconds": reset_time_seconds,
+                        "model_id": model_id,
+                    }
+                )
+        else:
+            display_name = (
+                group.get("displayName")
+                or group.get("display_name")
+                or group.get("name")
+                or group.get("groupId")
+                or "Unknown Quota"
+            )
+            model_id = group.get("modelId") or group.get("model_id") or group_id
+            fraction_used = _compute_fraction_used(group)
+            reset_time_seconds = _parse_reset_time_seconds(
+                group.get("resetTime")
+                or group.get("reset_time")
+                or group.get("reset_time_seconds")
+                or group.get("resetTimeSeconds")
+            )
+            normalized_items.append(
+                {
+                    "display_name": display_name,
+                    "fraction_used": fraction_used,
+                    "reset_time_seconds": reset_time_seconds,
+                    "model_id": model_id,
+                }
+            )
+
+    return {"groups": normalized_items}
