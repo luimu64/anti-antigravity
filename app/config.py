@@ -63,6 +63,7 @@ MODEL_ALIASES = {
     "gemini-3.7-flash-high": "gemini-3.7-flash-high",
     "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
     "gemini-3.7-flash-low": "gemini-3.7-flash-low",
+    "gemini-3.7-flash-image": "gemini-3.7-flash-image",
     # Gemini 3.6
     "gemini-3.6-flash": "gemini-3.6-flash-high",
     "gemini-3.6-flash-high": "gemini-3.6-flash-high",
@@ -92,6 +93,8 @@ MODEL_ALIASES = {
     "o3-mini": "gemini-3.7-flash-high",
     "gpt-oss-120b": "gpt-oss-120b-medium",
     "gpt-oss-120b-medium": "gpt-oss-120b-medium",
+    # Vision alias
+    "vision": "gemini-3.7-flash-image",
     # Embedding aliases
     "text-embedding-3-small": "text-embedding-004",
     "text-embedding-3-large": "text-embedding-004",

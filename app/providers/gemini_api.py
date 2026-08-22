@@ -43,6 +43,8 @@ class GeminiApiAdapter(BaseAdapter):
             "gemini-3.7-flash-high": "gemini-2.5-flash",
             "gemini-3.7-flash-medium": "gemini-2.5-flash",
             "gemini-3.7-flash-low": "gemini-2.5-flash",
+            "gemini-3.7-flash-image": "gemini-2.5-flash",
+            "vision": "gemini-2.5-flash",
             "gemini-3.6-flash-high": "gemini-2.5-flash",
             "gemini-3.6-flash-medium": "gemini-2.5-flash",
             "gemini-3.1-pro-high": "gemini-2.5-pro",

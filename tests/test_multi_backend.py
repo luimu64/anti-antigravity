@@ -671,3 +671,24 @@ async def test_gemini_web_adapter_prompt_and_generation():
     assert result["thoughts"] == "Thinking step 1"
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["thoughts"] == "Thinking step 1"
+
+
+def test_vision_model_mapping_across_all_adapters():
+    """Verify GeminiApiAdapter and GeminiWebAdapter map vision and -image models to latest Flash targets."""
+    api_adapter = GeminiApiAdapter(api_key="test-key")
+    assert api_adapter._normalize_model_name("vision") == "gemini-2.5-flash"
+    assert (
+        api_adapter._normalize_model_name("gemini-3.7-flash-image")
+        == "gemini-2.5-flash"
+    )
+
+    web_adapter = GeminiWebAdapter(psid="test-psid")
+    hex_id_v, model_num_v, thinking_v = web_adapter._resolve_model_metadata("vision")
+    assert hex_id_v == "2c8a"
+    assert model_num_v == 5
+
+    hex_id_img, model_num_img, thinking_img = web_adapter._resolve_model_metadata(
+        "gemini-3.7-flash-image"
+    )
+    assert hex_id_img == "2c8a"
+    assert model_num_img == 5

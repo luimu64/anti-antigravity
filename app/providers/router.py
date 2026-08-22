@@ -542,7 +542,8 @@ class MultiBackendRouter(BaseAdapter):
                         k in canon_id.lower() for k in ("gemini", "claude", "gpt")
                     )
                     supports_vision = not is_embedding and any(
-                        k in canon_id.lower() for k in ("gemini", "claude", "gpt-4")
+                        k in canon_id.lower()
+                        for k in ("gemini", "claude", "gpt-4", "vision", "image")
                     )
 
                     capabilities = []
@@ -618,7 +619,8 @@ class MultiBackendRouter(BaseAdapter):
                     k in canon_id.lower() for k in ("gemini", "claude", "gpt")
                 )
                 supports_vision = not is_embedding and any(
-                    k in canon_id.lower() for k in ("gemini", "claude", "gpt-4")
+                    k in canon_id.lower()
+                    for k in ("gemini", "claude", "gpt-4", "vision", "image")
                 )
                 capabilities = []
                 if supports_thinking:

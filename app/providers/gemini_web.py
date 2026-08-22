@@ -350,6 +350,8 @@ class GeminiWebAdapter(BaseAdapter):
         """
         clean_model = model.lower().replace("models/", "")
 
+        if "vision" in clean_model or "image" in clean_model:
+            return ("2c8a", 5, 2)
         if "3.7" in clean_model:
             return ("2c8a", 5, 2)
         if "3.5" in clean_model or "lite" in clean_model:

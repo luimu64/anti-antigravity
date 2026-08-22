@@ -69,6 +69,9 @@ async def test_models_endpoint():
             model_ids = [m["id"] for m in data["data"]]
             assert "gemini-3.7-flash-high" in model_ids
             assert "gpt-4o" in model_ids
+            assert "vision" in model_ids
+            vision_entry = next(m for m in data["data"] if m["id"] == "vision")
+            assert vision_entry["supports_vision"] is True
 
             # Test /models (unprefixed alias)
             response_unpref = await ac.get(

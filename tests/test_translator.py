@@ -16,6 +16,11 @@ def test_resolve_model():
         OpenAITranslator.resolve_model("gemini-3.7-flash-high")
         == "gemini-3.7-flash-high"
     )
+    assert OpenAITranslator.resolve_model("vision") == "gemini-3.7-flash-image"
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.7-flash-image")
+        == "gemini-3.7-flash-image"
+    )
 
 
 def test_openai_to_internal_simple_messages():
@@ -498,3 +503,86 @@ async def test_streaming_text_chunks():
     assert first_chunk["choices"][0]["finish_reason"] is None
     finish_chunk = json.loads(chunks[1].replace("data: ", ""))
     assert finish_chunk["choices"][0]["finish_reason"] == "stop"
+
+
+def test_vision_alias_and_multimodal_payload_translation():
+    """Verify vision alias resolves to gemini-3.7-flash-image while standard models with image payloads are NOT rewritten."""
+    # 1. Vision alias request
+    vision_req = ChatCompletionRequest(
+        model="vision",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                        },
+                    },
+                ],
+            }
+        ],
+    )
+    internal_model, contents, sys_inst, gen_cfg, tools = (
+        OpenAITranslator.openai_to_internal_request(vision_req)
+    )
+    assert internal_model == "gemini-3.7-flash-image"
+    assert len(contents) == 1
+    assert contents[0]["role"] == "user"
+    assert len(contents[0]["parts"]) == 2
+    assert contents[0]["parts"][0] == {"text": "What is in this image?"}
+    assert contents[0]["parts"][1]["inlineData"]["mimeType"] == "image/png"
+    assert (
+        contents[0]["parts"][1]["inlineData"]["data"]
+        == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+
+    # 2. Standard model request containing image payloads must NOT be rewritten
+    gpt4o_req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/"
+                        },
+                    },
+                ],
+            }
+        ],
+    )
+    internal_model_4o, contents_4o, _, _, _ = (
+        OpenAITranslator.openai_to_internal_request(gpt4o_req)
+    )
+    assert internal_model_4o == "gemini-3.7-flash-high"
+    assert len(contents_4o[0]["parts"]) == 2
+    assert contents_4o[0]["parts"][1]["inlineData"]["mimeType"] == "image/jpeg"
+
+    gemini_req = ChatCompletionRequest(
+        model="gemini-3.7-flash",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze"},
+                    {
+                        "type": "image_url",
+                        "image_url": "https://example.com/photo.jpg",
+                    },
+                ],
+            }
+        ],
+    )
+    internal_model_gemini, contents_gemini, _, _, _ = (
+        OpenAITranslator.openai_to_internal_request(gemini_req)
+    )
+    assert internal_model_gemini == "gemini-3.7-flash-high"
+    assert contents_gemini[0]["parts"][1] == {
+        "text": "[Image URL: https://example.com/photo.jpg]"
+    }

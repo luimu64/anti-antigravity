@@ -94,6 +94,12 @@ async def list_models():
     for alias, internal_target in MODEL_ALIASES.items():
         if alias not in seen_ids:
             seen_ids.add(alias)
+            supports_vision = (
+                alias == "vision"
+                or "image" in alias
+                or "image" in internal_target
+                or any(k in alias for k in ("gemini", "gpt-4", "claude"))
+            )
             model_list.append(
                 {
                     "id": alias,
@@ -104,6 +110,7 @@ async def list_models():
                     "root": internal_target,
                     "parent": None,
                     "display_name": f"{alias} (-> {internal_target})",
+                    "supports_vision": supports_vision,
                 }
             )
 
