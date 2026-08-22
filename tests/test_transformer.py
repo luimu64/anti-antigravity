@@ -320,7 +320,7 @@ def test_transform_quota_summary_edge_cases():
     assert res_full["groups"][0]["fraction_used"] == 0.0
     assert res_full["groups"][0]["remaining_fraction"] == 1.0
 
-    # 4. Invalid input types
+    # 5. Invalid input types
     assert transform_quota_summary(None) == {"groups": []}
     assert transform_quota_summary("invalid") == {"groups": []}
     assert transform_quota_summary({}) == {"groups": []}
