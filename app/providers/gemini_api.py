@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -205,23 +206,25 @@ class GeminiApiAdapter(BaseAdapter):
         if self._cached_models and clean in self._cached_models.get("models", {}):
             return clean
 
+        # Strip reasoning-tier suffixes so bare/tiered names collapse to the
+        # same base model (e.g. gemini-3.7-flash-high -> gemini-3.7-flash)
+        # before alias lookup, then map internal names to real API models.
+        base = re.sub(r"-(high|medium|low|thinking)$", "", clean)
+
         mapping = {
-            "gemini-3.7-flash-high": "gemini-2.0-flash",
-            "gemini-3.7-flash-medium": "gemini-2.0-flash",
-            "gemini-3.7-flash-low": "gemini-2.0-flash",
+            "gemini-3.7-flash": "gemini-2.0-flash",
             "gemini-3.7-flash-image": "gemini-2.0-flash",
-            "vision": "gemini-2.0-flash",
-            "gemini-3.6-flash-high": "gemini-2.0-flash",
-            "gemini-3.6-flash-medium": "gemini-2.0-flash",
-            "gemini-3.1-pro-high": "gemini-1.5-pro",
+            "gemini-3.6-flash": "gemini-2.0-flash",
+            "gemini-3.5-flash": "gemini-2.0-flash",
             "gemini-3-flash-agent": "gemini-2.0-flash",
+            "vision": "gemini-2.0-flash",
             "gpt-4o": "gemini-2.0-flash",
             "gpt-4o-mini": "gemini-2.0-flash",
+            "gpt-oss-120b": "gemini-2.0-flash",
             "claude-sonnet-4-6": "gemini-1.5-pro",
             "claude-opus-4-6-thinking": "gemini-1.5-pro",
-            "gpt-oss-120b-medium": "gemini-2.0-flash",
         }
-        return mapping.get(clean, clean)
+        return mapping.get(base, base)
 
     def _get_headers(self) -> dict[str, str]:
         return {

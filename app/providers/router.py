@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 import httpx
@@ -85,6 +85,10 @@ class MultiBackendRouter(BaseAdapter):
 
         self.routing_strategy = routing_strategy
         self._rr_counter = 0
+        # Name of the backend that actually served the last successful request,
+        # so callers (history, dashboard) can label requests accurately even
+        # when the router fell back from the preferred backend.
+        self.last_served_by: str | None = None
 
         # Backwards-compatibility attributes for direct AntigravityClient callers
         self.auth: OAuthManager = getattr(self.antigravity, "auth", auth_manager)
@@ -711,6 +715,7 @@ class MultiBackendRouter(BaseAdapter):
         system_instruction: dict[str, Any] | None = None,
         generation_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_backend_served: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Execute non-streaming content generation with automatic 429 fallback and capacity checking."""
         estimated_tokens = sum(
@@ -739,6 +744,9 @@ class MultiBackendRouter(BaseAdapter):
                 usage = res.get("usageMetadata", {})
                 tokens_used = usage.get("totalTokenCount") or estimated_tokens or 1
                 adapter.record_usage(tokens=tokens_used)
+                self.last_served_by = adapter.name
+                if on_backend_served:
+                    on_backend_served(adapter.name)
                 return res
             except Exception as e:
                 if self._is_rate_limit_exception(e):
@@ -781,6 +789,7 @@ class MultiBackendRouter(BaseAdapter):
         system_instruction: dict[str, Any] | None = None,
         generation_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_backend_served: Callable[[str], None] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream generated content with automatic fallback if initial connect fails with 429."""
         estimated_tokens = sum(
@@ -820,6 +829,11 @@ class MultiBackendRouter(BaseAdapter):
                     break
 
                 if success:
+                    # Backend accepted the request: attribute THIS request now,
+                    # so concurrent requests can't mislabel each other.
+                    self.last_served_by = adapter.name
+                    if on_backend_served:
+                        on_backend_served(adapter.name)
                     async for chunk in stream_gen:
                         if "usageMetadata" in chunk:
                             tokens_used = (
@@ -828,6 +842,7 @@ class MultiBackendRouter(BaseAdapter):
                             )
                         yield chunk
                     adapter.record_usage(tokens=tokens_used)
+                    self.last_served_by = adapter.name
                     return
 
             except Exception as e:
