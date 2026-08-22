@@ -431,3 +431,47 @@ Responses arrive as chunked JSON wrapped in `wrb.fr` / JSPB envelopes prefixed b
 | **Thinking Configuration** | `thinkingConfig.thinkingBudget` / `includeThoughts` | Header `525001261` level (`1` vs `2`) + payload `inner[17]` + `inner[80]` |
 | **Thinking Tokens** | SSE candidate `part.thought = true` | Candidate index `[37][0][0]` |
 | **Multimodal Uploads** | Inline base64 image/audio parts | Upload session via `upload_image` / file reference IDs in `inner[0]` |
+
+---
+
+## 8. Rate Limits, Quotas & Tier Constraints
+
+### 8.1 Gemini Developer API (`generativelanguage.googleapis.com`) Free Tier Limits
+The Google AI Studio / Gemini Developer API enforces hard per-project rate limits on the free tier. Quotas reset daily at midnight Pacific Time (00:00 PST).
+
+| Model | RPM (Req / Min) | TPM (Tokens / Min) | RPD (Req / Day) | Quota Status / Notes |
+|---|---|---|---|---|
+| **Gemini 3.7 Flash** | **5 RPM** | ~250,000 – 1,000,000 | ~1,000 – 1,500 | `quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier` (Limit: 5) |
+| **Gemini 3.6 Flash** | **5 RPM** | ~250,000 – 1,000,000 | ~1,000 – 1,500 | `limit: 5` |
+| **Gemini 3.5 Flash** | **5 RPM** | ~250,000 – 1,000,000 | ~1,000 – 1,500 | `limit: 5` |
+| **Gemini 3.1 Flash-Lite** | **15 RPM** | ~1,000,000 | ~1,500 | `limit: 15` |
+| **Gemini 3.1 Pro / Pro Latest** | **0 RPM** | **0 TPM** | **0 RPD** | **Disabled on Free Tier** (`limit: 0` / `RESOURCE_EXHAUSTED` — requires paid billing / Tier 1+) |
+| **Gemini 2.5 Flash / Pro** | — | — | — | Deprecated / returns `404 NOT_FOUND` |
+
+*Exceeding free tier limits returns `429 RESOURCE_EXHAUSTED` with retry delay metrics in `google.rpc.RetryInfo`.*
+
+---
+
+### 8.2 Gemini Web Interface (`gemini.google.com`) Quota & Compute Architecture
+Unlike the developer API's rigid per-minute throttles, Gemini Web uses a **compute-based usage pool** evaluated across rolling time windows:
+
+- **5-Hour Rolling Burst Window**: Refreshes continuously every 5 hours.
+- **Weekly Account Ceiling**: Hard overall usage ceiling per billing cycle.
+- **Dynamic Compute Burn Weighting**:
+  - **`3.1 Pro` (`model_num: 3`)**: High compute burn rate (~10x–20x multiplier vs Flash).
+  - **Extended Thinking Mode (`thinking_level: 2`)**: Multiplies compute consumption by ~2x–5x due to reasoning token generation.
+  - **`3.7 Flash` & `3.5 Flash-Lite`**: Very low compute burn weight.
+
+#### Web Subscription Tiers & Allowances:
+| Plan / Policy | Context Window | 5-Hour Compute Limit | Pro Model Allowance (~approx.) | Flash Allowance |
+|---|---|---|---|---|
+| **Free / Standard** | 32k tokens | **1x (Baseline)** | ~5–10 prompts / 5 hrs | Standard generous pool |
+| **Google AI Plus** | 128k tokens | **2x Baseline** | ~20–30 prompts / 5 hrs | High throughput |
+| **Google AI Pro (`plus_policy`)** | **1,000,000 tokens (1M)** | **4x Baseline** | **~40–100 prompts / 5 hrs** | Effectively unlimited conversational use |
+| **Google AI Ultra** | **1,000,000 tokens (1M)** | **20x Baseline** | ~200–500 prompts / 5 hrs | Priority maximum throughput |
+
+#### Web Quota Exhaustion & Degradation Behavior:
+- **Graceful Fallback Floor**: When the 5-hour compute budget is depleted, the Web backend **does not return a hard 429 error**; instead, it temporarily downgrades subsequent prompts in that window to **`3.5 Flash-Lite`**.
+- **Automation / Anti-Bot Constraints**:
+  - **Session Token Expiration**: `__Secure-1PSIDTS` is a rolling timestamp cookie; failing to capture and update rotated cookies will cause auth expiration within hours.
+  - **Edge Rate Limiting**: Sustained high-frequency flood (>5–10 RPS continuously from a single IP) triggers Google Cloud Armor / BotGuard edge challenges (reCAPTCHA or HTTP 429/503).
