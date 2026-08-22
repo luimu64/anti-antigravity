@@ -103,9 +103,42 @@ async def update_backends(payload: UpdateBackendsRequest):
     """
     if hasattr(client, "update_config"):
         updates = payload.model_dump(exclude_unset=True, exclude_none=True)
-        updated_status = client.update_config(updates)
-        return {"status": "updated", "config": updated_status}
+        client.update_config(updates)
+
+        # Trigger background probes if credentials were updated
+        if payload.gemini_api_key and hasattr(client, "gemini_api"):
+            try:
+                await client.gemini_api.probe_plan(force_refresh=True)
+            except Exception as e:
+                logger.debug(f"Plan probe after config update failed: {e}")
+
+        if payload.gemini_web_psid and hasattr(client, "gemini_web"):
+            try:
+                await client.gemini_web.fetch_user_profile(force_refresh=True)
+            except Exception as e:
+                logger.debug(f"Web profile probe after config update failed: {e}")
+
+        return {"status": "updated", "config": client.get_status()}
     return {"status": "error", "message": "Router not available"}
+
+
+@router.post("/api/backends/{backend_id}/reset")
+@router.post("/api/providers/{backend_id}/reset")
+async def reset_backend(backend_id: str):
+    """
+    Wipe credentials, clear cached metadata, and disable a specific backend provider.
+    """
+    if hasattr(client, "reset_backend"):
+        try:
+            updated_status = client.reset_backend(backend_id)
+            return {
+                "status": "reset",
+                "backend": backend_id,
+                "config": updated_status,
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+    raise HTTPException(status_code=500, detail="Router not available")
 
 
 @router.post("/api/backends/{backend_id}/toggle")

@@ -224,6 +224,9 @@ class MultiBackendRouter(BaseAdapter):
 
         if "gemini_api_key" in updates and updates["gemini_api_key"] is not None:
             self.gemini_api.api_key = str(updates["gemini_api_key"]).strip()
+            self.gemini_api._plan_probed_at = 0.0
+            self.gemini_api.plan_tier = "Unknown"
+            self.gemini_api.is_valid_key = None
         if (
             "gemini_api_enabled" in updates
             and updates["gemini_api_enabled"] is not None
@@ -232,6 +235,8 @@ class MultiBackendRouter(BaseAdapter):
 
         if "gemini_web_psid" in updates and updates["gemini_web_psid"] is not None:
             self.gemini_web.psid = str(updates["gemini_web_psid"]).strip()
+            self.gemini_web._profile_fetched_at = 0.0
+            self.gemini_web.is_valid_session = None
         if "gemini_web_psidts" in updates and updates["gemini_web_psidts"] is not None:
             self.gemini_web.psidts = str(updates["gemini_web_psidts"]).strip()
         if (
@@ -254,6 +259,62 @@ class MultiBackendRouter(BaseAdapter):
         self.save_config()
         return self.get_status()
 
+    def _remove_from_credentials_file(self, keys: list[str]) -> None:
+        """Remove specific keys from credentials file without touching others."""
+        if not os.path.exists(CREDENTIALS_FILE):
+            return
+        try:
+            with open(CREDENTIALS_FILE) as f:
+                data = json.load(f)
+            for k in keys:
+                data.pop(k, None)
+            if data:
+                with open(CREDENTIALS_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+            else:
+                os.remove(CREDENTIALS_FILE)
+            logger.info(f"Removed keys {keys} from {CREDENTIALS_FILE}")
+        except Exception as e:
+            logger.error(f"Failed to update {CREDENTIALS_FILE}: {e}")
+
+    def reset_backend(self, backend_id: str) -> dict[str, Any]:
+        """
+        Wipes stored credentials for the specified provider from memory and credentials.json,
+        clears cached metadata, disables that backend, and leaves other backends untouched.
+        """
+        if backend_id == "gemini_api":
+            self.gemini_api.reset_credentials()
+            self._remove_from_credentials_file(["gemini_api_key", "gemini_api_enabled"])
+        elif backend_id == "gemini_web":
+            self.gemini_web.reset_credentials()
+            self._remove_from_credentials_file(
+                [
+                    "gemini_web_psid",
+                    "gemini_web_psidts",
+                    "gemini_web_sapisid",
+                    "gemini_web_enabled",
+                ]
+            )
+        elif backend_id == "antigravity":
+            self.antigravity.enabled = False
+            self.antigravity.auth.logout()
+            self._remove_from_credentials_file(
+                [
+                    "access_token",
+                    "refresh_token",
+                    "token_expiry",
+                    "user_email",
+                    "project_id",
+                    "tier_name",
+                    "id_token",
+                    "antigravity_enabled",
+                ]
+            )
+        else:
+            raise ValueError(f"Unknown backend '{backend_id}'")
+
+        return self.get_status()
+
     def get_status(self) -> dict[str, Any]:
         """Get status of all backends and routing configuration."""
 
@@ -263,6 +324,17 @@ class MultiBackendRouter(BaseAdapter):
             if len(s) > 10:
                 return f"{s[:6]}...{s[-4:]}"
             return "***"
+
+        g_api_valid = (
+            self.gemini_api.is_valid_key
+            if self.gemini_api.is_valid_key is not None
+            else self.gemini_api.is_configured()
+        )
+        g_web_valid = (
+            self.gemini_web.is_valid_session
+            if self.gemini_web.is_valid_session is not None
+            else self.gemini_web.is_configured()
+        )
 
         return {
             "routing_strategy": self.routing_strategy,
@@ -301,6 +373,13 @@ class MultiBackendRouter(BaseAdapter):
                     else {},
                     "has_api_key": bool(self.gemini_api.api_key),
                     "masked_key": mask_secret(self.gemini_api.api_key),
+                    "plan_tier": getattr(self.gemini_api, "plan_tier", "Unknown"),
+                    "valid": g_api_valid,
+                    "validity_status": "Valid"
+                    if g_api_valid
+                    else (
+                        "Invalid" if self.gemini_api.is_configured() else "Unconfigured"
+                    ),
                 },
                 "gemini_web": {
                     "id": "gemini_web",
@@ -317,6 +396,13 @@ class MultiBackendRouter(BaseAdapter):
                     "has_psid": bool(self.gemini_web.psid),
                     "has_psidts": bool(self.gemini_web.psidts),
                     "masked_psid": mask_secret(self.gemini_web.psid),
+                    "user_email": getattr(self.gemini_web, "user_email", None),
+                    "account_id": getattr(self.gemini_web, "account_id", None),
+                    "avatar_url": getattr(self.gemini_web, "avatar_url", None),
+                    "subscription_tier": getattr(
+                        self.gemini_web, "subscription_tier", None
+                    ),
+                    "valid": g_web_valid,
                 },
             },
         }

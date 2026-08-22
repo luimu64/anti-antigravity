@@ -103,12 +103,94 @@ class GeminiApiAdapter(BaseAdapter):
         )
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.base_url = base_url.rstrip("/")
+        self.plan_tier: str = "Unknown"
+        self.is_valid_key: bool | None = None
+        self._plan_probed_at: float = 0.0
         self._http_client: httpx.AsyncClient | None = None
         self._cached_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key.strip())
+
+    def reset_credentials(self) -> None:
+        """Clear API key, cached models, and plan metadata."""
+        self.api_key = ""
+        self.enabled = False
+        self.plan_tier = "Unknown"
+        self.is_valid_key = None
+        self._cached_models = None
+        self._models_fetched_at = 0.0
+        self._plan_probed_at = 0.0
+        self.clear_cooldown()
+        if hasattr(self, "rate_limiter"):
+            self.rate_limiter.reset()
+
+    async def probe_plan(self, force_refresh: bool = False) -> dict[str, Any]:
+        """
+        Probe Google AI Studio API key plan tier:
+        POST https://generativelanguage.googleapis.com/v1beta/cachedContents?key=<API_KEY>
+          - HTTP 400 FAILED_PRECONDITION -> Free
+          - HTTP 400 INVALID_ARGUMENT or HTTP 200 -> Pay-As-You-Go
+          - HTTP 400 API_KEY_INVALID -> Invalid
+          - Other / network error -> Fallback gracefully
+        """
+        if not self.is_configured():
+            self.plan_tier = "Unknown"
+            self.is_valid_key = False
+            return {"plan_tier": self.plan_tier, "valid": False}
+
+        now = time.time()
+        if (
+            not force_refresh
+            and self._plan_probed_at > 0
+            and (now - self._plan_probed_at < self.model_cache_ttl)
+        ):
+            return {
+                "plan_tier": self.plan_tier,
+                "valid": bool(
+                    self.is_valid_key if self.is_valid_key is not None else True
+                ),
+            }
+
+        url = f"{self.base_url}/cachedContents?key={self.api_key}"
+        http = self.get_http_client()
+        try:
+            resp = await http.post(url, json={}, headers=self._get_headers())
+            text = resp.text
+
+            if resp.status_code == 200:
+                self.plan_tier = "Pay-As-You-Go"
+                self.is_valid_key = True
+            elif resp.status_code == 400:
+                if "API_KEY_INVALID" in text or "API key not valid" in text:
+                    self.plan_tier = "Unknown"
+                    self.is_valid_key = False
+                elif "FAILED_PRECONDITION" in text:
+                    self.plan_tier = "Free"
+                    self.is_valid_key = True
+                elif "INVALID_ARGUMENT" in text:
+                    self.plan_tier = "Pay-As-You-Go"
+                    self.is_valid_key = True
+                else:
+                    self.plan_tier = "Unknown"
+                    self.is_valid_key = True
+            elif resp.status_code in (401, 403):
+                self.plan_tier = "Unknown"
+                self.is_valid_key = False
+            else:
+                self.plan_tier = "Unknown"
+                self.is_valid_key = True
+        except Exception as e:
+            logger.warning(f"Error probing Gemini API plan tier: {e}")
+            if self.is_valid_key is None:
+                self.is_valid_key = True
+
+        self._plan_probed_at = now
+        return {
+            "plan_tier": self.plan_tier,
+            "valid": bool(self.is_valid_key if self.is_valid_key is not None else True),
+        }
 
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -164,6 +246,13 @@ class GeminiApiAdapter(BaseAdapter):
             self._cached_models = {"models": FALLBACK_MODELS}
             self._models_fetched_at = now
             return self._cached_models
+
+        # Trigger plan probe if not yet probed
+        if self._plan_probed_at == 0 or force_refresh:
+            try:
+                await self.probe_plan(force_refresh=force_refresh)
+            except Exception as e:
+                logger.debug(f"Plan probe in fetch_available_models skipped: {e}")
 
         http = self.get_http_client()
         models_dict = {}

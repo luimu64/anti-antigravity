@@ -132,9 +132,175 @@ class GeminiWebAdapter(BaseAdapter):
         self._capacity_field: int = 12
         self._discovered_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
+        self.user_email: str | None = None
+        self.account_id: str | None = None
+        self.avatar_url: str | None = None
+        self.subscription_tier: str | None = None
+        self.is_valid_session: bool | None = None
+        self._profile_fetched_at: float = 0.0
 
     def is_configured(self) -> bool:
         return bool(self.psid and self.psid.strip())
+
+    def reset_credentials(self) -> None:
+        """Clear cookies, session state, discovered models, and profile metadata."""
+        self.psid = ""
+        self.psidts = ""
+        self.sapisid = ""
+        self.enabled = False
+        self.user_email = None
+        self.account_id = None
+        self.avatar_url = None
+        self.subscription_tier = None
+        self.is_valid_session = None
+        self._snlm0e_token = None
+        self._discovered_models = None
+        self._models_fetched_at = 0.0
+        self._profile_fetched_at = 0.0
+        self.clear_cooldown()
+        if hasattr(self, "rate_limiter"):
+            self.rate_limiter.reset()
+
+    async def fetch_user_profile(self, force_refresh: bool = False) -> dict[str, Any]:
+        """
+        Fetch user profile metadata:
+        1. Extract email (o6v9De), Gaia ID (S06Grb), and avatar URL (LVIXXb) from window.WIZ_global_data
+           on https://gemini.google.com/app (or fallback https://og.google.com/u/0/_/og/widget/account)
+        2. Extract subscription tier from https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota
+        """
+        if not self.is_configured():
+            return {
+                "user_email": None,
+                "account_id": None,
+                "avatar_url": None,
+                "subscription_tier": None,
+                "valid": False,
+            }
+
+        now = time.time()
+        if (
+            not force_refresh
+            and self._profile_fetched_at > 0
+            and (now - self._profile_fetched_at < self.model_cache_ttl)
+        ):
+            return {
+                "user_email": self.user_email,
+                "account_id": self.account_id,
+                "avatar_url": self.avatar_url,
+                "subscription_tier": self.subscription_tier,
+                "valid": bool(
+                    self.is_valid_session if self.is_valid_session is not None else True
+                ),
+            }
+
+        http = self.get_http_client()
+        # 1. Fetch https://gemini.google.com/app
+        try:
+            resp = await http.get(
+                "https://gemini.google.com/app", headers=self._get_headers()
+            )
+            if resp.status_code == 200:
+                self.is_valid_session = True
+                text = resp.text
+                match_snlm = re.search(r'"SNlM0e":"([^"]+)"', text)
+                if match_snlm:
+                    self._snlm0e_token = match_snlm.group(1)
+
+                match_bl = re.search(r'"cfb2h":"([^"]+)"', text)
+                if match_bl:
+                    self._build_label = match_bl.group(1)
+
+                match_sess = re.search(r'"FdrFJe":"([^"]+)"', text)
+                if match_sess:
+                    self._session_id = match_sess.group(1)
+
+                match_email = re.search(r'"o6v9De"\s*:\s*"([^"]+)"', text)
+                if match_email:
+                    self.user_email = match_email.group(1)
+
+                match_gaia = re.search(r'"S06Grb"\s*:\s*"([^"]+)"', text)
+                if match_gaia:
+                    self.account_id = match_gaia.group(1)
+
+                match_avatar = re.search(r'"LVIXXb"\s*:\s*"([^"]+)"', text)
+                if match_avatar:
+                    self.avatar_url = (
+                        match_avatar.group(1)
+                        .replace(r"\u003d", "=")
+                        .replace(r"\/", "/")
+                    )
+
+            elif resp.status_code in (401, 403):
+                self.is_valid_session = False
+        except Exception as e:
+            logger.warning(f"Failed to fetch Gemini Web profile from app: {e}")
+
+        # Fallback to account widget RPC if email or avatar is missing
+        if (
+            not self.user_email or not self.avatar_url
+        ) and self.is_valid_session is not False:
+            try:
+                widget_url = "https://og.google.com/u/0/_/og/widget/account?hl=en"
+                resp_widget = await http.get(widget_url, headers=self._get_headers())
+                if resp_widget.status_code == 200:
+                    widget_text = resp_widget.text
+                    if not self.user_email:
+                        m_em = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", widget_text)
+                        if m_em:
+                            self.user_email = m_em.group(0)
+                    if not self.avatar_url:
+                        m_av = re.search(
+                            r"https://lh3\.googleusercontent\.com/[^\s\"'<>]+",
+                            widget_text,
+                        )
+                        if m_av:
+                            self.avatar_url = (
+                                m_av.group(0)
+                                .replace(r"\u003d", "=")
+                                .replace(r"\/", "/")
+                            )
+                    if not self.account_id:
+                        m_id = re.search(r'data-identifier="(\d+)"', widget_text)
+                        if m_id:
+                            self.account_id = m_id.group(1)
+            except Exception as e:
+                logger.debug(f"Account widget fallback skipped: {e}")
+
+        # 2. Extract subscription tier from retrieveUserQuota endpoint
+        try:
+            quota_url = (
+                "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
+            )
+            resp_quota = await http.get(quota_url, headers=self._get_headers())
+            if resp_quota.status_code == 200:
+                quota_data = resp_quota.json()
+                tier = (
+                    quota_data.get("tier")
+                    or quota_data.get("tierName")
+                    or quota_data.get("subscriptionTier")
+                )
+                if isinstance(tier, dict):
+                    self.subscription_tier = tier.get("name") or tier.get("id")
+                elif isinstance(tier, str):
+                    self.subscription_tier = tier
+            elif not self.subscription_tier:
+                self.subscription_tier = "Standard"
+        except Exception as e:
+            logger.debug(f"retrieveUserQuota probe for Gemini Web skipped: {e}")
+
+        if not self.subscription_tier:
+            self.subscription_tier = "Standard"
+
+        self._profile_fetched_at = now
+        return {
+            "user_email": self.user_email,
+            "account_id": self.account_id,
+            "avatar_url": self.avatar_url,
+            "subscription_tier": self.subscription_tier,
+            "valid": bool(
+                self.is_valid_session if self.is_valid_session is not None else True
+            ),
+        }
 
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -205,6 +371,7 @@ class GeminiWebAdapter(BaseAdapter):
                 return None
 
             if resp.status_code == 200:
+                self.is_valid_session = True
                 match_snlm = re.search(r'"SNlM0e":"([^"]+)"', resp.text)
                 if match_snlm:
                     self._snlm0e_token = match_snlm.group(1)
@@ -217,6 +384,25 @@ class GeminiWebAdapter(BaseAdapter):
                 match_sess = re.search(r'"FdrFJe":"([^"]+)"', resp.text)
                 if match_sess:
                     self._session_id = match_sess.group(1)
+
+                if not self.user_email:
+                    match_email = re.search(r'"o6v9De"\s*:\s*"([^"]+)"', resp.text)
+                    if match_email:
+                        self.user_email = match_email.group(1)
+
+                if not self.account_id:
+                    match_gaia = re.search(r'"S06Grb"\s*:\s*"([^"]+)"', resp.text)
+                    if match_gaia:
+                        self.account_id = match_gaia.group(1)
+
+                if not self.avatar_url:
+                    match_avatar = re.search(r'"LVIXXb"\s*:\s*"([^"]+)"', resp.text)
+                    if match_avatar:
+                        self.avatar_url = (
+                            match_avatar.group(1)
+                            .replace(r"\u003d", "=")
+                            .replace(r"\/", "/")
+                        )
 
                 return self._snlm0e_token
         except RateLimitError:
@@ -267,6 +453,12 @@ class GeminiWebAdapter(BaseAdapter):
             self._discovered_models = FALLBACK_MODELS
             self._models_fetched_at = now
             return {"models": self._discovered_models}
+
+        if self._profile_fetched_at == 0 or force_refresh:
+            try:
+                await self.fetch_user_profile(force_refresh=force_refresh)
+            except Exception as e:
+                logger.debug(f"Profile probe in fetch_available_models skipped: {e}")
 
         try:
             at_token = await self._init_session()

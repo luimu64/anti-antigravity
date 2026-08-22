@@ -23,7 +23,18 @@
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <!-- 1. Google Gemini AI Studio API Card -->
     {% call ui.provider_card('card-gemini-api', 'Gemini AI Studio API', 'toggle-gemini-api', 'gemini_api', 'status-gemini-api') %}
-      <form onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
+      <!-- Configured view (shown when valid key exists) -->
+      <div id="gemini-api-configured-view" class="hidden flex-col gap-2">
+        <div class="text-xs flex flex-col gap-1 mb-2">
+          {{ ui.info_row('Plan Tier', 'Loading...', id='gemini-api-plan-display', is_strong=True) }}
+          {{ ui.info_row('API Key', '***', id='gemini-api-key-display') }}
+          {{ ui.info_row('Status', 'Valid', id='gemini-api-validity-display') }}
+        </div>
+        <button type="button" onclick="resetBackend('gemini_api')" class="btn btn-error btn-outline btn-sm w-full">Reset Key</button>
+      </div>
+
+      <!-- Unconfigured form (shown when key is absent/reset) -->
+      <form id="gemini-api-form" onsubmit="event.preventDefault(); saveGeminiApiKey();" class="join w-full">
         <input type="password" id="gemini-api-key-input" placeholder="AIzaSy..." class="input input-bordered input-sm join-item flex-1">
         <button type="submit" class="btn btn-primary btn-sm join-item">Save</button>
       </form>
@@ -31,7 +42,28 @@
 
     <!-- 2. Google Gemini Web UI Card -->
     {% call ui.provider_card('card-gemini-web', 'Gemini Web Interface', 'toggle-gemini-web', 'gemini_web', 'status-gemini-web') %}
-      <form onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
+      <!-- Configured view (shown when valid cookies exist) -->
+      <div id="gemini-web-configured-view" class="hidden flex-col gap-2">
+        <div class="flex items-center gap-3 mb-2 pb-2 border-b border-base-300">
+          <div class="avatar">
+            <div class="w-10 h-10 rounded-full ring ring-primary ring-offset-base-100 ring-offset-1 bg-base-300 overflow-hidden">
+              <img id="gemini-web-avatar" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/></svg>" alt="Avatar">
+            </div>
+          </div>
+          <div class="overflow-hidden">
+            <p id="gemini-web-email" class="text-xs font-bold truncate">user@gmail.com</p>
+            <p id="gemini-web-gaia" class="text-[10px] text-base-content/70 truncate">ID: -</p>
+          </div>
+        </div>
+        <div class="text-xs flex flex-col gap-1 mb-2">
+          {{ ui.info_row('Subscription', 'Standard', id='gemini-web-tier-display', is_strong=True) }}
+          {{ ui.info_row('PSID Cookie', '***', id='gemini-web-psid-display') }}
+        </div>
+        <button type="button" onclick="resetBackend('gemini_web')" class="btn btn-error btn-outline btn-sm w-full">Reset Cookies</button>
+      </div>
+
+      <!-- Unconfigured form (shown when cookies absent/reset) -->
+      <form id="gemini-web-form" onsubmit="event.preventDefault(); saveGeminiWebCookies();" class="flex flex-col gap-2">
         <input type="password" id="gemini-web-psid-input" placeholder="__Secure-1PSID cookie value" class="input input-bordered input-sm w-full">
         <input type="password" id="gemini-web-psidts-input" placeholder="__Secure-1PSIDTS cookie value (optional)" class="input input-bordered input-sm w-full">
         <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
@@ -126,6 +158,39 @@
         else statusApi.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
       }
 
+      const apiConfiguredView = document.getElementById('gemini-api-configured-view');
+      const apiForm = document.getElementById('gemini-api-form');
+      const hasValidApiKey = !!(gApi.configured && gApi.has_api_key && gApi.valid !== false);
+
+      if (hasValidApiKey) {
+        if (apiConfiguredView) {
+          apiConfiguredView.classList.remove('hidden');
+          apiConfiguredView.classList.add('flex');
+        }
+        if (apiForm) apiForm.classList.add('hidden');
+
+        const planEl = document.getElementById('gemini-api-plan-display');
+        if (planEl) {
+          const tier = gApi.plan_tier || 'Unknown';
+          let badgeClass = 'badge-neutral';
+          if (tier === 'Pay-As-You-Go') badgeClass = 'badge-success';
+          else if (tier === 'Free') badgeClass = 'badge-info';
+          planEl.innerHTML = `<span class="badge ${badgeClass} badge-sm font-semibold">${tier}</span>`;
+        }
+        const keyEl = document.getElementById('gemini-api-key-display');
+        if (keyEl) keyEl.textContent = gApi.masked_key || '***';
+        const valEl = document.getElementById('gemini-api-validity-display');
+        if (valEl) {
+          valEl.innerHTML = gApi.valid !== false ? '<span class="badge badge-success badge-xs">Valid</span>' : '<span class="badge badge-error badge-xs">Invalid</span>';
+        }
+      } else {
+        if (apiConfiguredView) {
+          apiConfiguredView.classList.add('hidden');
+          apiConfiguredView.classList.remove('flex');
+        }
+        if (apiForm) apiForm.classList.remove('hidden');
+      }
+
       // 3. Gemini Web Backend
       const gWeb = backends.gemini_web || {};
       const toggleWeb = document.getElementById('toggle-gemini-web');
@@ -136,6 +201,40 @@
         else if (!gWeb.configured) statusWeb.innerHTML = '<span class="badge badge-error badge-sm">Cookies Required</span>';
         else if (gWeb.cooldown_remaining > 0) statusWeb.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(gWeb.cooldown_remaining)}s)</span>`;
         else statusWeb.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
+      }
+
+      const webConfiguredView = document.getElementById('gemini-web-configured-view');
+      const webForm = document.getElementById('gemini-web-form');
+      const hasValidCookies = !!(gWeb.configured && gWeb.has_psid && gWeb.valid !== false);
+
+      if (hasValidCookies) {
+        if (webConfiguredView) {
+          webConfiguredView.classList.remove('hidden');
+          webConfiguredView.classList.add('flex');
+        }
+        if (webForm) webForm.classList.add('hidden');
+
+        const emailEl = document.getElementById('gemini-web-email');
+        if (emailEl) emailEl.textContent = gWeb.user_email || 'Gemini Web User';
+        const gaiaEl = document.getElementById('gemini-web-gaia');
+        if (gaiaEl) gaiaEl.textContent = gWeb.account_id ? `ID: ${gWeb.account_id}` : 'Session Configured';
+        const avatarEl = document.getElementById('gemini-web-avatar');
+        if (avatarEl && gWeb.avatar_url) avatarEl.src = gWeb.avatar_url;
+        const tierEl = document.getElementById('gemini-web-tier-display');
+        if (tierEl) {
+          const tier = gWeb.subscription_tier || 'Standard';
+          let badgeClass = 'badge-primary';
+          if (tier.toLowerCase().includes('advanced')) badgeClass = 'badge-secondary';
+          tierEl.innerHTML = `<span class="badge ${badgeClass} badge-sm font-semibold">${tier}</span>`;
+        }
+        const psidEl = document.getElementById('gemini-web-psid-display');
+        if (psidEl) psidEl.textContent = gWeb.masked_psid || '***';
+      } else {
+        if (webConfiguredView) {
+          webConfiguredView.classList.add('hidden');
+          webConfiguredView.classList.remove('flex');
+        }
+        if (webForm) webForm.classList.remove('hidden');
       }
 
       // 4. Antigravity Backend
@@ -151,6 +250,33 @@
       }
     } catch (err) {
       console.error('Failed to load backend status:', err);
+    }
+  }
+
+  async function resetBackend(backendId) {
+    const backendNames = {
+      gemini_api: 'Gemini AI Studio API Key',
+      gemini_web: 'Gemini Web Session Cookies',
+      antigravity: 'Antigravity OAuth Tokens'
+    };
+    const name = backendNames[backendId] || backendId;
+    if (!confirm(`Are you sure you want to reset and clear ${name}?`)) return;
+
+    try {
+      const res = await fetch(`/api/backends/${backendId}/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        showToast(`${name} cleared successfully!`);
+        await loadBackends();
+        loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
+      } else {
+        showToast(`Failed to reset ${name}`, 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
     }
   }
 

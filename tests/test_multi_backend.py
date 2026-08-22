@@ -1038,3 +1038,284 @@ async def test_dashboard_api_quotas_multi_backend_aggregation():
     finally:
         client.gemini_api.enabled = False
         client.gemini_web.enabled = False
+
+
+@pytest.mark.asyncio
+async def test_gemini_api_probe_plan_tiers():
+    """Verify GeminiApiAdapter.probe_plan identifies Free, PAYG, Invalid, and offline fallback states."""
+    adapter = GeminiApiAdapter(api_key="AIzaSyTestKey")
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.is_closed = False
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    # 1. Free Tier (HTTP 400 FAILED_PRECONDITION)
+    mock_resp_free = MagicMock(spec=httpx.Response)
+    mock_resp_free.status_code = 400
+    mock_resp_free.text = '{"error": {"status": "FAILED_PRECONDITION", "message": "User location or billing is not supported for cached content"}}'
+    mock_client.post.return_value = mock_resp_free
+
+    res_free = await adapter.probe_plan(force_refresh=True)
+    assert res_free["plan_tier"] == "Free"
+    assert res_free["valid"] is True
+    assert adapter.plan_tier == "Free"
+    assert adapter.is_valid_key is True
+
+    # 2. Pay-As-You-Go Tier (HTTP 400 INVALID_ARGUMENT or HTTP 200)
+    mock_resp_payg = MagicMock(spec=httpx.Response)
+    mock_resp_payg.status_code = 400
+    mock_resp_payg.text = '{"error": {"status": "INVALID_ARGUMENT", "message": "Required field contents is missing"}}'
+    mock_client.post.return_value = mock_resp_payg
+
+    res_payg = await adapter.probe_plan(force_refresh=True)
+    assert res_payg["plan_tier"] == "Pay-As-You-Go"
+    assert res_payg["valid"] is True
+    assert adapter.plan_tier == "Pay-As-You-Go"
+
+    mock_resp_200 = MagicMock(spec=httpx.Response)
+    mock_resp_200.status_code = 200
+    mock_resp_200.text = "{}"
+    mock_client.post.return_value = mock_resp_200
+
+    res_200 = await adapter.probe_plan(force_refresh=True)
+    assert res_200["plan_tier"] == "Pay-As-You-Go"
+    assert res_200["valid"] is True
+
+    # 3. Invalid API Key (HTTP 400 / 403 API_KEY_INVALID)
+    mock_resp_inv = MagicMock(spec=httpx.Response)
+    mock_resp_inv.status_code = 400
+    mock_resp_inv.text = '{"error": {"status": "INVALID_ARGUMENT", "message": "API key not valid. Please pass a valid API_KEY_INVALID key."}}'
+    mock_client.post.return_value = mock_resp_inv
+
+    res_inv = await adapter.probe_plan(force_refresh=True)
+    assert res_inv["plan_tier"] == "Unknown"
+    assert res_inv["valid"] is False
+    assert adapter.is_valid_key is False
+
+    # 4. Offline / Network error fallback
+    mock_client.post.side_effect = httpx.NetworkError("DNS failure")
+    res_err = await adapter.probe_plan(force_refresh=True)
+    assert "plan_tier" in res_err
+    assert "valid" in res_err
+
+    # 5. Unconfigured key returns Unknown / False
+    adapter.api_key = ""
+    res_unconf = await adapter.probe_plan(force_refresh=True)
+    assert res_unconf["plan_tier"] == "Unknown"
+    assert res_unconf["valid"] is False
+
+
+@pytest.mark.asyncio
+async def test_gemini_web_profile_extraction():
+    """Verify GeminiWebAdapter.fetch_user_profile extracts WIZ_global_data, account widget, and quota tier."""
+    adapter = GeminiWebAdapter(psid="test_psid", psidts="test_psidts")
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.is_closed = False
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    # 1. Successful extraction from WIZ_global_data and retrieveUserQuota
+    app_html = (
+        "<html><script>"
+        "window.WIZ_global_data = {"
+        '"o6v9De":"webuser@example.com",'
+        '"S06Grb":"10293847561029384756",'
+        '"LVIXXb":"https:\\/\\/lh3.googleusercontent.com\\/a\\/mock-photo\\u003ds96-c",'
+        '"SNlM0e":"mock_xsrf_token",'
+        '"cfb2h":"boq_mock_build_label"'
+        "};"
+        "</script></html>"
+    )
+    mock_resp_app = MagicMock(spec=httpx.Response)
+    mock_resp_app.status_code = 200
+    mock_resp_app.text = app_html
+
+    mock_resp_quota = MagicMock(spec=httpx.Response)
+    mock_resp_quota.status_code = 200
+    mock_resp_quota.json.return_value = {
+        "tier": {"name": "Gemini Advanced", "id": "tier_advanced"}
+    }
+
+    async def mock_get(url, *args, **kwargs):
+        if "retrieveUserQuota" in str(url):
+            return mock_resp_quota
+        return mock_resp_app
+
+    mock_client.get = AsyncMock(side_effect=mock_get)
+
+    profile = await adapter.fetch_user_profile(force_refresh=True)
+    assert profile["user_email"] == "webuser@example.com"
+    assert profile["account_id"] == "10293847561029384756"
+    assert (
+        profile["avatar_url"] == "https://lh3.googleusercontent.com/a/mock-photo=s96-c"
+    )
+    assert profile["subscription_tier"] == "Gemini Advanced"
+    assert profile["valid"] is True
+
+    # 2. Fallback to account widget RPC when WIZ_global_data lacks email/avatar
+    mock_resp_app_empty = MagicMock(spec=httpx.Response)
+    mock_resp_app_empty.status_code = 200
+    mock_resp_app_empty.text = (
+        '<html><script>window.WIZ_global_data = {"SNlM0e":"token"};</script></html>'
+    )
+
+    mock_resp_widget = MagicMock(spec=httpx.Response)
+    mock_resp_widget.status_code = 200
+    mock_resp_widget.text = (
+        '<div data-identifier="987654321">'
+        "<span>fallback_user@gmail.com</span>"
+        '<img src="https://lh3.googleusercontent.com/widget_avatar.png">'
+        "</div>"
+    )
+
+    async def mock_get_fallback(url, *args, **kwargs):
+        url_str = str(url)
+        if "widget/account" in url_str:
+            return mock_resp_widget
+        if "retrieveUserQuota" in url_str:
+            mock_401 = MagicMock(spec=httpx.Response)
+            mock_401.status_code = 401
+            return mock_401
+        return mock_resp_app_empty
+
+    adapter._profile_fetched_at = 0.0
+    adapter.user_email = None
+    adapter.account_id = None
+    adapter.avatar_url = None
+    adapter.subscription_tier = None
+    mock_client.get = AsyncMock(side_effect=mock_get_fallback)
+
+    profile_fb = await adapter.fetch_user_profile(force_refresh=True)
+    assert profile_fb["user_email"] == "fallback_user@gmail.com"
+    assert profile_fb["account_id"] == "987654321"
+    assert (
+        profile_fb["avatar_url"]
+        == "https://lh3.googleusercontent.com/widget_avatar.png"
+    )
+    assert profile_fb["subscription_tier"] == "Standard"
+    assert profile_fb["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_backend_reset_and_isolation(mock_credentials_file):
+    """Verify reset endpoint clears target backend credentials in memory and disk without affecting other backends."""
+    transport = httpx.ASGITransport(app=app)
+
+    # Populate initial config with all 3 backends
+    client.antigravity.auth.user_email = "tester@example.com"
+    client.gemini_api.api_key = "AIzaSyApiResetTestKey"
+    client.gemini_api.enabled = True
+    client.gemini_api.plan_tier = "Pay-As-You-Go"
+    client.gemini_api.is_valid_key = True
+
+    client.gemini_web.psid = "web_psid_reset_test"
+    client.gemini_web.psidts = "web_psidts_reset_test"
+    client.gemini_web.sapisid = "web_sapisid_reset_test"
+    client.gemini_web.enabled = True
+    client.gemini_web.user_email = "web_reset@gmail.com"
+    client.gemini_web.account_id = "1122334455"
+    client.gemini_web.subscription_tier = "Gemini Advanced"
+
+    client.save_config()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. Reset gemini_api
+        res_reset_api = await ac.post("/api/backends/gemini_api/reset")
+        assert res_reset_api.status_code == 200
+        data_api = res_reset_api.json()
+        assert data_api["status"] == "reset"
+        assert data_api["backend"] == "gemini_api"
+
+        # Verify gemini_api memory state wiped
+        assert client.gemini_api.api_key == ""
+        assert client.gemini_api.enabled is False
+        assert client.gemini_api.plan_tier == "Unknown"
+        assert client.gemini_api.is_valid_key is None
+
+        # Verify other backends untouched
+        assert client.gemini_web.psid == "web_psid_reset_test"
+        assert client.gemini_web.enabled is True
+        assert client.gemini_web.user_email == "web_reset@gmail.com"
+        assert client.antigravity.auth.user_email == "tester@example.com"
+
+        # Verify credentials.json persistence
+        with open(mock_credentials_file) as f:
+            persisted1 = json.load(f)
+        assert "gemini_api_key" not in persisted1
+        assert persisted1.get("gemini_web_psid") == "web_psid_reset_test"
+        assert persisted1.get("access_token") == "ya29.test_oauth_access_token"
+
+        # 2. Reset gemini_web via /api/providers/gemini_web/reset alias
+        res_reset_web = await ac.post("/api/providers/gemini_web/reset")
+        assert res_reset_web.status_code == 200
+        data_web = res_reset_web.json()
+        assert data_web["status"] == "reset"
+        assert data_web["backend"] == "gemini_web"
+
+        # Verify gemini_web memory state wiped
+        assert client.gemini_web.psid == ""
+        assert client.gemini_web.enabled is False
+        assert client.gemini_web.user_email is None
+        assert client.gemini_web.account_id is None
+        assert client.gemini_web.avatar_url is None
+
+        # Verify Antigravity OAuth tokens still preserved
+        assert client.antigravity.auth.user_email == "tester@example.com"
+        with open(mock_credentials_file) as f:
+            persisted2 = json.load(f)
+        assert "gemini_web_psid" not in persisted2
+        assert persisted2.get("access_token") == "ya29.test_oauth_access_token"
+        assert persisted2.get("user_email") == "tester@example.com"
+
+        # 3. Invalid backend reset returns 404
+        res_404 = await ac.post("/api/backends/nonexistent_backend/reset")
+        assert res_404.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_backend_status_rich_metadata_endpoint():
+    """Verify /api/backends and /api/providers return rich metadata for all backends."""
+    transport = httpx.ASGITransport(app=app)
+
+    # Set mock rich metadata
+    client.gemini_api.api_key = "AIzaSySecretApiKey123"
+    client.gemini_api.plan_tier = "Pay-As-You-Go"
+    client.gemini_api.is_valid_key = True
+
+    client.gemini_web.psid = "psid_secret_cookie_456"
+    client.gemini_web.user_email = "rich_user@gmail.com"
+    client.gemini_web.account_id = "1092837465"
+    client.gemini_web.avatar_url = "https://lh3.googleusercontent.com/avatar.jpg"
+    client.gemini_web.subscription_tier = "Gemini Advanced"
+    client.gemini_web.is_valid_session = True
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        for endpoint in ("/api/backends", "/api/providers"):
+            res = await ac.get(endpoint)
+            assert res.status_code == 200
+            data = res.json()
+            assert "backends" in data
+            backends = data["backends"]
+
+            # gemini_api rich metadata
+            api_info = backends["gemini_api"]
+            assert api_info["plan_tier"] == "Pay-As-You-Go"
+            assert api_info["valid"] is True
+            assert api_info["validity_status"] == "Valid"
+            assert api_info["has_api_key"] is True
+            assert "AIzaSy" in api_info["masked_key"]
+            assert "123" in api_info["masked_key"]
+
+            # gemini_web rich metadata
+            web_info = backends["gemini_web"]
+            assert web_info["user_email"] == "rich_user@gmail.com"
+            assert web_info["account_id"] == "1092837465"
+            assert (
+                web_info["avatar_url"] == "https://lh3.googleusercontent.com/avatar.jpg"
+            )
+            assert web_info["subscription_tier"] == "Gemini Advanced"
+            assert web_info["valid"] is True
+            assert web_info["has_psid"] is True
+            assert "psid_s" in web_info["masked_psid"]

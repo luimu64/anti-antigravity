@@ -378,7 +378,7 @@ class OAuthManager:
         self.save_credentials()
 
     def logout(self):
-        """Clear all stored tokens."""
+        """Clear all stored tokens without wiping other providers."""
         self.access_token = None
         self.refresh_token = None
         self.token_expiry = 0
@@ -388,9 +388,28 @@ class OAuthManager:
         self.tier_name = None
         if os.path.exists(self.credentials_file):
             try:
-                os.remove(self.credentials_file)
+                with open(self.credentials_file) as f:
+                    data = json.load(f)
+                for k in [
+                    "access_token",
+                    "refresh_token",
+                    "token_expiry",
+                    "user_email",
+                    "project_id",
+                    "tier_name",
+                    "id_token",
+                    "updated_at",
+                ]:
+                    data.pop(k, None)
+                if data:
+                    with open(self.credentials_file, "w") as f:
+                        json.dump(data, f, indent=2)
+                else:
+                    os.remove(self.credentials_file)
             except Exception as e:
-                logger.warning(f"Could not delete {self.credentials_file}: {e}")
+                logger.warning(
+                    f"Could not update {self.credentials_file} during logout: {e}"
+                )
 
     def get_status(self) -> dict[str, Any]:
         """Return current authentication status."""
