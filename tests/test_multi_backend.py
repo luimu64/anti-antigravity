@@ -860,6 +860,67 @@ def test_vision_model_mapping_across_all_adapters():
     assert model_num_img == 5
 
 
+def test_gemini_api_normalizes_against_live_catalog():
+    """Regression: alias targets must resolve to live catalog entries, not
+    deprecated hardcoded models (gemini-3.7-flash -> gemini-2.0-flash)."""
+    adapter = GeminiApiAdapter(api_key="AIzaSyTest", enabled=True)
+    # Simulate a probed catalog without the deprecated 2.0/1.5 models
+    adapter._cached_models = {
+        "models": {
+            "gemini-3.5-flash": {
+                "displayName": "Gemini 3.5 Flash",
+                "isEmbedding": False,
+            },
+            "gemini-2.5-flash": {
+                "displayName": "Gemini 2.5 Flash",
+                "isEmbedding": False,
+            },
+            "gemini-3.1-pro": {"displayName": "Gemini 3.1 Pro", "isEmbedding": False},
+            "gemini-2.0-flash-lite": {
+                "displayName": "Flash Lite",
+                "isEmbedding": False,
+            },
+        }
+    }
+
+    # Internal alias resolves to the newest live flash in the catalog
+    assert adapter._normalize_model_name("gemini-3.7-flash-high") == "gemini-3.5-flash"
+    assert adapter._normalize_model_name("gpt-4o") == "gemini-3.5-flash"
+    # Pro-family aliases resolve to the newest live pro
+    assert adapter._normalize_model_name("claude-sonnet-4-6") == "gemini-3.1-pro"
+    assert adapter._normalize_model_name("claude-opus-4-6-thinking") == "gemini-3.1-pro"
+    # Exact names pass through untouched
+    assert adapter._normalize_model_name("gemini-2.5-flash") == "gemini-2.5-flash"
+    # Unknown bases resolve best-effort to the newest live flash (same policy
+    # as vision/gpt-4o aliases) instead of hitting upstream 404s
+    assert adapter._normalize_model_name("totally-custom-model") == "gemini-3.5-flash"
+    # Without probe data, legacy static mapping applies unchanged
+    bare = GeminiApiAdapter(api_key="AIzaSyTest")
+    assert bare._normalize_model_name("vision") == "gemini-2.0-flash"
+
+
+@pytest.mark.asyncio
+async def test_router_routes_flash_alias_to_gemini_api_when_capable():
+    """Regression: gemini-3.7-flash must be capable on gemini_api when the
+    probed catalog lacks the legacy hard-mapped target but has newer flashes."""
+    api_adapter = GeminiApiAdapter(api_key="AIzaSyTest", enabled=True)
+    api_adapter._cached_models = {
+        "models": {
+            "gemini-3.5-flash": {"displayName": "F", "isEmbedding": False},
+            "gemini-2.5-pro": {"displayName": "P", "isEmbedding": False},
+        }
+    }
+
+    router = MultiBackendRouter(
+        antigravity=MagicMock(spec=AntigravityAdapter),
+        gemini_api=api_adapter,
+        gemini_web=MagicMock(spec=GeminiWebAdapter),
+    )
+
+    assert router.supports_model(api_adapter, model="gemini-3.7-flash-high") is True
+    assert router.supports_model(api_adapter, model="claude-opus-4-6-thinking") is True
+
+
 def test_in_memory_rate_tracker_sliding_window():
     """Verify in-memory proactive rate limit accounting, sliding windows, and resets."""
     from app.providers.base import InMemoryRateTracker

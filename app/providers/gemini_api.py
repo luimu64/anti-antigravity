@@ -13,8 +13,22 @@ from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("google_gate.providers.gemini_api")
 
-# Fallback models for Google AI Studio API when unconfigured or offline
+# Fallback models for Google AI Studio API when unconfigured or offline.
+# Prefer current-generation entries; legacy models are kept last since many
+# have been deprecated upstream.
 FALLBACK_MODELS = {
+    "gemini-2.5-pro": {
+        "displayName": "Gemini 2.5 Pro",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "capabilities": ["thinking", "tools", "vision"],
+    },
+    "gemini-2.5-flash": {
+        "displayName": "Gemini 2.5 Flash",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "capabilities": ["thinking", "tools", "vision"],
+    },
     "gemini-2.0-flash": {
         "displayName": "Gemini 2.0 Flash",
         "maxTokens": 1048576,
@@ -200,6 +214,51 @@ class GeminiApiAdapter(BaseAdapter):
             )
         return self._http_client
 
+    def _pick_live_model(self, kind: str) -> str | None:
+        """
+        Return the newest live model of the requested kind from the probed
+        catalog, or None when no probe data / no match exists.
+
+        Kinds: "flash" (standard flash), "lite" (flash-lite), "pro".
+        Excludes embeddings and specialized variants (thinking/image/tts).
+        """
+        probed = (self._cached_models or {}).get("models", {})
+        if not probed:
+            return None
+
+        if kind == "pro":
+            rx = re.compile(r"^gemini-\d+\.\d+-pro$")
+        elif kind == "lite":
+            rx = re.compile(r"^gemini-\d+\.\d+-flash-lite$")
+        else:
+            rx = re.compile(r"^gemini-\d+\.\d+-flash(?:-latest)?$")
+
+        exclude = re.compile(r"thinking|image|tts|audio|live|embedding")
+
+        def version(name: str) -> tuple[int, int]:
+            m = re.search(r"gemini-(\d+)\.(\d+)", name)
+            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+        candidates = [
+            name
+            for name in probed
+            if rx.match(name)
+            and not probed[name].get("isEmbedding", False)
+            and not exclude.search(name)
+        ]
+        return max(candidates, key=version) if candidates else None
+
+    def _resolve_family_target(self, base: str) -> str | None:
+        """
+        Resolve an internal alias base to a live upstream model of the matching
+        capability family: *-pro aliases target the newest pro, everything
+        else targets the newest standard flash with a flash-lite fallback.
+        """
+        kind = (
+            "pro" if ("pro" in base or "opus" in base or "sonnet" in base) else "flash"
+        )
+        return self._pick_live_model(kind) or self._pick_live_model("lite")
+
     def _normalize_model_name(self, model: str) -> str:
         """Map internal/alias names to standard Gemini API model names."""
         clean = model.replace("models/", "")
@@ -211,6 +270,14 @@ class GeminiApiAdapter(BaseAdapter):
         # before alias lookup, then map internal names to real API models.
         base = re.sub(r"-(high|medium|low|thinking)$", "", clean)
 
+        # Prefer dynamic resolution against the live probed catalog so alias
+        # targets never point at deprecated/shut-down upstream models.
+        live = self._resolve_family_target(base)
+        if live:
+            return live
+
+        # Static fallback for unprobed state (kept as last resort only; these
+        # legacy targets are themselves deprecated upstream).
         mapping = {
             "gemini-3.7-flash": "gemini-2.0-flash",
             "gemini-3.7-flash-image": "gemini-2.0-flash",
