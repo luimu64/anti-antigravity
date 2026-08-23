@@ -13,9 +13,11 @@ from app.config import DEPRECATED_MODELS, MODEL_ALIASES
 from app.history import history_manager
 from app.keys import api_key_manager
 from app.providers.base import ModelNotFoundError, RateLimitError
+from app.telemetry import bind_request_id, log_event, new_request_id
 from app.translator import ChatCompletionRequest, EmbeddingRequest, OpenAITranslator
 
 logger = logging.getLogger("google_gate.openai")
+telemetry_logger = logging.getLogger("google_gate.requests")
 router = APIRouter(tags=["OpenAI"])
 
 
@@ -26,7 +28,9 @@ def get_active_backend_name() -> str:
     if served_by:
         return served_by
     if hasattr(client, "get_ordered_adapters"):
-        adapters = client.get_ordered_adapters()
+        # rotate=False: this is a read-only lookup for labeling; advancing the
+        # round-robin counter here would skew the routing distribution.
+        adapters = client.get_ordered_adapters(rotate=False)
         if adapters:
             return adapters[0].name
     return getattr(client, "name", "antigravity")
@@ -171,18 +175,47 @@ async def retrieve_model(model_id: str):
 
 @router.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 @router.post("/chat/completions", dependencies=[Depends(verify_api_key)])
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(request: ChatCompletionRequest, http_request: Request):
     """
     OpenAI-compatible /v1/chat/completions endpoint.
     Supports streaming (SSE) and non-streaming, multi-modal, function/tool calling,
     and reasoning/thinking models.
     """
     start_time = time.perf_counter()
-    req_id = f"req_{uuid.uuid4().hex[:12]}"
+    req_id = new_request_id()
+    bind_request_id(req_id)
     backend = get_active_backend_name()
+
+    log_event(
+        telemetry_logger,
+        logging.INFO,
+        "request.received",
+        f"Chat completion requested: model={request.model} stream={bool(request.stream)}",
+        endpoint="/v1/chat/completions",
+        request_id=req_id,
+        model=request.model,
+        stream=bool(request.stream),
+        num_messages=len(request.messages or []),
+        num_tools=len(request.tools or []),
+        max_tokens=request.max_tokens,
+        reasoning_effort=request.reasoning_effort,
+        client_host=http_request.client.host if http_request.client else None,
+    )
 
     if request.model in DEPRECATED_MODELS:
         duration_ms = (time.perf_counter() - start_time) * 1000
+        log_event(
+            telemetry_logger,
+            logging.WARNING,
+            "request.rejected",
+            f"Rejected deprecated model '{request.model}'",
+            endpoint="/v1/chat/completions",
+            request_id=req_id,
+            model=request.model,
+            reason="deprecated_model",
+            status_code=404,
+            duration_ms=round(duration_ms, 1),
+        )
         history_manager.record(
             model=request.model,
             resolved_model=request.model,
@@ -213,6 +246,18 @@ async def chat_completions(request: ChatCompletionRequest):
         )
     except Exception as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
+        log_event(
+            telemetry_logger,
+            logging.ERROR,
+            "request.translate_failed",
+            f"Failed to translate request for model '{request.model}': {e}",
+            endpoint="/v1/chat/completions",
+            request_id=req_id,
+            model=request.model,
+            error_type=type(e).__name__,
+            error=str(e)[:300],
+            duration_ms=round(duration_ms, 1),
+        )
         history_manager.record(
             model=getattr(request, "model", "unknown") or "unknown",
             resolved_model="unknown",
@@ -230,6 +275,26 @@ async def chat_completions(request: ChatCompletionRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid request parameters: {e!s}",
         ) from e
+
+    log_event(
+        telemetry_logger,
+        logging.INFO,
+        "request.translated",
+        f"Translated '{request.model}' -> internal '{internal_model}'",
+        endpoint="/v1/chat/completions",
+        request_id=req_id,
+        requested_model=request.model,
+        resolved_model=internal_model,
+        num_contents=len(contents),
+        has_system_instruction=bool(system_instruction),
+        has_tools=bool(tools),
+        max_output_tokens=(generation_config or {}).get("maxOutputTokens"),
+        thinking_budget=(generation_config or {})
+        .get("thinkingConfig", {})
+        .get("thinkingBudget")
+        if isinstance((generation_config or {}).get("thinkingConfig"), dict)
+        else None,
+    )
 
     # Determine if include_usage is requested for streaming
     include_usage = False
@@ -266,8 +331,14 @@ async def chat_completions(request: ChatCompletionRequest):
             async def tracked_chat_stream():
                 stream_status = "success"
                 error_msg = None
+                chunk_count = 0
+                first_chunk_at = None
+                bind_request_id(req_id)
                 try:
                     async for chunk in openai_chunks:
+                        if first_chunk_at is None:
+                            first_chunk_at = time.perf_counter()
+                        chunk_count += 1
                         yield chunk
                 except RateLimitError as stream_err:
                     stream_status = "rate_limited"
@@ -282,6 +353,31 @@ async def chat_completions(request: ChatCompletionRequest):
                     raise
                 finally:
                     duration_ms = (time.perf_counter() - start_time) * 1000
+                    served_by = served_backends[-1] if served_backends else backend
+                    log_event(
+                        telemetry_logger,
+                        logging.INFO if stream_status == "success" else logging.ERROR,
+                        "request.completed",
+                        f"Streaming chat {stream_status} via '{served_by}' "
+                        f"({chunk_count} chunks, {duration_ms:.0f}ms)",
+                        endpoint="/v1/chat/completions",
+                        request_id=req_id,
+                        mode="stream",
+                        model=request.model,
+                        resolved_model=internal_model,
+                        status=stream_status,
+                        backend=served_by,
+                        fallbacks_used=max(0, len(served_backends) - 1),
+                        duration_ms=round(duration_ms, 1),
+                        ttfb_ms=round((first_chunk_at - start_time) * 1000, 1)
+                        if first_chunk_at is not None
+                        else None,
+                        chunks=chunk_count,
+                        prompt_tokens=usage_collector.get("prompt_tokens", 0),
+                        completion_tokens=usage_collector.get("completion_tokens", 0),
+                        total_tokens=usage_collector.get("total_tokens", 0),
+                        error=error_msg[:300] if error_msg else None,
+                    )
                     history_manager.record(
                         model=request.model,
                         resolved_model=internal_model,
@@ -307,6 +403,21 @@ async def chat_completions(request: ChatCompletionRequest):
             )
         except RateLimitError as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
+            log_event(
+                telemetry_logger,
+                logging.WARNING,
+                "request.completed",
+                f"Streaming chat rate limited: {e}",
+                endpoint="/v1/chat/completions",
+                request_id=req_id,
+                mode="stream",
+                model=request.model,
+                resolved_model=internal_model,
+                status="rate_limited",
+                duration_ms=round(duration_ms, 1),
+                error_type=type(e).__name__,
+                error=str(e)[:300],
+            )
             history_manager.record(
                 model=request.model,
                 resolved_model=internal_model,
@@ -336,6 +447,22 @@ async def chat_completions(request: ChatCompletionRequest):
             ) from e
         except ModelNotFoundError as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
+            log_event(
+                telemetry_logger,
+                logging.WARNING,
+                "request.completed",
+                f"Streaming chat model not found: {e}",
+                endpoint="/v1/chat/completions",
+                request_id=req_id,
+                mode="stream",
+                model=request.model,
+                resolved_model=internal_model,
+                status="error",
+                reason="model_not_found",
+                duration_ms=round(duration_ms, 1),
+                error_type=type(e).__name__,
+                error=str(e)[:300],
+            )
             history_manager.record(
                 model=request.model,
                 resolved_model=internal_model,
@@ -362,6 +489,21 @@ async def chat_completions(request: ChatCompletionRequest):
             ) from e
         except ValueError as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
+            log_event(
+                telemetry_logger,
+                logging.ERROR,
+                "request.completed",
+                f"Streaming chat failed: {e}",
+                endpoint="/v1/chat/completions",
+                request_id=req_id,
+                mode="stream",
+                model=request.model,
+                resolved_model=internal_model,
+                status="error",
+                duration_ms=round(duration_ms, 1),
+                error_type=type(e).__name__,
+                error=str(e)[:300],
+            )
             history_manager.record(
                 model=request.model,
                 resolved_model=internal_model,
@@ -402,6 +544,21 @@ async def chat_completions(request: ChatCompletionRequest):
             ) from e
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
+            log_event(
+                telemetry_logger,
+                logging.ERROR,
+                "request.completed",
+                f"Streaming generation error: {e}",
+                endpoint="/v1/chat/completions",
+                request_id=req_id,
+                mode="stream",
+                model=request.model,
+                resolved_model=internal_model,
+                status="error",
+                duration_ms=round(duration_ms, 1),
+                error_type=type(e).__name__,
+                error=str(e)[:300],
+            )
             history_manager.record(
                 model=request.model,
                 resolved_model=internal_model,
@@ -437,6 +594,24 @@ async def chat_completions(request: ChatCompletionRequest):
         )
         duration_ms = (time.perf_counter() - start_time) * 1000
         usage = response_json.get("usage", {})
+        log_event(
+            telemetry_logger,
+            logging.INFO,
+            "request.completed",
+            f"Chat completion success via '{backend}' ({duration_ms:.0f}ms)",
+            endpoint="/v1/chat/completions",
+            request_id=req_id,
+            mode="non_stream",
+            model=request.model,
+            resolved_model=internal_model,
+            status="success",
+            backend=backend,
+            fallbacks_used=max(0, len(served_backends) - 1),
+            duration_ms=round(duration_ms, 1),
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+        )
         history_manager.record(
             model=request.model,
             resolved_model=internal_model,
@@ -451,6 +626,21 @@ async def chat_completions(request: ChatCompletionRequest):
         return JSONResponse(content=response_json)
     except RateLimitError as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
+        log_event(
+            telemetry_logger,
+            logging.WARNING,
+            "request.completed",
+            f"Chat completion rate limited: {e}",
+            endpoint="/v1/chat/completions",
+            request_id=req_id,
+            mode="non_stream",
+            model=request.model,
+            resolved_model=internal_model,
+            status="rate_limited",
+            duration_ms=round(duration_ms, 1),
+            error_type=type(e).__name__,
+            error=str(e)[:300],
+        )
         history_manager.record(
             model=request.model,
             resolved_model=internal_model,
@@ -1002,6 +1192,22 @@ async def create_embeddings(request: EmbeddingRequest):
     Generate embeddings for given input texts via Antigravity backend.
     Supports float and base64 encoding_format, and custom dimensions.
     """
+    start_time = time.perf_counter()
+    req_id = new_request_id()
+    bind_request_id(req_id)
+    log_event(
+        telemetry_logger,
+        logging.INFO,
+        "request.received",
+        f"Embedding requested: model={request.model} inputs={len(request.input) if isinstance(request.input, list) else 1}",
+        endpoint="/v1/embeddings",
+        request_id=req_id,
+        model=request.model,
+        num_inputs=len(request.input) if isinstance(request.input, list) else 1,
+        dimensions=request.dimensions,
+        encoding_format=request.encoding_format,
+    )
+
     # 1. Normalize input into list of strings
     if isinstance(request.input, str):
         texts = [request.input]
@@ -1054,6 +1260,19 @@ async def create_embeddings(request: EmbeddingRequest):
             model=resolved_model, texts=texts, dimensions=request.dimensions
         )
     except RateLimitError as e:
+        log_event(
+            telemetry_logger,
+            logging.WARNING,
+            "request.completed",
+            f"Embedding rate limited: {e}",
+            endpoint="/v1/embeddings",
+            request_id=req_id,
+            model=request.model,
+            resolved_model=resolved_model,
+            status="rate_limited",
+            error_type=type(e).__name__,
+            error=str(e)[:300],
+        )
         logger.warning(f"Embedding rate limited: {e}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1068,6 +1287,19 @@ async def create_embeddings(request: EmbeddingRequest):
             headers={"Retry-After": str(int(getattr(e, "retry_after", 60.0) or 60.0))},
         ) from e
     except ModelNotFoundError as e:
+        log_event(
+            telemetry_logger,
+            logging.WARNING,
+            "request.completed",
+            f"Embedding model not found: {e}",
+            endpoint="/v1/embeddings",
+            request_id=req_id,
+            model=request.model,
+            resolved_model=resolved_model,
+            status="error",
+            reason="model_not_found",
+            error_type=type(e).__name__,
+        )
         logger.warning(f"Embedding model not found: {e}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1108,6 +1340,19 @@ async def create_embeddings(request: EmbeddingRequest):
             },
         ) from e
     except Exception as e:
+        log_event(
+            telemetry_logger,
+            logging.ERROR,
+            "request.completed",
+            f"Embedding error: {e}",
+            endpoint="/v1/embeddings",
+            request_id=req_id,
+            model=request.model,
+            resolved_model=resolved_model,
+            status="error",
+            error_type=type(e).__name__,
+            error=str(e)[:300],
+        )
         logger.error(f"Embedding error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1159,6 +1404,21 @@ async def create_embeddings(request: EmbeddingRequest):
     prompt_tokens = usage_meta.get("promptTokenCount")
     if prompt_tokens is None:
         prompt_tokens = sum(max(1, len(t) // 4) for t in texts)
+
+    log_event(
+        telemetry_logger,
+        logging.INFO,
+        "request.completed",
+        f"Embedding success ({len(data)} vectors)",
+        endpoint="/v1/embeddings",
+        request_id=req_id,
+        model=request.model,
+        resolved_model=resolved_model,
+        status="success",
+        num_vectors=len(data),
+        duration_ms=round((time.perf_counter() - start_time) * 1000, 1),
+        total_tokens=prompt_tokens,
+    )
 
     return {
         "object": "list",

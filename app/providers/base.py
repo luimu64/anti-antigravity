@@ -5,6 +5,8 @@ from collections import deque
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from app.telemetry import log_event
+
 logger = logging.getLogger("google_gate.providers.base")
 
 
@@ -174,19 +176,38 @@ class BaseAdapter(ABC):
             and not self.rate_limiter.has_capacity(estimated_tokens)
         )
 
-    def set_cooldown(self, seconds: float | None = None) -> None:
+    def set_cooldown(self, seconds: float | None = None, reason: str = "") -> None:
         """Mark backend as cooled down due to rate limits or errors."""
         duration = seconds if seconds is not None else self.default_cooldown
         self.cooldown_until = time.time() + duration
-        logger.warning(
-            f"Backend '{self.name}' entered cooldown for {duration:.1f}s until {self.cooldown_until:.1f}"
+        stats = self.rate_limiter.get_stats() if hasattr(self, "rate_limiter") else {}
+        log_event(
+            logger,
+            logging.WARNING,
+            "cooldown.set",
+            f"Backend '{self.name}' entered cooldown for {duration:.1f}s"
+            + (f" (reason: {reason})" if reason else ""),
+            backend=self.name,
+            duration_s=round(duration, 1),
+            cooldown_until=self.cooldown_until,
+            reason=reason[:300] if reason else None,
+            rate_window=stats,
         )
 
     def clear_cooldown(self) -> None:
         """Clear cooldown status and reset in-memory proactive rate tracker."""
+        had_cooldown = self.cooldown_until > 0
         self.cooldown_until = 0.0
         if hasattr(self, "rate_limiter"):
             self.rate_limiter.reset()
+        if had_cooldown:
+            log_event(
+                logger,
+                logging.INFO,
+                "cooldown.clear",
+                f"Backend '{self.name}' cooldown cleared",
+                backend=self.name,
+            )
 
     def get_cooldown_remaining(self) -> float:
         """Return remaining cooldown in seconds, or window reset if rate-limited, else 0."""

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
@@ -20,9 +21,12 @@ from app.providers.antigravity import AntigravityAdapter
 from app.providers.base import BaseAdapter, ModelNotFoundError, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
+from app.telemetry import log_event
 from app.translator import OpenAITranslator
 
 logger = logging.getLogger("google_gate.providers.router")
+
+telemetry_logger = logging.getLogger("google_gate.routing")
 
 
 def _extract_model_version(model_id: str) -> tuple[int, ...]:
@@ -422,6 +426,41 @@ class MultiBackendRouter(BaseAdapter):
     def get_adapter(self, name: str) -> BaseAdapter | None:
         return self.adapters.get(name)
 
+    def _snapshot_backends(
+        self,
+        model: str | None,
+        is_embedding: bool,
+        estimated_tokens: int,
+    ) -> dict[str, dict[str, Any]]:
+        """
+        Capture the routing-relevant state of every backend: enabled, configured,
+        capable of the model/task, available (cooldown + proactive capacity),
+        cooldown remaining and sliding-window rate usage. This snapshot is the
+        ground truth for explaining any routing decision or failure.
+        """
+        snapshot: dict[str, dict[str, Any]] = {}
+        for adapter_name, adapter in self.adapters.items():
+            probed = getattr(adapter, "_cached_models", None)
+            web_probed = getattr(adapter, "_discovered_models", None)
+            probed_count = (
+                len(probed.get("models", {}))
+                if isinstance(probed, dict) and "models" in probed
+                else (len(web_probed) if isinstance(web_probed, dict) else None)
+            )
+            rl = getattr(adapter, "rate_limiter", None)
+            snapshot[adapter_name] = {
+                "enabled": bool(adapter.enabled),
+                "configured": adapter.is_configured(),
+                "capable": self.supports_model(
+                    adapter, model=model, is_embedding=is_embedding
+                ),
+                "available": adapter.is_available(estimated_tokens=estimated_tokens),
+                "cooldown_remaining_s": round(adapter.get_cooldown_remaining(), 1),
+                "probed_models": probed_count,
+                "rate_window": rl.get_stats() if rl else {},
+            }
+        return snapshot
+
     def supports_model(
         self, adapter: BaseAdapter, model: str | None = None, is_embedding: bool = False
     ) -> bool:
@@ -625,8 +664,18 @@ class MultiBackendRouter(BaseAdapter):
         model: str | None = None,
         is_embedding: bool = False,
         estimated_tokens: int = 0,
+        rotate: bool = True,
     ) -> list[BaseAdapter]:
-        """Order available adapters according to the selected routing strategy."""
+        """Order available adapters according to the selected routing strategy.
+
+        Args:
+            model: Optional model to filter capable adapters.
+            is_embedding: Whether this is an embedding request.
+            estimated_tokens: Estimated token count for proactive capacity checks.
+            rotate: If True (default), advance the round-robin counter. Callers
+                that only inspect ordering (e.g. status/labeling) must pass
+                False to avoid skewing the round-robin distribution.
+        """
         available = self.get_available_adapters(
             model=model,
             is_embedding=is_embedding,
@@ -638,7 +687,8 @@ class MultiBackendRouter(BaseAdapter):
 
         if self.routing_strategy == "round_robin":
             idx = self._rr_counter % len(available)
-            self._rr_counter += 1
+            if rotate:
+                self._rr_counter += 1
             return available[idx:] + available[:idx]
 
         # Default "free_first": Gemini Web -> Gemini AI Studio API -> Antigravity
@@ -655,16 +705,43 @@ class MultiBackendRouter(BaseAdapter):
         Evaluate hybrid capacity (proactive in-memory counters + reactive cooldowns).
         Returns ordered candidate adapters or immediately raises RateLimitError (429) / ValueError (503) / ModelNotFoundError (404).
         """
+        snapshot = self._snapshot_backends(
+            model=model, is_embedding=is_embedding, estimated_tokens=estimated_tokens
+        )
+        eval_fields = {
+            "model": model,
+            "is_embedding": is_embedding,
+            "estimated_tokens": estimated_tokens,
+            "strategy": self.routing_strategy,
+            "backends": snapshot,
+        }
+
         enabled_and_configured = [
             a for a in self.adapters.values() if a.enabled and a.is_configured()
         ]
         if not enabled_and_configured:
+            log_event(
+                telemetry_logger,
+                logging.ERROR,
+                "routing.no_backends",
+                f"No configured or enabled backends available for model '{model}'.",
+                **eval_fields,
+                outcome="no_enabled_configured_backend",
+            )
             raise ValueError(
                 f"No configured or enabled backends available for model '{model}'."
             )
 
         capable = self.get_capable_adapters(model=model, is_embedding=is_embedding)
         if not capable:
+            log_event(
+                telemetry_logger,
+                logging.WARNING,
+                "routing.model_unsupported",
+                f"The model `{model}` is not supported by any enabled backend.",
+                **eval_fields,
+                outcome="model_not_found",
+            )
             raise ModelNotFoundError(
                 f"The model `{model}` does not exist or is not supported.",
                 model=model,
@@ -686,11 +763,33 @@ class MultiBackendRouter(BaseAdapter):
                 default=60.0,
             )
             retry_after = max(1.0, min_cooldown)
+            log_event(
+                telemetry_logger,
+                logging.WARNING,
+                "routing.all_exhausted",
+                f"All backends for model '{model}' are exhausted or cooling down.",
+                **eval_fields,
+                outcome="all_exhausted",
+                retry_after_s=round(retry_after, 1),
+            )
             raise RateLimitError(
                 f"All backends for model '{model}' are exhausted or in cooldown. Please retry after {int(retry_after)} seconds.",
                 status_code=429,
                 retry_after=retry_after,
             )
+
+        log_event(
+            telemetry_logger,
+            logging.INFO,
+            "routing.evaluation",
+            f"Model '{model}' candidates: {[a.name for a in candidates]} (strategy={self.routing_strategy})",
+            model=model,
+            is_embedding=is_embedding,
+            estimated_tokens=estimated_tokens,
+            strategy=self.routing_strategy,
+            backends=snapshot,
+            candidates=[a.name for a in candidates],
+        )
 
         return candidates
 
@@ -728,12 +827,34 @@ class MultiBackendRouter(BaseAdapter):
             model=model, is_embedding=False, estimated_tokens=estimated_tokens
         )
         last_exception = None
+        attempts: list[dict[str, Any]] = []
+        started = time.perf_counter()
 
-        for adapter in candidates:
+        log_event(
+            telemetry_logger,
+            logging.INFO,
+            "routing.start",
+            f"generate_content model='{model}' -> {[a.name for a in candidates]}",
+            op="generate_content",
+            model=model,
+            estimated_tokens=estimated_tokens,
+            strategy=self.routing_strategy,
+            candidates=[a.name for a in candidates],
+        )
+
+        for attempt_no, adapter in enumerate(candidates):
+            attempt_started = time.perf_counter()
+            log_event(
+                telemetry_logger,
+                logging.INFO,
+                "backend.attempt",
+                f"[{attempt_no + 1}/{len(candidates)}] generate_content via '{adapter.name}' for '{model}'",
+                op="generate_content",
+                attempt=attempt_no + 1,
+                backend=adapter.name,
+                model=model,
+            )
             try:
-                logger.info(
-                    f"Routing generate_content (strategy={self.routing_strategy}) to '{adapter.name}'"
-                )
                 res = await adapter.generate_content(
                     model=model,
                     contents=contents,
@@ -741,28 +862,107 @@ class MultiBackendRouter(BaseAdapter):
                     generation_config=generation_config,
                     tools=tools,
                 )
+                duration_ms = (time.perf_counter() - attempt_started) * 1000
                 usage = res.get("usageMetadata", {})
                 tokens_used = usage.get("totalTokenCount") or estimated_tokens or 1
                 adapter.record_usage(tokens=tokens_used)
                 self.last_served_by = adapter.name
                 if on_backend_served:
                     on_backend_served(adapter.name)
+                attempts.append(
+                    {
+                        "backend": adapter.name,
+                        "status": "success",
+                        "duration_ms": round(duration_ms, 1),
+                        "tokens": tokens_used,
+                    }
+                )
+                log_event(
+                    telemetry_logger,
+                    logging.INFO,
+                    "backend.success",
+                    f"Backend '{adapter.name}' served generate_content in {duration_ms:.0f}ms ({tokens_used} tokens)",
+                    op="generate_content",
+                    attempt=attempt_no + 1,
+                    backend=adapter.name,
+                    model=model,
+                    duration_ms=round(duration_ms, 1),
+                    tokens=tokens_used,
+                    prompt_tokens=usage.get("promptTokenCount"),
+                    completion_tokens=usage.get("candidatesTokenCount"),
+                    thoughts_tokens=usage.get("thoughtsTokenCount"),
+                    cached_tokens=usage.get("cachedContentTokenCount"),
+                )
+                log_event(
+                    telemetry_logger,
+                    logging.INFO,
+                    "routing.completed",
+                    f"generate_content succeeded via '{adapter.name}' after {len(attempts)} attempt(s)",
+                    op="generate_content",
+                    model=model,
+                    status="success",
+                    served_by=adapter.name,
+                    fallbacks_used=max(0, len(attempts) - 1),
+                    total_duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    tokens=tokens_used,
+                    attempts=attempts,
+                )
                 return res
             except Exception as e:
+                duration_ms = (time.perf_counter() - attempt_started) * 1000
+                err_fields = {
+                    "op": "generate_content",
+                    "attempt": attempt_no + 1,
+                    "backend": adapter.name,
+                    "model": model,
+                    "duration_ms": round(duration_ms, 1),
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:300],
+                    "status_code": getattr(e, "status_code", None),
+                }
                 if self._is_rate_limit_exception(e):
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
-                    logger.warning(
-                        f"Backend '{adapter.name}' hit rate limit: {e}. Falling back to next backend..."
+                    adapter.set_cooldown(retry_after, reason=str(e)[:200])
+                    attempts.append(
+                        {
+                            "backend": adapter.name,
+                            "status": "rate_limited",
+                            "duration_ms": round(duration_ms, 1),
+                            "error_type": type(e).__name__,
+                            "retry_after_s": round(retry_after, 1),
+                        }
                     )
-                    adapter.set_cooldown(retry_after)
+                    log_event(
+                        telemetry_logger,
+                        logging.WARNING,
+                        "backend.rate_limited",
+                        f"Backend '{adapter.name}' hit rate limit: {e}. Falling back to next backend...",
+                        **err_fields,
+                        retry_after_s=round(retry_after, 1),
+                        will_fallback=True,
+                    )
                 else:
-                    logger.warning(
-                        f"Backend '{adapter.name}' failed with error: {e}. Attempting fallback..."
+                    attempts.append(
+                        {
+                            "backend": adapter.name,
+                            "status": "error",
+                            "duration_ms": round(duration_ms, 1),
+                            "error_type": type(e).__name__,
+                        }
+                    )
+                    log_event(
+                        telemetry_logger,
+                        logging.WARNING,
+                        "backend.failed",
+                        f"Backend '{adapter.name}' failed with error: {e}. Attempting fallback...",
+                        **err_fields,
+                        will_fallback=True,
                     )
                 last_exception = e
                 continue
 
         if last_exception:
+            total_duration_ms = round((time.perf_counter() - started) * 1000, 1)
             if self._is_rate_limit_exception(last_exception):
                 capable = self.get_capable_adapters(model=model, is_embedding=False)
                 min_cooldown = min(
@@ -774,11 +974,36 @@ class MultiBackendRouter(BaseAdapter):
                     default=60.0,
                 )
                 retry_after = max(1.0, min_cooldown)
+                log_event(
+                    telemetry_logger,
+                    logging.ERROR,
+                    "routing.exhausted",
+                    f"All backends exhausted/rate limited for '{model}' after {len(attempts)} attempt(s)",
+                    op="generate_content",
+                    model=model,
+                    status="exhausted",
+                    attempts=attempts,
+                    total_duration_ms=total_duration_ms,
+                    retry_after_s=round(retry_after, 1),
+                )
                 raise RateLimitError(
                     f"All backends for model '{model}' are exhausted or rate limited. Please retry after {int(retry_after)} seconds.",
                     status_code=429,
                     retry_after=retry_after,
                 )
+            log_event(
+                telemetry_logger,
+                logging.ERROR,
+                "routing.failed",
+                f"generate_content failed for '{model}' after {len(attempts)} attempt(s): {last_exception}",
+                op="generate_content",
+                model=model,
+                status="error",
+                attempts=attempts,
+                total_duration_ms=total_duration_ms,
+                error_type=type(last_exception).__name__,
+                error=str(last_exception)[:300],
+            )
             raise last_exception
         raise ValueError("No backends available to fulfill generate_content request.")
 
@@ -802,10 +1027,27 @@ class MultiBackendRouter(BaseAdapter):
             model=model, is_embedding=False, estimated_tokens=estimated_tokens
         )
         last_exception = None
+        attempts: list[dict[str, Any]] = []
+        started = time.perf_counter()
+        candidate_names = [a.name for a in candidates]
 
-        for adapter in candidates:
+        log_event(
+            telemetry_logger,
+            logging.INFO,
+            "routing.start",
+            f"stream_generate_content model='{model}' -> {candidate_names}",
+            op="stream_generate_content",
+            model=model,
+            estimated_tokens=estimated_tokens,
+            strategy=self.routing_strategy,
+            candidates=candidate_names,
+        )
+
+        for attempt_no, adapter in enumerate(candidates):
             success = False
             tokens_used = estimated_tokens or 1
+            chunk_count = 0
+            attempt_started = time.perf_counter()
             try:
                 logger.info(
                     f"Routing stream_generate_content (strategy={self.routing_strategy}) to '{adapter.name}'"
@@ -820,6 +1062,7 @@ class MultiBackendRouter(BaseAdapter):
 
                 # Peek first item to ensure connection and catch immediate rate limit
                 async for chunk in stream_gen:
+                    chunk_count += 1
                     yield chunk
                     success = True
                     if "usageMetadata" in chunk:
@@ -829,45 +1072,137 @@ class MultiBackendRouter(BaseAdapter):
                     break
 
                 if success:
+                    ttfb_ms = (time.perf_counter() - attempt_started) * 1000
                     # Backend accepted the request: attribute THIS request now,
                     # so concurrent requests can't mislabel each other.
                     self.last_served_by = adapter.name
                     if on_backend_served:
                         on_backend_served(adapter.name)
+                    log_event(
+                        telemetry_logger,
+                        logging.INFO,
+                        "backend.stream_connected",
+                        f"Backend '{adapter.name}' streaming connected (TTFB {ttfb_ms:.0f}ms)",
+                        op="stream_generate_content",
+                        attempt=attempt_no + 1,
+                        backend=adapter.name,
+                        model=model,
+                        ttfb_ms=round(ttfb_ms, 1),
+                    )
                     async for chunk in stream_gen:
+                        chunk_count += 1
                         if "usageMetadata" in chunk:
                             tokens_used = (
                                 chunk["usageMetadata"].get("totalTokenCount")
                                 or tokens_used
                             )
                         yield chunk
+                    duration_ms = (time.perf_counter() - attempt_started) * 1000
                     adapter.record_usage(tokens=tokens_used)
                     self.last_served_by = adapter.name
+                    attempts.append(
+                        {
+                            "backend": adapter.name,
+                            "status": "success",
+                            "duration_ms": round(duration_ms, 1),
+                            "tokens": tokens_used,
+                            "chunks": chunk_count,
+                            "ttfb_ms": round(ttfb_ms, 1),
+                        }
+                    )
+                    log_event(
+                        telemetry_logger,
+                        logging.INFO,
+                        "backend.success",
+                        f"Backend '{adapter.name}' finished stream ({chunk_count} chunks, {tokens_used} tokens)",
+                        op="stream_generate_content",
+                        attempt=attempt_no + 1,
+                        backend=adapter.name,
+                        model=model,
+                        duration_ms=round(duration_ms, 1),
+                        tokens=tokens_used,
+                        chunks=chunk_count,
+                        ttfb_ms=round(ttfb_ms, 1),
+                    )
+                    log_event(
+                        telemetry_logger,
+                        logging.INFO,
+                        "routing.completed",
+                        f"stream_generate_content succeeded via '{adapter.name}' after {len(attempts)} attempt(s)",
+                        op="stream_generate_content",
+                        model=model,
+                        status="success",
+                        served_by=adapter.name,
+                        fallbacks_used=max(0, len(attempts) - 1),
+                        total_duration_ms=round(
+                            (time.perf_counter() - started) * 1000, 1
+                        ),
+                        tokens=tokens_used,
+                        chunks=chunk_count,
+                        attempts=attempts,
+                    )
                     return
 
             except Exception as e:
                 is_rate_limit = self._is_rate_limit_exception(e)
+                err_fields = {
+                    "op": "stream_generate_content",
+                    "attempt": attempt_no + 1,
+                    "backend": adapter.name,
+                    "model": model,
+                    "duration_ms": round(
+                        (time.perf_counter() - attempt_started) * 1000, 1
+                    ),
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:300],
+                    "status_code": getattr(e, "status_code", None),
+                    "chunks_before_error": chunk_count,
+                }
                 if is_rate_limit:
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
-                    logger.warning(
-                        f"Backend '{adapter.name}' streaming hit rate limit: {e}. Falling back..."
-                    )
-                    adapter.set_cooldown(retry_after)
+                    adapter.set_cooldown(retry_after, reason=str(e)[:200])
 
                 if not success:
-                    if not is_rate_limit:
-                        logger.warning(
-                            f"Backend '{adapter.name}' stream failed before data: {e}. Falling back..."
-                        )
+                    status_label = "rate_limited" if is_rate_limit else "connect_failed"
+                    attempts.append(
+                        {
+                            "backend": adapter.name,
+                            "status": status_label,
+                            "duration_ms": err_fields["duration_ms"],
+                            "error_type": type(e).__name__,
+                        }
+                    )
+                    log_event(
+                        telemetry_logger,
+                        logging.WARNING,
+                        "backend.rate_limited"
+                        if is_rate_limit
+                        else "backend.connect_failed",
+                        f"Backend '{adapter.name}' stream failed before data: {e}. Falling back..."
+                        if not is_rate_limit
+                        else f"Backend '{adapter.name}' streaming hit rate limit: {e}. Falling back...",
+                        **err_fields,
+                        retry_after_s=(
+                            round(getattr(e, "retry_after", 60.0) or 60.0, 1)
+                            if is_rate_limit
+                            else None
+                        ),
+                        will_fallback=True,
+                    )
                     last_exception = e
                     continue
                 else:
-                    logger.error(
-                        f"Backend '{adapter.name}' stream broke mid-generation: {e}"
+                    log_event(
+                        telemetry_logger,
+                        logging.ERROR,
+                        "backend.stream_broke",
+                        f"Backend '{adapter.name}' stream broke mid-generation: {e}",
+                        **err_fields,
                     )
                     raise
 
         if last_exception:
+            total_duration_ms = round((time.perf_counter() - started) * 1000, 1)
             if self._is_rate_limit_exception(last_exception):
                 capable = self.get_capable_adapters(model=model, is_embedding=False)
                 min_cooldown = min(
@@ -879,11 +1214,36 @@ class MultiBackendRouter(BaseAdapter):
                     default=60.0,
                 )
                 retry_after = max(1.0, min_cooldown)
+                log_event(
+                    telemetry_logger,
+                    logging.ERROR,
+                    "routing.exhausted",
+                    f"All backends exhausted/rate limited for stream '{model}' after {len(attempts)} attempt(s)",
+                    op="stream_generate_content",
+                    model=model,
+                    status="exhausted",
+                    attempts=attempts,
+                    total_duration_ms=total_duration_ms,
+                    retry_after_s=round(retry_after, 1),
+                )
                 raise RateLimitError(
                     f"All backends for model '{model}' are exhausted or rate limited. Please retry after {int(retry_after)} seconds.",
                     status_code=429,
                     retry_after=retry_after,
                 )
+            log_event(
+                telemetry_logger,
+                logging.ERROR,
+                "routing.failed",
+                f"stream_generate_content failed for '{model}' after {len(attempts)} attempt(s): {last_exception}",
+                op="stream_generate_content",
+                model=model,
+                status="error",
+                attempts=attempts,
+                total_duration_ms=total_duration_ms,
+                error_type=type(last_exception).__name__,
+                error=str(last_exception)[:300],
+            )
             raise last_exception
         raise ValueError(
             "No backends available to fulfill stream_generate_content request."
@@ -898,24 +1258,95 @@ class MultiBackendRouter(BaseAdapter):
             model=model, is_embedding=True, estimated_tokens=estimated_tokens
         )
         last_exception = None
+        attempts: list[dict[str, Any]] = []
+        started = time.perf_counter()
 
-        for adapter in candidates:
+        log_event(
+            telemetry_logger,
+            logging.INFO,
+            "routing.start",
+            f"embed_contents model='{model}' ({len(texts)} texts) -> {[a.name for a in candidates]}",
+            op="embed_contents",
+            model=model,
+            num_texts=len(texts),
+            estimated_tokens=estimated_tokens,
+            candidates=[a.name for a in candidates],
+        )
+
+        for attempt_no, adapter in enumerate(candidates):
+            attempt_started = time.perf_counter()
+            log_event(
+                telemetry_logger,
+                logging.INFO,
+                "backend.attempt",
+                f"[{attempt_no + 1}/{len(candidates)}] embed_contents via '{adapter.name}'",
+                op="embed_contents",
+                attempt=attempt_no + 1,
+                backend=adapter.name,
+                model=model,
+            )
             try:
                 res = await adapter.embed_contents(
                     model=model, texts=texts, dimensions=dimensions
                 )
+                duration_ms = (time.perf_counter() - attempt_started) * 1000
                 adapter.record_usage(tokens=estimated_tokens)
+                usage_meta = (
+                    res.get("usageMetadata", {}) if isinstance(res, dict) else {}
+                )
+                attempts.append(
+                    {
+                        "backend": adapter.name,
+                        "status": "success",
+                        "duration_ms": round(duration_ms, 1),
+                    }
+                )
+                log_event(
+                    telemetry_logger,
+                    logging.INFO,
+                    "routing.completed",
+                    f"embed_contents succeeded via '{adapter.name}'",
+                    op="embed_contents",
+                    model=model,
+                    status="success",
+                    served_by=adapter.name,
+                    total_duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    tokens=usage_meta.get("promptTokenCount", estimated_tokens),
+                    attempts=attempts,
+                )
                 return res
             except Exception as e:
+                duration_ms = (time.perf_counter() - attempt_started) * 1000
+                err_fields = {
+                    "op": "embed_contents",
+                    "attempt": attempt_no + 1,
+                    "backend": adapter.name,
+                    "model": model,
+                    "duration_ms": round(duration_ms, 1),
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:300],
+                }
                 if self._is_rate_limit_exception(e):
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
-                    logger.warning(
-                        f"Backend '{adapter.name}' embeddings hit rate limit: {e}. Falling back..."
+                    adapter.set_cooldown(retry_after, reason=str(e)[:200])
+                    attempts.append({"backend": adapter.name, "status": "rate_limited"})
+                    log_event(
+                        telemetry_logger,
+                        logging.WARNING,
+                        "backend.rate_limited",
+                        f"Backend '{adapter.name}' embeddings hit rate limit: {e}. Falling back...",
+                        **err_fields,
+                        will_fallback=True,
                     )
-                    adapter.set_cooldown(retry_after)
                 else:
-                    logger.warning(
-                        f"Backend '{adapter.name}' embeddings failed: {e}. Falling back..."
+                    attempts.append({"backend": adapter.name, "status": "error"})
+                    log_event(
+                        telemetry_logger,
+                        logging.WARNING,
+                        "backend.failed",
+                        f"Backend '{adapter.name}' embeddings failed: {e}. Falling back...",
+                        **err_fields,
+                        will_fallback=True,
                     )
                 last_exception = e
                 continue
@@ -932,6 +1363,17 @@ class MultiBackendRouter(BaseAdapter):
                     default=60.0,
                 )
                 retry_after = max(1.0, min_cooldown)
+                log_event(
+                    telemetry_logger,
+                    logging.ERROR,
+                    "routing.exhausted",
+                    f"All backends exhausted for embeddings '{model}' after {len(attempts)} attempt(s)",
+                    op="embed_contents",
+                    model=model,
+                    status="exhausted",
+                    attempts=attempts,
+                    total_duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                )
                 raise RateLimitError(
                     f"All backends for embedding model '{model}' are exhausted or rate limited. Please retry after {int(retry_after)} seconds.",
                     status_code=429,
@@ -957,6 +1399,15 @@ class MultiBackendRouter(BaseAdapter):
             try:
                 res = await adapter.fetch_available_models(force_refresh=force_refresh)
                 models_dict = res.get("models", {})
+                log_event(
+                    telemetry_logger,
+                    logging.INFO,
+                    "models.provider_fetched",
+                    f"Fetched {len(models_dict)} models from '{name}'",
+                    provider=name,
+                    model_count=len(models_dict),
+                    force_refresh=force_refresh,
+                )
                 for m_id, m_info in models_dict.items():
                     raw_id = m_id.replace("models/", "")
 
@@ -1034,8 +1485,24 @@ class MultiBackendRouter(BaseAdapter):
                         provider_counts[canon_id] = provider_counts.get(canon_id, 0) + 1
             except Exception as e:
                 logger.warning(f"Error fetching models from '{name}': {e}")
+                log_event(
+                    telemetry_logger,
+                    logging.WARNING,
+                    "models.provider_failed",
+                    f"Error fetching models from '{name}': {e}",
+                    provider=name,
+                    error_type=type(e).__name__,
+                    error=str(e)[:300],
+                )
 
         # If empty (e.g. offline), ensure fallback
+        if not aggregated_models:
+            log_event(
+                telemetry_logger,
+                logging.WARNING,
+                "models.aggregation_empty",
+                "No models aggregated from any provider; falling back to Antigravity probe.",
+            )
         if not aggregated_models:
             res = await self.antigravity.fetch_available_models(
                 force_refresh=force_refresh
@@ -1115,6 +1582,15 @@ class MultiBackendRouter(BaseAdapter):
             }
             for m in sorted_model_keys
         }
+
+        log_event(
+            telemetry_logger,
+            logging.INFO,
+            "models.aggregated",
+            f"Aggregated {len(sorted_models)} models across providers",
+            total_models=len(sorted_models),
+            force_refresh=force_refresh,
+        )
 
         return {"models": sorted_models}
 

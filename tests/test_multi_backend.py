@@ -208,6 +208,52 @@ async def test_round_robin_routing():
 
 
 @pytest.mark.asyncio
+async def test_round_robin_two_backends_with_labeling_calls():
+    """Regression: read-only get_ordered_adapters(rotate=False) must not advance
+    the round-robin counter. Previously, per-request labeling calls (e.g. via
+    get_active_backend_name) advanced the counter a second time, which made
+    round-robin with exactly 2 available backends always pick the first one.
+    """
+    mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.name = "antigravity"
+    mock_agy.enabled = True
+    mock_agy.is_configured.return_value = True
+    mock_agy.is_available.return_value = True
+    mock_agy.cooldown_until = 0.0
+    mock_agy.get_cooldown_remaining.return_value = 0.0
+    mock_agy.generate_content = AsyncMock(return_value={"backend": "antigravity"})
+
+    mock_api = MagicMock(spec=GeminiApiAdapter)
+    mock_api.name = "gemini_api"
+    mock_api.enabled = True
+    mock_api.is_configured.return_value = True
+    mock_api.is_available.return_value = True
+    mock_api.cooldown_until = 0.0
+    mock_api.get_cooldown_remaining.return_value = 0.0
+    mock_api.generate_content = AsyncMock(return_value={"backend": "gemini_api"})
+
+    router = MultiBackendRouter(
+        antigravity=mock_agy,
+        gemini_api=mock_api,
+        gemini_web=None,
+        routing_strategy="round_robin",
+    )
+    router.gemini_web.enabled = False
+
+    # Mirror the real request path in app/routes/openai.py:
+    # check_availability (routing, rotates) + get_active_backend_name (label,
+    # must not rotate).
+    calls = []
+    for _ in range(6):
+        candidates = router.check_availability(model="gemini-2.0-flash")
+        calls.append(candidates[0].name)
+        router.get_ordered_adapters(rotate=False)
+
+    assert calls.count("antigravity") == 3
+    assert calls.count("gemini_api") == 3
+
+
+@pytest.mark.asyncio
 async def test_streaming_fallback_on_429():
     """Verify stream_generate_content fallback when initial provider rate-limits."""
 

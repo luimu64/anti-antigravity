@@ -20,11 +20,10 @@ from app.providers.base import ModelNotFoundError
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.openai import router as openai_router
+from app.telemetry import log_event, setup_logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+# Configure structured telemetry logging (LOG_LEVEL / LOG_FORMAT / LOG_FILE env vars)
+setup_logging()
 logger = logging.getLogger("google_gate")
 
 
@@ -34,6 +33,19 @@ async def lifespan(app: FastAPI):
     Startup & shutdown lifespan events.
     """
     logger.info("Initializing Google Gate bridge...")
+    log_event(
+        logger,
+        logging.INFO,
+        "server.startup",
+        "Google Gate starting",
+        routing_strategy=getattr(client, "routing_strategy", None),
+        backends={
+            name: {"enabled": adapter.enabled}
+            for name, adapter in getattr(client, "adapters", {}).items()
+        },
+        log_level=os.getenv("LOG_LEVEL", "INFO"),
+        log_format=os.getenv("LOG_FORMAT", "text"),
+    )
 
     # Check authentication state
     if auth_manager.access_token or auth_manager.refresh_token:
