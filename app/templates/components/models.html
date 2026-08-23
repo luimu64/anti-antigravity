@@ -12,6 +12,7 @@
         <span>Show Hidden</span>
         <input type="checkbox" id="toggle-hidden-models" class="checkbox checkbox-xs checkbox-primary" onchange="toggleHiddenModels(this.checked)">
       </label>
+      {{ ui.action_button('Export', 'exportModels()', title='Download raw per-backend model catalog as JSON') }}
       {{ ui.action_button('Refresh Models', 'loadModels()', title='Refresh models list') }}
     </div>
   </div>
@@ -34,6 +35,39 @@
   // Available Models Management
   window._allAvailableModels = [];
   window._showHiddenModels = false;
+
+  // Export raw per-backend model catalogs as a JSON download
+  async function exportModels() {
+    try {
+      const res = await fetch('/api/models/export');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const failed = Object.entries(data.backends || {})
+        .filter(([, b]) => b.error)
+        .map(([name]) => name);
+      a.download = `google-gate-models-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      const counts = Object.entries(data.backends || {})
+        .map(([name, b]) => `${name}: ${b.model_count}${b.error ? ' (error)' : ''}`)
+        .join(', ');
+      showToast(
+        `Exported ${data.total_raw_models} raw models (${counts})`
+          + (failed.length ? ` — fetch errors: ${failed.join(', ')}` : ''),
+        failed.length ? 'error' : 'success'
+      );
+    } catch (err) {
+      showToast('Model export failed: ' + err.message, 'error');
+    }
+  }
 
   function toggleHiddenModels(show) {
     window._showHiddenModels = !!show;

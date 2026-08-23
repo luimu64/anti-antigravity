@@ -181,3 +181,32 @@ async def test_dashboard_models_transformed():
             assert "base_model_name" in item
             assert "selectable_model_ids" in item
             assert "available_sources" in item
+
+
+@pytest.mark.asyncio
+async def test_models_export_raw_catalog():
+    """Export returns raw upstream model IDs per backend, not normalized ones."""
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/api/models/export")
+        assert resp.status_code == 200
+        data = resp.json()
+
+    assert "exported_at" in data
+    assert data["gateway_version"] == "1.0.0"
+    assert "routing_strategy" in data
+    assert isinstance(data["backends"], dict)
+    assert isinstance(data["total_raw_models"], int)
+
+    for _name, entry in data["backends"].items():
+        assert entry["enabled"] in (True, False)
+        assert "configured" in entry and "available" in entry
+        assert "model_count" in entry and "models" in entry
+        if entry["error"] is None:
+            assert entry["model_count"] == len(entry["models"])
+            for model_id, info in entry["models"].items():
+                # Raw upstream IDs preserved: no models/ prefix stripping to
+                # canonical names; hidden annotation always present.
+                assert not model_id.startswith("models/")
+                assert isinstance(info.get("hidden"), bool)

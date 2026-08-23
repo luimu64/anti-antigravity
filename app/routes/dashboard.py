@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 
 from app.auth import auth_manager
 from app.client import client
-from app.config import SERVER_PORT
+from app.config import CANONICAL_MODEL_MAP, HIDDEN_MODELS, SERVER_PORT
 from app.history import history_manager
 from app.keys import api_key_manager
 from app.transformer import transform_model_catalog, transform_quota_summary
@@ -389,6 +390,60 @@ async def get_dashboard_models():
             status_code=500,
             content={"status": "error", "error": str(e), "models": [], "total": 0},
         )
+
+
+@router.get("/api/models/export")
+async def export_models():
+    """
+    Export the raw upstream model catalogs from every configured backend.
+
+    Returns the actual provider model IDs and metadata (no normalization or
+    consolidation), suitable for offline testing and regression baselines.
+    """
+    export: dict[str, Any] = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "gateway_version": "1.0.0",
+        "routing_strategy": getattr(client, "routing_strategy", None),
+        "total_raw_models": 0,
+        "backends": {},
+    }
+
+    adapters = getattr(client, "adapters", {}) or {}
+    for name, adapter in adapters.items():
+        entry: dict[str, Any] = {
+            "enabled": bool(adapter.enabled),
+            "configured": adapter.is_configured(),
+            "available": adapter.is_available(),
+            "cooldown_remaining_s": round(adapter.get_cooldown_remaining(), 1),
+            "model_count": 0,
+            "error": None,
+            "models": {},
+        }
+        try:
+            res = await adapter.fetch_available_models()
+            for m_id, m_info in (res.get("models", {}) or {}).items():
+                clean_id = str(m_id).replace("models/", "")
+                record = dict(m_info) if isinstance(m_info, dict) else {}
+                # Raw-ID-level annotations (upstream id is preserved as-is)
+                record["hidden"] = bool(
+                    clean_id in HIDDEN_MODELS
+                    or clean_id.startswith("tab_")
+                    or record.get("hidden", False)
+                )
+                if name == "antigravity":
+                    record["canonical_base"] = CANONICAL_MODEL_MAP.get(
+                        clean_id, clean_id
+                    )
+                entry["models"][clean_id] = record
+            entry["model_count"] = len(entry["models"])
+        except Exception as e:
+            entry["error"] = f"{type(e).__name__}: {e}"
+            logger.warning(f"Model export failed for '{name}': {e}")
+
+        export["backends"][name] = entry
+        export["total_raw_models"] += entry["model_count"]
+
+    return JSONResponse(content=export)
 
 
 @router.get("/health")
