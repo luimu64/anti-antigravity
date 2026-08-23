@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 import logging
@@ -123,6 +124,14 @@ class GeminiWebAdapter(BaseAdapter):
             or os.getenv("SECURE_3PSID")
             or os.environ.get("__Secure-3PSID", "")
         )
+        self.proxy = os.getenv("GEMINI_WEB_PROXY") or None
+
+        # Optional callback (usually router.save_config) invoked after credential
+        # mutations such as __Secure-1PSIDTS rotation so they survive restarts.
+        self.persist_cb = None
+
+        # Timestamp of the last successful RotateCookies refresh.
+        self._last_rotation: float = 0.0
 
         self._http_client: httpx.AsyncClient | None = None
         self._snlm0e_token: str | None = None
@@ -305,7 +314,8 @@ class GeminiWebAdapter(BaseAdapter):
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(300.0, connect=30.0), follow_redirects=True
+                timeout=httpx.Timeout(300.0, connect=30.0),
+                proxy=self.proxy,
             )
         return self._http_client
 
@@ -366,6 +376,21 @@ class GeminiWebAdapter(BaseAdapter):
                     retry_after=retry_after,
                 )
 
+            location = ""
+            with contextlib.suppress(Exception):
+                location = resp.headers.get("location") or ""
+            if resp.status_code in (301, 302, 303, 307, 308) or (
+                "google.com/sorry" in location
+            ):
+                self.set_cooldown(300.0)
+                raise RateLimitError(
+                    "Gemini Web session init redirected to upstream abuse "
+                    "challenge (google.com/sorry). Route via a clean/residential "
+                    "IP (GEMINI_WEB_PROXY) or wait for reputation to clear.",
+                    status_code=429,
+                    retry_after=300.0,
+                )
+
             if resp.status_code in (401, 403):
                 logger.warning(f"Gemini Web session init returned {resp.status_code}")
                 return None
@@ -375,6 +400,15 @@ class GeminiWebAdapter(BaseAdapter):
                 match_snlm = re.search(r'"SNlM0e":"([^"]+)"', resp.text)
                 if match_snlm:
                     self._snlm0e_token = match_snlm.group(1)
+                elif not self._snlm0e_token:
+                    # 200 with no SNlM0e means Google served the anonymous
+                    # shell: stale PSIDTS, flagged IP, or invalid cookies.
+                    self.is_valid_session = False
+                    logger.warning(
+                        "Gemini Web session is NOT authenticated "
+                        "(no SNlM0e token): requests will run anonymously or fail. "
+                        "Re-export __Secure-1PSID/__Secure-1PSIDTS from a browser."
+                    )
 
                 match_bl = re.search(r'"cfb2h":"([^"]+)"', resp.text)
                 if match_bl:
@@ -410,6 +444,78 @@ class GeminiWebAdapter(BaseAdapter):
         except Exception as e:
             logger.debug(f"Could not extract SNlM0e token: {e}")
         return self._snlm0e_token
+
+    async def rotate_psidts(self) -> bool:
+        """
+        Refresh __Secure-1PSIDTS via accounts.google.com/RotateCookies.
+
+        Google rotates this token every few minutes and silently degrades
+        sessions carrying a stale value to anonymous. Rotating before expiry
+        keeps a session alive indefinitely; once lapsed, only a fresh browser
+        export can restart the chain.
+
+        Returns True when a fresh token was issued and applied.
+        """
+        if not self.is_configured() or not self.psidts:
+            return False
+
+        cookie_header = f"__Secure-1PSID={self.psid}; __Secure-1PSIDTS={self.psidts}"
+        if self.sapisid:
+            cookie_header += f"; SAPISID={self.sapisid}"
+
+        http = self.get_http_client()
+        try:
+            resp = await http.post(
+                "https://accounts.google.com/RotateCookies",
+                content='[000,"-0000000000000000000"]',
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": self._get_headers()["User-Agent"],
+                    "Cookie": cookie_header,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Gemini Web PSIDTS rotation request failed: {e}")
+            return False
+
+        fresh = None
+        for set_cookie in resp.headers.get_list("set-cookie"):
+            if set_cookie.startswith("__Secure-1PSIDTS="):
+                fresh = set_cookie.split(";", 1)[0].split("=", 1)[1]
+                break
+
+        if not fresh:
+            logger.debug(
+                f"Gemini Web RotateCookies issued no new token "
+                f"(status={resp.status_code}); session may need re-export"
+            )
+            return False
+
+        self.psidts = fresh
+        self._last_rotation = time.time()
+        # Session state is keyed to the rotated token; force re-scrape.
+        self._snlm0e_token = None
+        logger.info("Gemini Web __Secure-1PSIDTS rotated successfully")
+        if self.persist_cb:
+            try:
+                self.persist_cb()
+            except Exception as e:
+                logger.warning(f"Failed to persist rotated PSIDTS: {e}")
+        return True
+
+    async def ensure_fresh_session(self) -> None:
+        """
+        Lazily rotate __Secure-1PSIDTS when it nears staleness, keeping the
+        session authenticated without a background task.
+        """
+        if not (self.enabled and self.is_configured()):
+            return
+        now = time.time()
+        if self._last_rotation and now - self._last_rotation < 480.0:
+            return
+        rotated = await self.rotate_psidts()
+        if rotated:
+            await self._init_session()
 
     def _extract_prompt_text(
         self,
@@ -607,9 +713,11 @@ class GeminiWebAdapter(BaseAdapter):
         if not self.is_configured():
             raise ValueError("Gemini Web cookies (__Secure-1PSID) are not configured.")
 
+        await self.ensure_fresh_session()
+
         prompt_text = self._extract_prompt_text(contents, system_instruction)
-        at_token = await self._init_session() or "placeholder_at"
-        hex_id, model_num, default_thinking = self._resolve_model_metadata(model)
+        at_token = await self._init_session()
+        hex_id, _model_num, default_thinking = self._resolve_model_metadata(model)
 
         # Determine thinking level (1 = standard, 2 = extended mode)
         thinking_level = default_thinking
@@ -619,7 +727,6 @@ class GeminiWebAdapter(BaseAdapter):
             if budget is not None:
                 thinking_level = 2 if budget > 0 or budget == -1 else 1
 
-        is_extended_thinking = thinking_level == 2
         client_uuid = uuid.uuid4().hex.upper()
 
         # Capacity tail according to capacity field
@@ -627,7 +734,7 @@ class GeminiWebAdapter(BaseAdapter):
 
         # Build JSPB headers
         req_id = int(time.time() * 1000) % 1000000
-        url = f"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl={self._build_label}&_reqid={req_id}&rt=c"
+        url = f"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl={self._build_label}&hl=en&_reqid={req_id}&rt=c"
 
         headers = self._get_headers()
         headers.update(
@@ -647,7 +754,7 @@ class GeminiWebAdapter(BaseAdapter):
                         None,
                         capacity_tail,
                         thinking_level,
-                        self._session_id,
+                        self._session_id or None,
                     ]
                 ),
                 "x-goog-ext-525005358-jspb": json.dumps([client_uuid, 1]),
@@ -656,26 +763,39 @@ class GeminiWebAdapter(BaseAdapter):
             }
         )
 
-        # Build inner JSPB payload
-        inner = [None] * 81
+        # Sparse inner JSPB payload (69-element layout, matching the live web
+        # client). Model selection happens via the header above; inner[17]
+        # carries the reasoning mode: [[0]] explicit/extended, [[4]] auto.
+        inner: list[Any] = [None] * 69
         inner[0] = [prompt_text, 0, None, None, None, None, 0]
         inner[1] = ["en"]
         inner[2] = ["", "", "", None, None, None, None, None, None, ""]
-        inner[17] = [[0]] if is_extended_thinking else [[4]]
+        inner[6] = [1]
+        inner[7] = 1
+        inner[10] = 1
+        inner[11] = 0
+        inner[17] = [[0]] if thinking_level == 2 else [[4]]
+        inner[18] = 0
         inner[27] = 1
         inner[30] = [4]
         inner[41] = [1]
-        inner[45] = 1
+        inner[53] = 0
         inner[59] = client_uuid
-        inner[79] = model_num
-        inner[80] = thinking_level
+        inner[61] = []
+        inner[68] = 2
 
-        freq = [None, json.dumps([[None, json.dumps(inner)]])]
-        post_data = {"f.req": json.dumps(freq), "at": at_token}
+        def _no_escape(obj: Any) -> str:
+            return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+        freq = [None, _no_escape([None, _no_escape(inner)])]
+        post_data = {"f.req": json.dumps(freq)}
+        if at_token:
+            post_data["at"] = at_token
 
         http = self.get_http_client()
         logger.info(
-            f"[GeminiWeb] Sending StreamGenerate request for model={model} (model_num={model_num}, thinking_level={thinking_level})"
+            f"[GeminiWeb] Sending StreamGenerate request for model={model} "
+            f"(hex_id={hex_id}, thinking_level={thinking_level})"
         )
 
         try:
@@ -685,11 +805,28 @@ class GeminiWebAdapter(BaseAdapter):
             self.set_cooldown(30.0)
             raise RateLimitError(f"Gemini Web network error: {e}") from e
 
+        if resp.status_code == 302 or "google.com/sorry" in (
+            resp.headers.get("location") or ""
+        ):
+            # IP-reputation gate: Google redirects generation RPCs to its
+            # abuse wall. The exemption cookie covers page/metadata RPCs but
+            # not StreamGenerate; only browser-context requests pass.
+            self.set_cooldown(300.0)
+            raise RateLimitError(
+                "Gemini Web blocked by upstream abuse challenge "
+                "(302 -> google.com/sorry). Route via a clean/residential "
+                "IP (GEMINI_WEB_PROXY) or wait for reputation to clear.",
+                status_code=429,
+                retry_after=300.0,
+            )
+
         if resp.status_code in (429, 403, 401):
+            challenge = "recaptcha" in resp.text[:3000].lower()
             retry_after = _extract_retry_after(resp, self.default_cooldown)
             self.set_cooldown(retry_after)
             raise RateLimitError(
-                f"Gemini Web returned status {resp.status_code}",
+                f"Gemini Web returned status {resp.status_code}"
+                + (" (reCAPTCHA challenge)" if challenge else ""),
                 status_code=429 if resp.status_code == 429 else resp.status_code,
                 retry_after=retry_after,
             )

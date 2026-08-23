@@ -219,7 +219,12 @@ class BaseAdapter(ABC):
         return 0.0
 
     def get_rate_limit_quotas(self) -> list[dict[str, Any]]:
-        """Return normalized rate limit and cooldown quota items for this adapter."""
+        """Return normalized rate limit and cooldown quota items for this adapter.
+
+        Fractions always reflect measured sliding-window usage. Active cooldowns
+        are reported as a dedicated item (plus ``in_cooldown`` flags) rather than
+        forcing every gauge to fully-consumed.
+        """
         if not hasattr(self, "rate_limiter"):
             return []
         items: list[dict[str, Any]] = []
@@ -227,98 +232,85 @@ class BaseAdapter(ABC):
         cooldown = self.get_cooldown_remaining()
         rl = self.rate_limiter
         rl._prune(now)
+        in_cooldown = cooldown > 0
+
+        def _window_reset(oldest_ts: float | None, window: float) -> float:
+            if oldest_ts is None:
+                return 0.0
+            return max(0.0, round(window - (now - oldest_ts), 1))
+
+        def _item(
+            display_name: str,
+            used: float,
+            limit: int,
+            unit: str,
+            reset_secs: float,
+        ) -> dict[str, Any]:
+            frac_used = min(1.0, max(0.0, round(used / limit, 4))) if limit > 0 else 0.0
+            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
+            return {
+                "display_name": display_name,
+                "fraction_used": frac_used,
+                "remaining_fraction": rem_frac,
+                "fraction_remaining": rem_frac,
+                "used": used,
+                "limit": limit,
+                "unit": unit,
+                "in_cooldown": in_cooldown,
+                "reset_time_seconds": reset_secs,
+                "model_id": self.name,
+                "backend": self.name,
+                "source": self.name,
+            }
 
         if rl.rpm > 0:
-            used = len(rl._minute_requests)
-            frac_used = (
-                1.0 if cooldown > 0 else min(1.0, max(0.0, round(used / rl.rpm, 4)))
-            )
-            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
-            reset_secs = (
-                round(cooldown, 1)
-                if cooldown > 0
-                else (
-                    max(0.0, round(60.0 - (now - rl._minute_requests[0]), 1))
-                    if rl._minute_requests
-                    else 0.0
-                )
-            )
+            oldest = rl._minute_requests[0] if rl._minute_requests else None
             items.append(
-                {
-                    "display_name": "Requests Per Minute (RPM)",
-                    "fraction_used": frac_used,
-                    "remaining_fraction": rem_frac,
-                    "fraction_remaining": rem_frac,
-                    "reset_time_seconds": reset_secs,
-                    "model_id": self.name,
-                    "backend": self.name,
-                    "source": self.name,
-                }
+                _item(
+                    "Requests Per Minute (RPM)",
+                    float(len(rl._minute_requests)),
+                    rl.rpm,
+                    "requests",
+                    _window_reset(oldest, 60.0),
+                )
             )
 
         if rl.tpm > 0:
             used = sum(t[1] for t in rl._minute_tokens)
-            frac_used = (
-                1.0 if cooldown > 0 else min(1.0, max(0.0, round(used / rl.tpm, 4)))
-            )
-            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
-            reset_secs = (
-                round(cooldown, 1)
-                if cooldown > 0
-                else (
-                    max(0.0, round(60.0 - (now - rl._minute_tokens[0][0]), 1))
-                    if rl._minute_tokens
-                    else 0.0
-                )
-            )
+            oldest = rl._minute_tokens[0][0] if rl._minute_tokens else None
             items.append(
-                {
-                    "display_name": "Tokens Per Minute (TPM)",
-                    "fraction_used": frac_used,
-                    "remaining_fraction": rem_frac,
-                    "fraction_remaining": rem_frac,
-                    "reset_time_seconds": reset_secs,
-                    "model_id": self.name,
-                    "backend": self.name,
-                    "source": self.name,
-                }
+                _item(
+                    "Tokens Per Minute (TPM)",
+                    float(used),
+                    rl.tpm,
+                    "tokens",
+                    _window_reset(oldest, 60.0),
+                )
             )
 
         if rl.rpd > 0:
-            used = len(rl._day_requests)
-            frac_used = (
-                1.0 if cooldown > 0 else min(1.0, max(0.0, round(used / rl.rpd, 4)))
-            )
-            rem_frac = max(0.0, min(1.0, round(1.0 - frac_used, 4)))
-            reset_secs = (
-                round(cooldown, 1)
-                if cooldown > 0
-                else (
-                    max(0.0, round(86400.0 - (now - rl._day_requests[0]), 1))
-                    if rl._day_requests
-                    else 0.0
+            oldest = rl._day_requests[0] if rl._day_requests else None
+            items.append(
+                _item(
+                    "Requests Per Day (RPD)",
+                    float(len(rl._day_requests)),
+                    rl.rpd,
+                    "requests",
+                    _window_reset(oldest, 86400.0),
                 )
             )
-            items.append(
-                {
-                    "display_name": "Requests Per Day (RPD)",
-                    "fraction_used": frac_used,
-                    "remaining_fraction": rem_frac,
-                    "fraction_remaining": rem_frac,
-                    "reset_time_seconds": reset_secs,
-                    "model_id": self.name,
-                    "backend": self.name,
-                    "source": self.name,
-                }
-            )
 
-        if not items and cooldown > 0:
+        if in_cooldown:
             items.append(
                 {
                     "display_name": "Cooldown",
                     "fraction_used": 1.0,
                     "remaining_fraction": 0.0,
                     "fraction_remaining": 0.0,
+                    "used": None,
+                    "limit": None,
+                    "unit": None,
+                    "in_cooldown": True,
                     "reset_time_seconds": round(cooldown, 1),
                     "model_id": self.name,
                     "backend": self.name,

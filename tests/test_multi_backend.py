@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -698,6 +699,8 @@ async def test_gemini_web_adapter_prompt_and_generation():
     mock_resp = MagicMock(spec=httpx.Response)
     mock_resp.status_code = 200
     mock_resp.text = raw_rpc_text
+    mock_resp.headers = MagicMock()
+    mock_resp.headers.get = MagicMock(return_value=None)
 
     mock_client = AsyncMock()
     mock_client.is_closed = False
@@ -717,6 +720,123 @@ async def test_gemini_web_adapter_prompt_and_generation():
     assert result["thoughts"] == "Thinking step 1"
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["thoughts"] == "Thinking step 1"
+
+
+@pytest.mark.asyncio
+async def test_gemini_web_rotate_psidts_success():
+    """Verify RotateCookies refresh updates psidts, clears session state, persists."""
+    adapter = GeminiWebAdapter(psid="psid_a", psidts="ts_old", sapisid="sap")
+
+    fresh_cookie = "__Secure-1PSIDTS=ts_new; Path=/; Secure; HttpOnly"
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.headers = MagicMock()
+    mock_resp.headers.get_list = MagicMock(return_value=[fresh_cookie])
+
+    mock_client = MagicMock(spec=httpx.AsyncClient)
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    persist_calls = []
+    adapter.persist_cb = lambda: persist_calls.append(1)
+
+    assert await adapter.rotate_psidts() is True
+    assert adapter.psidts == "ts_new"
+    assert adapter._snlm0e_token is None
+    assert adapter._last_rotation > 0
+    assert len(persist_calls) == 1
+
+    # Rotation request hit the RotateCookies endpoint with current cookies
+    kwargs = mock_client.post.call_args
+    assert "RotateCookies" in kwargs.args[0]
+    assert kwargs.kwargs["headers"]["Cookie"] == (
+        "__Secure-1PSID=psid_a; __Secure-1PSIDTS=ts_old; SAPISID=sap"
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_web_rotate_psidts_no_token():
+    """Verify a lapsed token (no Set-Cookie) leaves credentials untouched."""
+    adapter = GeminiWebAdapter(psid="psid_a", psidts="ts_old")
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 401
+    mock_resp.headers = MagicMock()
+    mock_resp.headers.get_list = MagicMock(return_value=[])
+
+    mock_client = MagicMock(spec=httpx.AsyncClient)
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    assert await adapter.rotate_psidts() is False
+    assert adapter.psidts == "ts_old"
+    assert adapter._last_rotation == 0.0
+
+
+def test_gemini_web_stream_payload_shape():
+    """Verify StreamGenerate uses the live 69-element inner payload layout."""
+    adapter = GeminiWebAdapter(
+        psid="test_psid_val", psidts="test_psidts_val", enabled=True
+    )
+    raw_rpc_text = ")]}'\n50\n" + '[["wrb.fr",null,"[]"]]'
+
+    captured = {}
+
+    async def capture_post(url, data=None, headers=None):
+        captured["url"] = url
+        captured["data"] = data or {}
+        captured["headers"] = headers or {}
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = raw_rpc_text
+        resp.headers = MagicMock()
+        resp.headers.get = MagicMock(return_value=None)
+        return resp
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock(side_effect=capture_post)
+    mock_client.get = AsyncMock(
+        return_value=MagicMock(status_code=200, text='{"SNlM0e":"tok"}')
+    )
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+
+    async def consume():
+        chunks = []
+        async for chunk in adapter.stream_generate_content(
+            model="gemini-3.7-flash",
+            contents=[{"role": "user", "parts": [{"text": "Hi"}]}],
+            generation_config={"thinkingConfig": {"thinkingBudget": -1}},
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    asyncio.run(consume())
+
+    freq = json.loads(captured["data"]["f.req"])
+    outer_inner = json.loads(freq[1])  # [null, "<json-string>"]
+    inner = (
+        json.loads(outer_inner[1])
+        if isinstance(outer_inner[1], str)
+        else outer_inner[1]
+    )
+
+    # Sparse 69-element layout; legacy indices absent; thinking mode present.
+    assert len(inner) == 69
+    assert inner[45] is None
+    assert inner[17] == [[0]]  # extended thinking requested via budget -1
+    assert inner[61] == []
+    assert inner[68] == 2
+
+    # Request UUID echoed between selection header and payload
+    sel_header = json.loads(captured["headers"]["x-goog-ext-525005358-jspb"])
+    assert sel_header[0] == inner[59]
+    assert "hl=en" in captured["url"]
 
 
 def test_vision_model_mapping_across_all_adapters():
@@ -944,7 +1064,7 @@ async def test_antigravity_quota_summary_exhaustion_trigger():
 def test_base_adapter_get_rate_limit_quotas():
     """Verify BaseAdapter.get_rate_limit_quotas computes normalized quota and rate limit items."""
     api_adapter = GeminiApiAdapter(api_key="AIzaSyTest", enabled=True)
-    # Default rates: rpm=15, tpm=1000000, rpd=1500
+    # Default rates: rpm=10, tpm=250000, rpd=250 (documented free-tier Flash limits)
     quotas = api_adapter.get_rate_limit_quotas()
     assert len(quotas) == 3
 
@@ -955,9 +1075,10 @@ def test_base_adapter_get_rate_limit_quotas():
     assert rpm_q["backend"] == "gemini_api"
     assert rpm_q["source"] == "gemini_api"
     assert rpm_q["model_id"] == "gemini_api"
+    assert rpm_q["in_cooldown"] is False
 
     # Record usage
-    api_adapter.record_usage(tokens=250000)
+    api_adapter.record_usage(tokens=62500)
     quotas_used = api_adapter.get_rate_limit_quotas()
     rpm_used = next(q for q in quotas_used if "RPM" in q["display_name"])
     tpm_used = next(q for q in quotas_used if "TPM" in q["display_name"])
@@ -965,17 +1086,35 @@ def test_base_adapter_get_rate_limit_quotas():
     assert rpm_used["fraction_used"] > 0.0
     assert rpm_used["remaining_fraction"] < 1.0
     assert rpm_used["reset_time_seconds"] > 0.0
+    assert rpm_used["used"] == 1
+    assert rpm_used["limit"] == 10
+    assert rpm_used["unit"] == "requests"
 
     assert pytest.approx(tpm_used["fraction_used"], 0.001) == 0.25
     assert pytest.approx(tpm_used["remaining_fraction"], 0.001) == 0.75
+    assert tpm_used["used"] == 62500
+    assert tpm_used["limit"] == 250000
+    assert tpm_used["unit"] == "tokens"
 
-    # Test cooldown state
+    # Test cooldown state: measured usage fractions are preserved on metric
+    # gauges; a dedicated Cooldown item reports the unavailability countdown.
     api_adapter.set_cooldown(45.0)
     quotas_cd = api_adapter.get_rate_limit_quotas()
+    cd_item = next(q for q in quotas_cd if q["display_name"] == "Cooldown")
+    assert cd_item["fraction_used"] == 1.0
+    assert cd_item["remaining_fraction"] == 0.0
+    assert cd_item["in_cooldown"] is True
+    assert pytest.approx(cd_item["reset_time_seconds"], 1.0) == 45.0
+
     for q in quotas_cd:
-        assert q["fraction_used"] == 1.0
-        assert q["remaining_fraction"] == 0.0
-        assert pytest.approx(q["reset_time_seconds"], 1.0) == 45.0
+        assert q["in_cooldown"] is True
+
+    rpm_cd = next(q for q in quotas_cd if "RPM" in q["display_name"])
+    assert rpm_cd["fraction_used"] > 0.0
+    assert rpm_cd["fraction_used"] < 1.0
+
+    tpm_cd = next(q for q in quotas_cd if "TPM" in q["display_name"])
+    assert pytest.approx(tpm_cd["fraction_used"], 0.001) == 0.25
 
     # Gemini Web (rpm=60, tpm=500000, rpd=0)
     web_adapter = GeminiWebAdapter(psid="test-psid", enabled=True)

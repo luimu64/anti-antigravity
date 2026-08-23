@@ -80,6 +80,8 @@ class MultiBackendRouter(BaseAdapter):
         self.antigravity = antigravity or AntigravityAdapter()
         self.gemini_api = gemini_api or GeminiApiAdapter()
         self.gemini_web = gemini_web or GeminiWebAdapter()
+        # Persist rotated __Secure-1PSIDTS tokens so sessions survive restarts.
+        self.gemini_web.persist_cb = self.save_config
 
         self.adapters: dict[str, BaseAdapter] = {
             "antigravity": self.antigravity,

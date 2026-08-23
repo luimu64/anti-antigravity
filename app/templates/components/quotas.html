@@ -13,13 +13,30 @@
 {% endcall %}
 
 <script>
+  // Format large counts compactly: 1234 -> 1.2k, 2500000 -> 2.5M
+  function fmtCount(n) {
+    if (n == null) return '';
+    if (n >= 1000000) return parseFloat((n / 1000000).toFixed(1)) + 'M';
+    if (n >= 10000) return Math.round(n / 1000) + 'k';
+    if (n >= 1000) return parseFloat((n / 1000).toFixed(1)) + 'k';
+    return String(Math.round(n));
+  }
+
+  // Format percentage preserving sub-percent precision below 10%
+  function fmtPct(frac) {
+    const pct = frac * 100;
+    if (pct >= 99.95) return '100';
+    if (pct < 10) return (Math.round(pct * 10) / 10).toFixed(1);
+    return String(Math.round(pct));
+  }
+
   // Load Quotas
   async function loadQuotas() {
     const container = document.getElementById('quotas-container');
     try {
       const res = await fetch('/api/quotas');
       const data = await res.json();
-      
+
       if (!res.ok) {
         container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load quotas')}</p>`;
         return;
@@ -38,17 +55,48 @@
           : (g.fraction_remaining != null
             ? g.fraction_remaining
             : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0));
-        const pct = Math.max(0, Math.min(100, Math.round(remainingFrac * 100)));
+        const pctLabel = fmtPct(Math.max(0, Math.min(1, remainingFrac)));
+        const isCooldown = !!g.in_cooldown || g.display_name === 'Cooldown';
         const resetSecs = (g.reset_time_seconds != null && g.reset_time_seconds >= 0)
           ? `${Math.round(g.reset_time_seconds)}s`
           : 'N/A';
-        
+
+        let usageLine = '';
+        if (g.used != null && g.limit > 0) {
+          usageLine = `${fmtCount(g.used)} / ${fmtCount(g.limit)} ${g.unit === 'tokens' ? 'tok' : 'req'}`;
+        }
+
+        // Cooldown items get a distinct warning card instead of a gauge
+        if (isCooldown) {
+          html += `
+            <div class="card bg-base-100 p-4 border border-warning/40 rounded-box shadow-sm">
+              <div class="flex justify-between items-start gap-2 mb-1">
+                <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+                  <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
+                  <span class="badge badge-warning badge-xs font-semibold shrink-0">cooling down</span>
+                </div>
+                <span class="font-mono text-warning text-sm shrink-0">${resetSecs}</span>
+              </div>
+              <progress class="progress progress-warning w-full mb-2"></progress>
+              <div class="flex justify-between text-xs text-base-content/70">
+                <span>Retrying soon</span>
+                <span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        const pctNum = parseFloat(pctLabel);
         let progressColor = 'progress-primary';
         let badgeColor = 'badge-ghost';
-        if (pct <= 10) {
+        if (g.in_cooldown) {
           progressColor = 'progress-error';
           badgeColor = 'badge-error';
-        } else if (pct <= 30) {
+        } else if (pctNum <= 10) {
+          progressColor = 'progress-error';
+          badgeColor = 'badge-error';
+        } else if (pctNum <= 30) {
           progressColor = 'progress-warning';
           badgeColor = 'badge-warning';
         }
@@ -78,12 +126,12 @@
                 <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
                 <span class="badge ${sourceBadgeClass} badge-xs font-semibold shrink-0">${escapeHtml(backendLabel)}</span>
               </div>
-              <span class="badge badge-sm ${badgeColor} shrink-0">${pct}% available</span>
+              <span class="badge badge-sm ${badgeColor} shrink-0 font-mono">${pctLabel}% available</span>
             </div>
-            <progress class="progress ${progressColor} w-full mb-2" value="${pct}" max="100"></progress>
-            <div class="flex justify-between text-xs text-base-content/70">
+            <progress class="progress ${progressColor} w-full mb-2" value="${pctNum}" max="100"></progress>
+            <div class="flex justify-between text-xs text-base-content/70 gap-2">
               <span>Reset: ${resetSecs}</span>
-              <span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>
+              ${usageLine ? `<span class="font-mono shrink-0">${usageLine}</span>` : `<span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>`}
             </div>
           </div>
         `;

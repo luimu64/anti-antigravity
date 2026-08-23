@@ -283,12 +283,6 @@ When routing requests to different models through this unified API, the backend 
 | **Thought Signature** | **Mandatory** across turns for function calls | Not required | Not required |
 | **Multimodal Support** | Inline image bytes (`image/jpeg`, `image/png`, `image/webp`) | Inline image bytes | Text only |
 
-### Critical: Thought Signature Preservation
-For Gemini models, when a function call is returned, Google attaches a `thoughtSignature` base64 string to the part. When sending the subsequent conversation turns back in `contents`, the model's prior `functionCall` part must contain that exact `thoughtSignature` string, or the backend rejects the request with:
-```
-400 INVALID_ARGUMENT: Function call is missing a thought_signature.
-```
-
 ---
 
 ## 6. Error Codes
@@ -396,18 +390,55 @@ x-goog-ext-73010990-jspb: [0]
 - `x-goog-ext-525005358-jspb`: Encodes the client session/request UUID, matching `inner[59]`.
 
 #### Request Form Body (`f.req` Inner JSPB Array):
-The `f.req` parameter contains `[null, JSON.stringify(inner)]`:
-- `inner[0]`: `[prompt, 0, null, file_refs, null, null, 0]` (Text prompt + multimodal file references).
-- `inner[1]`: `["en"]` (Language code).
-- `inner[2]`: `["", "", "", null, null, null, null, null, null, ""]` (Conversation/turn metadata).
-- `inner[17]`: `[[0]]` for explicit/extended thinking, `[[4]]` for auto.
-- `inner[27]`: `1`
-- `inner[30]`: `[4]`
-- `inner[41]`: `[1]` (or `[2]` for persistent chats).
-- `inner[45]`: `1` (Temporary / incognito chat toggle).
-- `inner[59]`: Client request UUID (uppercase string matching header `525005358`).
-- `inner[79]`: Selected `model_number` (`1` = Flash, `3` = Pro, `5` = Fast Dynamic Thinking, `6` = Flash Lite).
-- `inner[80]`: `1` for standard thinking, `2` for **Extended Thinking Mode**.
+The `f.req` parameter contains `[null, "<JSON-stringified-inner>"]` where `inner` is a
+**sparse 69-element array** (verified against the live web client; older references showing
+81-element payloads with `inner[45]`/`inner[79]`/`inner[80]` are outdated — model selection
+happens exclusively via headers):
+
+| Index | Value | Meaning |
+|---|---|---|
+| `inner[0]` | `[prompt, 0, null, file_refs, null, null, 0]` | Text prompt + multimodal file references |
+| `inner[1]` | `["en"]` | Language code |
+| `inner[2]` | `["", "", "", null, null, null, null, null, null, ""]` | Conversation/turn metadata |
+| `inner[6]` | `[1]`, `inner[7]=1`, `inner[10]=1`, `inner[11]=0` | Client capability flags |
+| `inner[17]` | `[[4]]` auto / `[[0]]` explicit thinking | Reasoning mode |
+| `inner[18]` | `0`, `inner[27]=1`, `inner[53]=0` | Flags |
+| `inner[30]` | `[4]` | Constant |
+| `inner[41]` | `[1]` | Chat persistence |
+| `inner[59]` | Uppercase request UUID | Must match header `x-goog-ext-525005358-jspb` |
+| `inner[61]` | `[]` | Must serialize as `[]`, never `null` |
+| `inner[68]` | `2` | Constant |
+
+Authenticated requests additionally send the page's XSRF token as form field
+`at=<SNlM0e>`. Anonymous requests omit it.
+
+---
+
+### 7.5 Session Lifecycle: `RotateCookies` & Token Rotation
+
+`__Secure-1PSIDTS` is a rotating freshness token: Google invalidates old values within
+minutes and **silently degrades sessions carrying stale tokens to anonymous** (no error is
+returned — pages simply render without `SNlM0e`). To keep an exported cookie session alive:
+
+```
+POST https://accounts.google.com/RotateCookies
+Content-Type: application/json
+Cookie: __Secure-1PSID=<...>; __Secure-1PSIDTS=<current>
+
+[000,"-0000000000000000000"]
+```
+
+- The fresh token arrives in the response's `Set-Cookie: __Secure-1PSIDTS=...` header.
+- Rotation chains validity: refresh every ~8 minutes (the web client uses ~9).
+- A lapsed token cannot be revived via this endpoint (`401`) — re-export from a browser.
+- After each rotation, re-scrape `SNlM0e`/build label from `/app`; they rotate with the session.
+- Do not keep the same account open in a browser while an automated client rotates its
+  token — the two fight over the chain.
+
+google-gate implements this lazily in `GeminiWebAdapter.ensure_fresh_session()` (called
+before generation requests) and persists rotated values through the router's
+`save_config()`. Set `GEMINI_WEB_PROXY=socks5://user:pass@host:port` to route all Gemini Web
+traffic through a specific egress IP (requires `httpx[socks]`).
 
 ---
 
@@ -430,7 +461,106 @@ Responses arrive as chunked JSON wrapped in `wrb.fr` / JSPB envelopes prefixed b
 | **Authentication** | OAuth 2.0 PKCE Bearer token | `__Secure-1PSID` / `__Secure-1PSIDTS` cookies + `SAPISIDHASH` + `at` token |
 | **Project / Tier Discovery** | `POST /v1internal:loadCodeAssist` | RPC `otAQ7b` (`part_body[16]`, `part_body[17]`) |
 | **Model Catalog** | `POST /v1internal:fetchAvailableModels` | RPC `otAQ7b` (`part_body[15]` array: 3.5 Flash-Lite, 3.7 Flash, 3.1 Pro) |
-| **Model Selection** | `request.model` field (`gemini-3.7-flash-high`) | Header `x-goog-ext-525001261-jspb` + payload `inner[79]` |
-| **Thinking Configuration** | `thinkingConfig.thinkingBudget` / `includeThoughts` | Header `525001261` level (`1` vs `2`) + payload `inner[17]` + `inner[80]` |
+| **Model Selection** | `request.model` field (`gemini-3.7-flash-high`) | Header `x-goog-ext-525001261-jspb` (payload carries no model fields; see §7.4) |
+| **Thinking Configuration** | `thinkingConfig.thinkingBudget` / `includeThoughts` | Header `525001261` level (`1` vs `2`) + payload `inner[17]` |
 | **Thinking Tokens** | SSE candidate `part.thought = true` | Candidate index `[37][0][0]` |
 | **Multimodal Uploads** | Inline base64 image/audio parts | Upload session via `upload_image` / file reference IDs in `inner[0]` |
+
+---
+
+## 8. Upstream Rate Limits & Quotas (Reference)
+
+Rate limits enforced by each backend, their sources, and how `google-gate` models them.
+All gateway-side limits are configurable via environment variables (see table below) and
+feed the local sliding-window tracker (`InMemoryRateTracker`) that powers the dashboard
+quota gauges and proactive routing decisions.
+
+### Antigravity / Cloud Code (`daily-cloudcode-pa.googleapis.com`)
+
+| Dimension | Limit | Source |
+|---|---|---|
+| Requests per minute | **100 RPM** | `loadCodeAssist` response field `userLimits.rateLimit` (§3.1). Applied dynamically at runtime by `AntigravityAdapter.load_code_assist()`. |
+| Tokens per minute | Not exposed upstream | Local estimate only (`ANTIGRAVITY_TPM`, default 1,000,000). |
+| Usage buckets | Weekly + 5-hour burst, reported as remaining fractions with reset timestamps | `retrieveUserQuotaSummary` (§3.3). These are the authoritative quota values shown on the dashboard. |
+
+### Gemini API (`generativelanguage.googleapis.com`)
+
+Official documented free-tier limits per model family (Google reduced free-tier quotas by
+50-80% effective December 2025; verified August 2026 against
+[ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits)
+and the AI Studio dashboard):
+
+| Model | Free Tier RPM | Free Tier TPM | Free Tier RPD |
+|---|---|---|---|
+| Gemini 2.5 Pro | 5 | 250,000 | 100 |
+| Gemini 2.5 Flash | 10 | 250,000 | 250 |
+| Gemini 2.5 Flash-Lite | 15 | 250,000 | 1,000 |
+| Gemini 2.0 Flash *(shut down June 1, 2026)* | 0 | 0 | 0 |
+
+Notes:
+- Limits are enforced **per project**, not per API key; RPD resets at midnight Pacific time.
+- Paid tiers raise limits substantially (Tier 1 ≈ 1,000+ RPM / 1M TPM / 1,000+ RPD; higher tiers scale further).
+- Gateway defaults are set conservatively to the **Flash-class free tier** (`GEMINI_API_RPM=10`,
+  `GEMINI_API_TPM=250000`, `GEMINI_API_RPD=250`). Billing-enabled projects should override via env vars.
+- The adapter's plan probe distinguishes `Free` vs `Pay-As-You-Go` keys but does not yet auto-adjust these defaults.
+
+### Gemini Web (`gemini.google.com`)
+
+**No numeric rate limits are published or reliably reverse-engineered.** Google has moved
+Gemini Web enforcement to an opaque compute-usage-based model: exceeding a per-model usage
+budget returns an in-stream usage-limit error code (with a cooldown/reset period) rather
+than an HTTP 429 quota payload. Community references (HanaokaYuzu/Gemini-API) surface only
+the *cooldown state*, never a request/token budget.
+
+Gateway defaults (`GEMINI_WEB_RPM=60`, `GEMINI_WEB_TPM=500000`, `GEMINI_WEB_RPD=0` disabled)
+are therefore **local conservative estimates** used solely for proactive throttling — they do
+not represent upstream numbers.
+
+#### Empirical access findings (August 2026)
+
+Live probing from this project against `gemini.google.com` established the following,
+independent of session validity:
+
+- Google's anti-abuse pipeline fronts all Gemini Web traffic. Flagged IPs receive either a
+  `302` redirect to `google.com/sorry` or — for minimal/non-browser client headers — a
+  silently degraded *logged-out* HTML shell (200 OK without `SNlM0e` or account data).
+  The degraded-shell response makes cookie problems look like expired sessions; check the
+  HTTP status and headers before blaming credentials.
+- A `GOOGLE_ABUSE_EXEMPTION` cookie (issued per-IP after solving a reCAPTCHA, time-limited)
+  restores authenticated rendering of `/app` and read-only `batchexecute` RPCs
+  (e.g. `otAQ7b` model discovery works end-to-end with just six cookies:
+  `__Secure-1PSID`, `__Secure-1PSIDTS`, `__Secure-1PSIDCC`, `SIDCC`, `SAPISID`,
+  `GOOGLE_ABUSE_EXEMPTION`).
+- The **`StreamGenerate` endpoint is separately gated**: it returns `429` with an embedded
+  reCAPTCHA Enterprise challenge regardless of cookie completeness, Chrome client headers
+  (`x-browser-validation`, `x-client-data`, full `sec-ch-ua` set), or TLS fingerprint
+  impersonation (curl_cffi chrome131/chrome124). Satisfying it requires executing Google's
+  JS inside a real browser context.
+
+**Consequence:** headless clients cannot currently perform generation calls against Gemini
+Web on flagged (arguably any) IPs, and upstream rate limits for this backend are not
+empirically measurable outside a browser. The gateway's Gemini Web adapter remains
+protocol-complete but is effectively unusable for generation unless requests are proxied
+through a real browser context (e.g. CDP-driven headless Chrome).
+
+### Environment Variable Reference
+
+| Variable | Default | Backend | Meaning |
+|---|---|---|---|
+| `ANTIGRAVITY_RPM` | `100` | antigravity | Mirrors `userLimits.rateLimit`; rarely needs overriding |
+| `ANTIGRAVITY_TPM` | `1000000` | antigravity | Local estimate; not upstream-enforced |
+| `ANTIGRAVITY_RPD` | `0` (off) | antigravity | Daily request tracker |
+| `GEMINI_API_RPM` | `10` | gemini_api | Free-tier Flash-class RPM |
+| `GEMINI_API_TPM` | `250000` | gemini_api | Free-tier Flash-class TPM |
+| `GEMINI_API_RPD` | `250` | gemini_api | Free-tier Flash-class daily requests |
+| `GEMINI_WEB_RPM` | `60` | gemini_web | Local estimate only |
+| `GEMINI_WEB_TPM` | `500000` | gemini_web | Local estimate only |
+| `GEMINI_WEB_RPD` | `0` (off) | gemini_web | Daily request tracker |
+
+Setting any value to `0` disables that dimension of the local tracker.
+
+### Critical: Thought Signature Preservation
+For Gemini models, when a function call is returned, Google attaches a `thoughtSignature` base64 string to the part. When sending the subsequent conversation turns back in `contents`, the model's prior `functionCall` part must contain that exact `thoughtSignature` string, or the backend rejects the request with:
+```
+400 INVALID_ARGUMENT: Function call is missing a thought_signature.
+```

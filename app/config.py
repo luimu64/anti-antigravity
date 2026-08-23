@@ -168,9 +168,12 @@ HIDDEN_MODELS = {
 MODEL_CACHE_TTL = float(os.getenv("MODEL_CACHE_TTL", "300.0"))
 
 # Provider rate limits, quota thresholds, and cooldown defaults (configurable via env vars)
+# Sources & rationale are documented in INTERNAL_API.md section 8.
 PROVIDER_RATE_LIMITS = {
     "antigravity": {
+        # RPM mirrors loadCodeAssist userLimits.rateLimit (also applied dynamically).
         "rpm": int(os.getenv("ANTIGRAVITY_RPM", "100")),
+        # TPM is not exposed upstream; local sliding-window estimate only.
         "tpm": int(os.getenv("ANTIGRAVITY_TPM", "1000000")),
         "rpd": int(os.getenv("ANTIGRAVITY_RPD", "0")),
         "min_quota_fraction": float(
@@ -179,13 +182,21 @@ PROVIDER_RATE_LIMITS = {
         "default_cooldown": float(os.getenv("ANTIGRAVITY_DEFAULT_COOLDOWN", "60.0")),
     },
     "gemini_api": {
-        "rpm": int(os.getenv("GEMINI_API_RPM", "15")),
-        "tpm": int(os.getenv("GEMINI_API_TPM", "1000000")),
-        "rpd": int(os.getenv("GEMINI_API_RPD", "1500")),
+        # Conservative free-tier defaults for Flash-class models per Google's
+        # documented limits (see INTERNAL_API.md section 8). Pay-as-you-go /
+        # higher tiers should override via environment variables.
+        "rpm": int(os.getenv("GEMINI_API_RPM", "10")),
+        "tpm": int(os.getenv("GEMINI_API_TPM", "250000")),
+        "rpd": int(os.getenv("GEMINI_API_RPD", "250")),
         "min_quota_fraction": float(os.getenv("GEMINI_API_MIN_QUOTA_FRACTION", "0.0")),
         "default_cooldown": float(os.getenv("GEMINI_API_DEFAULT_COOLDOWN", "60.0")),
     },
     "gemini_web": {
+        # Upstream enforces opaque compute-based limits AND fronts generation
+        # RPCs with reCAPTCHA Enterprise challenges for non-browser clients
+        # (see INTERNAL_API.md section 8, "Empirical access findings").
+        # These values are unverifiable local estimates used only for
+        # proactive gateway throttling.
         "rpm": int(os.getenv("GEMINI_WEB_RPM", "60")),
         "tpm": int(os.getenv("GEMINI_WEB_TPM", "500000")),
         "rpd": int(os.getenv("GEMINI_WEB_RPD", "0")),
