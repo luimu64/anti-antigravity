@@ -56,7 +56,197 @@
     }
   }
 
-  // Render quota gauge cards from a groups payload
+  // Stable identity of a quota bucket across updates (excludes volatile values)
+  function quotaGroupKey(g) {
+    return [
+      g.backend || g.source || 'antigravity',
+      g.display_name || '',
+      g.model_id || '',
+      g.unit || '',
+      g.limit != null ? String(g.limit) : '',
+    ].join('|');
+  }
+
+  // Build a card descriptor: static HTML skeleton + dynamic field values.
+  // The reconciler reuses existing DOM nodes and only patches fields, so
+  // animations (e.g. the indeterminate cooldown bar) never restart.
+  function buildQuotaCard(g) {
+    const remainingFrac = g.remaining_fraction != null
+      ? g.remaining_fraction
+      : (g.fraction_remaining != null
+        ? g.fraction_remaining
+        : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0));
+    const pctLabel = fmtPct(Math.max(0, Math.min(1, remainingFrac)));
+    const isCooldown = !!g.in_cooldown || g.display_name === 'Cooldown';
+    const resetSecs = (g.reset_time_seconds != null && g.reset_time_seconds >= 0)
+      ? `${Math.round(g.reset_time_seconds)}s`
+      : 'N/A';
+    const key = quotaGroupKey(g);
+
+    // Cooldown items get a distinct warning card instead of a gauge
+    if (isCooldown) {
+      return {
+        key,
+        sig: ['cooldown', g.display_name || ''].join('~'),
+        html: `
+          <div class="card bg-base-100 p-4 border border-warning/40 rounded-box shadow-sm">
+            <div class="flex justify-between items-start gap-2 mb-1">
+              <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+                <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
+                <span class="badge badge-warning badge-xs font-semibold shrink-0">cooling down</span>
+              </div>
+              <span data-field="reset" class="font-mono text-warning text-sm shrink-0">${resetSecs}</span>
+            </div>
+            <progress class="progress progress-warning w-full mb-2"></progress>
+            <div class="flex justify-between text-xs text-base-content/70">
+              <span>Retrying soon</span>
+              <span data-field="model" class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>
+            </div>
+          </div>
+        `,
+        fields: { reset: resetSecs },
+      };
+    }
+
+    const pctNum = parseFloat(pctLabel);
+    let progressColor = 'progress-primary';
+    let badgeColor = 'badge-ghost';
+    if (g.in_cooldown) {
+      progressColor = 'progress-error';
+      badgeColor = 'badge-error';
+    } else if (pctNum <= 10) {
+      progressColor = 'progress-error';
+      badgeColor = 'badge-error';
+    } else if (pctNum <= 30) {
+      progressColor = 'progress-warning';
+      badgeColor = 'badge-warning';
+    }
+
+    let backendKey = (g.backend || g.source || 'antigravity').toLowerCase();
+    let backendLabel = 'Antigravity';
+    let sourceBadgeClass = 'badge-primary badge-outline';
+
+    if (backendKey.includes('api') || backendKey === 'gemini_api') {
+      backendLabel = 'Gemini API';
+      sourceBadgeClass = 'badge-secondary badge-outline';
+    } else if (backendKey.includes('web') || backendKey === 'gemini_web') {
+      backendLabel = 'Gemini Web';
+      sourceBadgeClass = 'badge-accent badge-outline';
+    } else if (backendKey.includes('antigravity')) {
+      backendLabel = 'Antigravity';
+      sourceBadgeClass = 'badge-primary badge-outline';
+    } else {
+      backendLabel = g.backend || g.source || 'Antigravity';
+      sourceBadgeClass = 'badge-ghost badge-outline';
+    }
+
+    const usageLine = (g.used != null && g.limit > 0)
+      ? `${fmtCount(g.used)} / ${fmtCount(g.limit)} ${g.unit === 'tokens' ? 'tok' : 'req'}`
+      : '';
+    const usageVariant = usageLine ? 'mono' : 'trunc';
+
+    return {
+      key,
+      sig: [
+        'gauge',
+        progressColor,
+        badgeColor,
+        sourceBadgeClass,
+        backendLabel,
+        usageVariant,
+      ].join('~'),
+      html: `
+        <div class="card bg-base-100 p-4 border border-base-300 rounded-box shadow-sm">
+          <div class="flex justify-between items-start gap-2 mb-1">
+            <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+              <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
+              <span class="badge ${sourceBadgeClass} badge-xs font-semibold shrink-0">${escapeHtml(backendLabel)}</span>
+            </div>
+            <span data-field="pct" class="badge badge-sm ${badgeColor} shrink-0 font-mono">${pctLabel}% available</span>
+          </div>
+          <progress data-field="bar" class="progress ${progressColor} w-full mb-2" value="${pctNum}" max="100"></progress>
+          <div class="flex justify-between text-xs text-base-content/70 gap-2">
+            <span data-field="reset">Reset: ${resetSecs}</span>
+            <span data-field="usage" class="${usageVariant === 'mono' ? 'font-mono shrink-0' : 'truncate max-w-[150px]'}">${usageVariant === 'mono' ? usageLine : escapeHtml(g.model_id || '')}</span>
+          </div>
+        </div>
+      `,
+      fields: {
+        pct: `${pctLabel}% available`,
+        bar: pctNum,
+        reset: `Reset: ${resetSecs}`,
+        usage: usageVariant === 'mono' ? usageLine : (g.model_id || ''),
+      },
+    };
+  }
+
+  function makeQuotaCardEl(card) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = card.html.trim();
+    const el = tpl.content.firstElementChild;
+    el.dataset.quotaKey = card.key;
+    el.dataset.quotaSig = card.sig;
+    return el;
+  }
+
+  // Update only the dynamic leaves of an existing card - crucially never
+  // touching (or recreating) the progress bar itself.
+  function patchQuotaCard(el, fields) {
+    Object.entries(fields || {}).forEach(([name, value]) => {
+      const target = el.querySelector(`[data-field="${name}"]`);
+      if (!target) return;
+      if (name === 'bar') {
+        const v = String(value);
+        if (target.getAttribute('value') !== v) target.setAttribute('value', v);
+        return;
+      }
+      const s = String(value ?? '');
+      if (target.textContent !== s) target.textContent = s;
+    });
+  }
+
+  // Reuse matching card nodes between renders; replace only when the visual
+  // structure changed, and append/remove for bucket set changes.
+  function reconcileQuotaGrid(grid, cards) {
+    const pools = new Map();
+    Array.from(grid.children).forEach((el) => {
+      const k = el.dataset ? el.dataset.quotaKey : null;
+      if (!k) {
+        el.remove();
+        return;
+      }
+      if (!pools.has(k)) pools.set(k, []);
+      pools.get(k).push(el);
+    });
+
+    const ordered = [];
+    cards.forEach((card) => {
+      let el = null;
+      const pool = pools.get(card.key);
+      if (pool && pool.length > 0) {
+        el = pool.shift();
+        if (el.dataset.quotaSig !== card.sig) {
+          const fresh = makeQuotaCardEl(card);
+          el.replaceWith(fresh);
+          el = fresh;
+        } else {
+          patchQuotaCard(el, card.fields);
+        }
+      } else {
+        el = makeQuotaCardEl(card);
+      }
+      ordered.push(el);
+    });
+
+    pools.forEach((list) => list.forEach((el) => el.remove()));
+
+    // Enforce order; nodes already in place are left untouched (no animation reset)
+    ordered.forEach((el, i) => {
+      if (grid.children[i] !== el) grid.insertBefore(el, grid.children[i] || null);
+    });
+  }
+
+  // Render quota gauge cards from a groups payload (diffing update)
   function renderQuotaGroups(groups) {
     const container = document.getElementById('quotas-container');
     if (!container) return;
@@ -66,96 +256,17 @@
       return;
     }
 
-    let html = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">';
-    groups.forEach(g => {
-        const remainingFrac = g.remaining_fraction != null
-          ? g.remaining_fraction
-          : (g.fraction_remaining != null
-            ? g.fraction_remaining
-            : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0));
-        const pctLabel = fmtPct(Math.max(0, Math.min(1, remainingFrac)));
-        const isCooldown = !!g.in_cooldown || g.display_name === 'Cooldown';
-        const resetSecs = (g.reset_time_seconds != null && g.reset_time_seconds >= 0)
-          ? `${Math.round(g.reset_time_seconds)}s`
-          : 'N/A';
+    let grid = container.querySelector('#quota-grid');
+    if (!grid) {
+      container.innerHTML = '<div id="quota-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>';
+      grid = container.querySelector('#quota-grid');
+    }
 
-        let usageLine = '';
-        if (g.used != null && g.limit > 0) {
-          usageLine = `${fmtCount(g.used)} / ${fmtCount(g.limit)} ${g.unit === 'tokens' ? 'tok' : 'req'}`;
-        }
-
-        // Cooldown items get a distinct warning card instead of a gauge
-        if (isCooldown) {
-          html += `
-            <div class="card bg-base-100 p-4 border border-warning/40 rounded-box shadow-sm">
-              <div class="flex justify-between items-start gap-2 mb-1">
-                <div class="flex flex-wrap items-center gap-1.5 min-w-0">
-                  <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
-                  <span class="badge badge-warning badge-xs font-semibold shrink-0">cooling down</span>
-                </div>
-                <span class="font-mono text-warning text-sm shrink-0">${resetSecs}</span>
-              </div>
-              <progress class="progress progress-warning w-full mb-2"></progress>
-              <div class="flex justify-between text-xs text-base-content/70">
-                <span>Retrying soon</span>
-                <span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>
-              </div>
-            </div>
-          `;
-          return;
-        }
-
-        const pctNum = parseFloat(pctLabel);
-        let progressColor = 'progress-primary';
-        let badgeColor = 'badge-ghost';
-        if (g.in_cooldown) {
-          progressColor = 'progress-error';
-          badgeColor = 'badge-error';
-        } else if (pctNum <= 10) {
-          progressColor = 'progress-error';
-          badgeColor = 'badge-error';
-        } else if (pctNum <= 30) {
-          progressColor = 'progress-warning';
-          badgeColor = 'badge-warning';
-        }
-
-        let backendKey = (g.backend || g.source || 'antigravity').toLowerCase();
-        let backendLabel = 'Antigravity';
-        let sourceBadgeClass = 'badge-primary badge-outline';
-
-        if (backendKey.includes('api') || backendKey === 'gemini_api') {
-          backendLabel = 'Gemini API';
-          sourceBadgeClass = 'badge-secondary badge-outline';
-        } else if (backendKey.includes('web') || backendKey === 'gemini_web') {
-          backendLabel = 'Gemini Web';
-          sourceBadgeClass = 'badge-accent badge-outline';
-        } else if (backendKey.includes('antigravity')) {
-          backendLabel = 'Antigravity';
-          sourceBadgeClass = 'badge-primary badge-outline';
-        } else {
-          backendLabel = g.backend || g.source || 'Antigravity';
-          sourceBadgeClass = 'badge-ghost badge-outline';
-        }
-
-        html += `
-          <div class="card bg-base-100 p-4 border border-base-300 rounded-box shadow-sm">
-            <div class="flex justify-between items-start gap-2 mb-1">
-              <div class="flex flex-wrap items-center gap-1.5 min-w-0">
-                <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
-                <span class="badge ${sourceBadgeClass} badge-xs font-semibold shrink-0">${escapeHtml(backendLabel)}</span>
-              </div>
-              <span class="badge badge-sm ${badgeColor} shrink-0 font-mono">${pctLabel}% available</span>
-            </div>
-            <progress class="progress ${progressColor} w-full mb-2" value="${pctNum}" max="100"></progress>
-            <div class="flex justify-between text-xs text-base-content/70 gap-2">
-              <span>Reset: ${resetSecs}</span>
-              ${usageLine ? `<span class="font-mono shrink-0">${usageLine}</span>` : `<span class="truncate max-w-[150px]">${escapeHtml(g.model_id || '')}</span>`}
-            </div>
-          </div>
-        `;
-      });
-    html += '</div>';
-    container.innerHTML = html;
+    // Deterministic ordering keeps card positions stable across updates
+    const sorted = [...groups].sort((a, b) =>
+      quotaGroupKey(a).localeCompare(quotaGroupKey(b))
+    );
+    reconcileQuotaGrid(grid, sorted.map(buildQuotaCard));
   }
 
   // Load Quotas (initial load & manual refresh; live updates arrive via WebSocket)
