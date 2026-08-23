@@ -23,6 +23,46 @@ def test_resolve_model():
     )
 
 
+def test_resolve_model_robust_normalization():
+    rm = OpenAITranslator.resolve_model
+
+    # Vendor / routing prefixes
+    assert rm("models/gpt-4o") == "gemini-3.7-flash-high"
+    assert rm("google/gemini-3.7-flash") == "gemini-3.7-flash-high"
+    assert rm("openai/gpt-4o") == "gemini-3.7-flash-high"
+    assert rm("anthropic/claude-3-7-sonnet") == "claude-sonnet-4-6"
+
+    # OpenRouter-style modifiers
+    assert rm("google/gemini-3.7-flash:free") == "gemini-3.7-flash-high"
+    assert rm("anthropic/claude-3-7-sonnet:beta") == "claude-sonnet-4-6"
+
+    # Casing, whitespace, quotes, separator variants
+    assert rm("GPT-4O") == "gemini-3.7-flash-high"
+    assert rm("  gpt_4o\t") == "gemini-3.7-flash-high"
+    assert rm('"gpt-4o"') == "gemini-3.7-flash-high"
+    assert rm("claude sonnet 4.6") == "claude-sonnet-4-6"
+    assert rm("claude_opus_4.6") == "claude-opus-4-6-thinking"
+
+    # Snapshot / version decorations
+    assert rm("gpt-4o-2024-11-20") == "gemini-3.7-flash-high"
+    assert rm("gpt-4o-mini-2024") == "gemini-3.6-flash-high"
+    assert rm("claude-3-7-sonnet-20250219") == "claude-sonnet-4-6"
+    assert rm("gemini-3.7-flash-preview") == "gemini-3.7-flash-high"
+    assert rm("gpt-oss-120b-v2") == "gpt-oss-120b-medium"
+    assert rm("gemini-3.1-pro-latest") == "gemini-3.1-pro-high"
+
+    # Reasoning effort synonyms and casing
+    assert rm("gemini-3.6-flash", "LOW") == "gemini-3.6-flash-low"
+    assert rm("gemini-3.6-flash", "minimal") == "gemini-3.6-flash-low"
+    assert rm("gemini-3.6-flash", "max") == "gemini-3.6-flash-high"
+    assert rm("gemini-3.6-flash", "bogus") == "gemini-3.6-flash-high"
+
+    # Unknown models pass through unchanged
+    assert rm("totally-unknown-model") == "totally-unknown-model"
+    assert rm("") == ""
+    assert rm(None) == ""
+
+
 def test_system_fingerprint():
     fp = OpenAITranslator.get_system_fingerprint("gpt-4o")
     assert fp.startswith("fp_gate_")

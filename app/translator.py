@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -13,6 +14,61 @@ logger = logging.getLogger("google_gate.translator")
 
 # Cache to store thought signatures across turns for multi-turn function calling
 _thought_signature_cache: dict[str, str] = {}
+
+
+def normalize_model_key(model: Any) -> str:
+    """
+    Collapse arbitrary client-supplied model identifiers into a canonical
+    lowercase lookup key: drops surrounding whitespace/quotes, vendor and
+    routing prefixes ("openai/", "anthropic/", "google/", "models/"),
+    provider modifiers (":free", ":beta"), and unifies separators
+    (underscores, whitespace, dots -> hyphens).
+    """
+    if model is None:
+        return ""
+    key = model if isinstance(model, str) else str(model)
+    key = key.strip().strip("\"'").lower()
+    key = key.split(":", 1)[0]
+    if "/" in key:
+        key = key.rsplit("/", 1)[-1]
+    key = key.replace("_", "-").replace(".", "-")
+    key = re.sub(r"\s+", "-", key)
+    key = re.sub(r"-{2,}", "-", key)
+    return key.strip("-")
+
+
+def normalize_reasoning_effort(effort: Any) -> str:
+    """Normalize reasoning effort labels, tolerating common synonyms."""
+    if not effort:
+        return ""
+    label = str(effort).strip().lower()
+    return _EFFORT_SYNONYMS.get(label, label)
+
+
+_EFFORT_SYNONYMS: dict[str, str] = {
+    "minimal": "low",
+    "max": "high",
+    "maximum": "high",
+    "extreme": "high",
+}
+
+_ALIAS_LOOKUP: dict[str, str] = {}
+for _alias, _target in MODEL_ALIASES.items():
+    _ALIAS_LOOKUP.setdefault(normalize_model_key(_alias), _target)
+
+_CANONICAL_LOOKUP: dict[str, str] = {
+    normalize_model_key(src): normalize_model_key(dst)
+    for src, dst in CANONICAL_MODEL_MAP.items()
+}
+
+_TIER_LOOKUP: dict[str, dict[str, str]] = {
+    normalize_model_key(base): tiers for base, tiers in ANTIGRAVITY_TIER_MAP.items()
+}
+
+_DECORATION_RE = re.compile(
+    r"(?:-\d{8}|-\d{6}|-\d{4}(?:-\d{2}){0,2}|-\d{3}"
+    r"|@[0-9]+|-v[0-9]+(?:-[0-9]+)*|-latest|-preview(?:-[0-9]+)?)$"
+)
 
 
 class ChatMessage(BaseModel):
@@ -75,34 +131,55 @@ class OpenAITranslator:
         return cls.get_system_fingerprint(model)
 
     @staticmethod
-    def resolve_model(requested_model: str, reasoning_effort: str | None = None) -> str:
+    def resolve_model(requested_model: Any, reasoning_effort: str | None = None) -> str:
         """
-        Map user-requested model and optional reasoning_effort to Antigravity internal model name
-        using the lookup table and tier mappings.
+        Map user-requested model and optional reasoning_effort to Antigravity internal
+        model name. Robust against casing, whitespace, quotes, vendor prefixes
+        ("openai/gpt-4o"), route prefixes ("models/..."), provider modifiers (":free"),
+        separator variants (underscores/spaces/dots), snapshot decorations
+        ("-20250219", "-latest", "-preview", "-v2"), and reasoning-effort synonyms.
+        Unknown models are returned unchanged.
         """
-        clean = requested_model.lower().strip()
+        original = (
+            requested_model
+            if isinstance(requested_model, str)
+            else str(requested_model or "")
+        )
+        key = normalize_model_key(original)
+        if not key:
+            return original
 
-        # 1. Check if model or its canonical alias has reasoning tier mappings in ANTIGRAVITY_TIER_MAP
-        base_name = CANONICAL_MODEL_MAP.get(clean, clean)
-        if base_name in ANTIGRAVITY_TIER_MAP:
-            tiers = ANTIGRAVITY_TIER_MAP[base_name]
-            effort = (reasoning_effort or "").lower().strip()
-            if effort in tiers:
-                return tiers[effort]
-            if "default" in tiers:
-                return tiers["default"]
+        effort = normalize_reasoning_effort(reasoning_effort)
 
-        # 2. Check direct MODEL_ALIASES lookup
-        if clean in MODEL_ALIASES:
-            return MODEL_ALIASES[clean]
+        def _lookup(candidate: str) -> str | None:
+            base = _CANONICAL_LOOKUP.get(candidate, candidate)
+            tiers = _TIER_LOOKUP.get(base)
+            if tiers:
+                if effort and effort in tiers:
+                    return tiers[effort]
+                if "default" in tiers:
+                    return tiers["default"]
+            return _ALIAS_LOOKUP.get(candidate)
 
-        # 3. Check prefix matches
-        for alias, internal in MODEL_ALIASES.items():
-            if clean.startswith(alias):
-                return internal
+        resolved = _lookup(key)
 
-        # Default fallback
-        return requested_model
+        candidate = key
+        while resolved is None and candidate:
+            stripped = _DECORATION_RE.sub("", candidate, count=1)
+            if stripped == candidate:
+                break
+            candidate = stripped
+            resolved = _lookup(candidate)
+
+        if resolved is None:
+            for alias_key in sorted(_ALIAS_LOOKUP, key=len, reverse=True):
+                if key.startswith(alias_key) and (
+                    len(key) == len(alias_key) or key[len(alias_key)] == "-"
+                ):
+                    resolved = _ALIAS_LOOKUP[alias_key]
+                    break
+
+        return resolved if resolved is not None else original
 
     @classmethod
     def openai_to_internal_request(
