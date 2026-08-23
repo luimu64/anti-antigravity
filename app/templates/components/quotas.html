@@ -3,7 +3,13 @@
 <!-- Usage & Quotas Widget -->
 {% call ui.section_card('quotas-card') %}
   <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
-    <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
+    <div class="flex items-center gap-2">
+      <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
+      <span id="quotas-live-indicator" class="flex items-center gap-1.5 text-[11px] font-medium ml-1 text-success">
+        <span id="quotas-live-dot" class="inline-block w-2 h-2 rounded-full bg-success animate-pulse"></span>
+        <span id="quotas-live-text">Live</span>
+      </span>
+    </div>
     {{ ui.action_button('Refresh', 'loadQuotas()') }}
   </div>
 
@@ -30,26 +36,39 @@
     return String(Math.round(pct));
   }
 
-  // Load Quotas
-  async function loadQuotas() {
+  // Reflect the realtime connection state in the "Live" pill
+  function updateQuotasLiveIndicator(connected) {
+    const indicator = document.getElementById('quotas-live-indicator');
+    const dot = document.getElementById('quotas-live-dot');
+    const text = document.getElementById('quotas-live-text');
+    if (!indicator || !dot || !text) return;
+    if (connected) {
+      indicator.classList.remove('text-warning');
+      indicator.classList.add('text-success');
+      dot.classList.remove('bg-warning', 'bg-error');
+      dot.classList.add('bg-success', 'animate-pulse');
+      text.textContent = 'Live';
+    } else {
+      indicator.classList.remove('text-success');
+      indicator.classList.add('text-warning');
+      dot.classList.remove('bg-success', 'animate-pulse');
+      dot.classList.add('bg-warning');
+      text.textContent = 'Offline';
+    }
+  }
+
+  // Render quota gauge cards from a groups payload
+  function renderQuotaGroups(groups) {
     const container = document.getElementById('quotas-container');
-    try {
-      const res = await fetch('/api/quotas');
-      const data = await res.json();
+    if (!container) return;
 
-      if (!res.ok) {
-        container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load quotas')}</p>`;
-        return;
-      }
+    if (!groups || groups.length === 0) {
+      container.innerHTML = '<p class="text-xs text-base-content/70">No active quota buckets reported by backend.</p>';
+      return;
+    }
 
-      const groups = data.groups || [];
-      if (groups.length === 0) {
-        container.innerHTML = '<p class="text-xs text-base-content/70">No active quota buckets reported by backend.</p>';
-        return;
-      }
-
-      let html = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">';
-      groups.forEach(g => {
+    let html = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">';
+    groups.forEach(g => {
         const remainingFrac = g.remaining_fraction != null
           ? g.remaining_fraction
           : (g.fraction_remaining != null
@@ -136,10 +155,31 @@
           </div>
         `;
       });
-      html += '</div>';
-      container.innerHTML = html;
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  // Load Quotas (initial load & manual refresh; live updates arrive via WebSocket)
+  async function loadQuotas() {
+    const container = document.getElementById('quotas-container');
+    try {
+      const res = await fetch('/api/quotas');
+      const data = await res.json();
+
+      if (!res.ok) {
+        container.innerHTML = `<p class="text-xs text-error">${escapeHtml(data.error || 'Failed to load quotas')}</p>`;
+        return;
+      }
+
+      renderQuotaGroups(data.groups || []);
     } catch (err) {
       container.innerHTML = '<p class="text-xs text-error">Failed to load quotas.</p>';
     }
+  }
+
+  // Live updates via WebSocket (no polling)
+  if (window.Realtime) {
+    Realtime.on('quotas.update', (payload) => renderQuotaGroups(payload.groups || []));
+    Realtime.onStatus(updateQuotasLiveIndicator);
   }
 </script>

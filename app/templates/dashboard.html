@@ -25,6 +25,67 @@
   </div>
 
   <script>
+    // Realtime event client: single WebSocket connection dispatching typed
+    // events to component subscribers. Reconnects with exponential backoff.
+    window.Realtime = (function () {
+      const listeners = {};
+      const statusListeners = [];
+      let socket = null;
+      let attempts = 0;
+      let stopped = false;
+
+      function on(type, handler) {
+        (listeners[type] = listeners[type] || []).push(handler);
+      }
+
+      function onStatus(handler) {
+        statusListeners.push(handler);
+        handler(socket && socket.readyState === WebSocket.OPEN);
+      }
+
+      function emit(type, payload) {
+        (listeners[type] || []).forEach((handler) => {
+          try { handler(payload); } catch (err) { console.error(err); }
+        });
+      }
+
+      function setStatus(connected) {
+        statusListeners.forEach((handler) => {
+          try { handler(connected); } catch (err) {}
+        });
+      }
+
+      function scheduleReconnect() {
+        if (stopped) return;
+        const delay = Math.min(15000, 1000 * Math.pow(2, attempts++));
+        setTimeout(connect, delay);
+      }
+
+      function connect() {
+        if (stopped) return;
+        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        try {
+          socket = new WebSocket(`${proto}://${window.location.host}/ws`);
+        } catch (err) {
+          scheduleReconnect();
+          return;
+        }
+        socket.onopen = () => { attempts = 0; setStatus(true); };
+        socket.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg && msg.type) emit(msg.type, msg.payload || {});
+          } catch (err) {}
+        };
+        socket.onclose = () => { setStatus(false); scheduleReconnect(); };
+        socket.onerror = () => {};
+      }
+
+      connect();
+
+      return { on, onStatus };
+    })();
+
     // Auto-load widgets on page initialization
     window.addEventListener('DOMContentLoaded', () => {
       loadBackends();

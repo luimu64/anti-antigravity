@@ -17,6 +17,8 @@ from app.auth import auth_manager
 from app.client import client
 from app.config import API_KEY, SERVER_HOST, SERVER_PORT
 from app.providers.base import ModelNotFoundError
+from app.realtime import hub as realtime_hub
+from app.realtime import router as realtime_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.openai import router as openai_router
@@ -69,7 +71,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Initial model probing during startup failed: {e}")
 
+    # Live update hub for dashboard WebSocket clients
+    await realtime_hub.startup()
+    logger.info("Realtime event hub started (/ws)")
+
     yield
+
+    await realtime_hub.shutdown()
     logger.info("Shutting down Google Gate bridge...")
 
 
@@ -98,6 +106,7 @@ if static_dir.exists():
 app.include_router(dashboard_router)
 app.include_router(openai_router)
 app.include_router(auth_router)
+app.include_router(realtime_router)
 
 
 # Global OpenAI-compatible Exception Handlers

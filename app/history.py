@@ -1,8 +1,13 @@
+import logging
 import threading
 import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
+
+from app.realtime import hub
+
+logger = logging.getLogger("google_gate.history")
 
 
 class QueryHistoryManager:
@@ -43,6 +48,11 @@ class QueryHistoryManager:
         }
         with self._lock:
             self._buffer.appendleft(entry)
+        try:
+            # Push the new entry to live dashboard clients immediately
+            hub.publish("history.new", entry)
+        except Exception as e:
+            logger.debug(f"Failed to publish history event: {e}")
         return entry
 
     # Aliases
@@ -60,6 +70,10 @@ class QueryHistoryManager:
         """Clear all stored query records."""
         with self._lock:
             self._buffer.clear()
+        try:
+            hub.publish("history.clear", {})
+        except Exception as e:
+            logger.debug(f"Failed to publish history clear event: {e}")
 
     # Aliases
     clear_history = clear

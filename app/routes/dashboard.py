@@ -14,6 +14,7 @@ from app.client import client
 from app.config import CANONICAL_MODEL_MAP, HIDDEN_MODELS, SERVER_PORT
 from app.history import history_manager
 from app.keys import api_key_manager
+from app.realtime import hub
 from app.transformer import transform_model_catalog, transform_quota_summary
 
 logger = logging.getLogger("google_gate.dashboard")
@@ -266,10 +267,13 @@ async def clear_query_history():
     }
 
 
-@router.get("/api/quotas")
-async def get_quotas():
+async def collect_quota_groups() -> tuple[list[dict[str, Any]], Exception | None]:
     """
-    Retrieve user quota usage and rate limits across configured backends.
+    Gather quota usage groups from every configured backend.
+
+    Returns a tuple of (groups, error) where error is the Antigravity
+    upstream exception if its quota fetch failed and no other backend
+    produced data.
     """
     groups: list[dict[str, Any]] = []
     antigravity_err = None
@@ -296,12 +300,31 @@ async def get_quotas():
             except Exception as e:
                 logger.warning(f"Failed to get rate limit quotas for '{name}': {e}")
 
+    return groups, antigravity_err
+
+
+@router.get("/api/quotas")
+async def get_quotas():
+    """
+    Retrieve user quota usage and rate limits across configured backends.
+    """
+    groups, antigravity_err = await collect_quota_groups()
+
     if not groups and antigravity_err:
         return JSONResponse(
             status_code=500, content={"error": str(antigravity_err), "groups": []}
         )
 
     return JSONResponse(content={"groups": groups})
+
+
+# Feed live quota updates to the realtime hub (best-effort, errors swallowed)
+async def _realtime_quota_collector() -> list[dict[str, Any]]:
+    groups, _ = await collect_quota_groups()
+    return groups
+
+
+hub.set_quota_collector(_realtime_quota_collector)
 
 
 @router.get("/api/models")
