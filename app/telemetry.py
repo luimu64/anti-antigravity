@@ -19,6 +19,7 @@ import json
 import logging
 import logging.handlers
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -92,13 +93,23 @@ class JsonFormatter(logging.Formatter):
 
 
 class TextFormatter(logging.Formatter):
-    """Human-friendly console format with event + structured field appendix."""
+    """Human-friendly console format with event + structured field appendix.
 
-    def __init__(self):
-        super().__init__(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
+    The asctime prefix is dropped when the output stream is not a TTY
+    (Docker, journald, process managers), because those collectors already
+    prepend their own timestamp to every captured line - keeping ours
+    would log every date twice.
+    """
+
+    def __init__(self, show_time: bool | None = None):
+        if show_time is None:
+            show_time = sys.stderr.isatty()
+        fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        datefmt: str | None = "%Y-%m-%d %H:%M:%S"
+        if not show_time:
+            fmt = "[%(levelname)s] %(name)s: %(message)s"
+            datefmt = None
+        super().__init__(fmt, datefmt=datefmt)
 
     def format(self, record: logging.LogRecord) -> str:
         base = super().format(record)

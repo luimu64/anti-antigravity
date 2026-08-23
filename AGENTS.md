@@ -129,6 +129,9 @@ google-gate/
 
 ## 4. Development & Testing Commands
 
+### Git Workflow (CRITICAL)
+**Always commit and push automatically after each completed change.** Do not wait for the user to ask. After finishing a task (and once lint/tests pass), stage only the intended files, write a concise commit message matching the repo style, and push to the remote.
+
 ### Virtual Environment Setup
 ```bash
 python3 -m venv .venv
