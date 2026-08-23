@@ -67,6 +67,15 @@
     ].join('|');
   }
 
+  // Format a remaining-seconds value for countdown display
+  function fmtCountdown(totalSecs) {
+    const s = Math.max(0, Math.round(totalSecs));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}m ${String(r).padStart(2, '0')}s`;
+  }
+
   // Build a card descriptor: static HTML skeleton + dynamic field values.
   // The reconciler reuses existing DOM nodes and only patches fields, so
   // animations (e.g. the indeterminate cooldown bar) never restart.
@@ -78,9 +87,11 @@
         : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0));
     const pctLabel = fmtPct(Math.max(0, Math.min(1, remainingFrac)));
     const isCooldown = !!g.in_cooldown || g.display_name === 'Cooldown';
-    const resetSecs = (g.reset_time_seconds != null && g.reset_time_seconds >= 0)
-      ? `${Math.round(g.reset_time_seconds)}s`
-      : 'N/A';
+    const hasReset = g.reset_time_seconds != null && g.reset_time_seconds >= 0;
+    const resetSecs = hasReset ? `${Math.round(g.reset_time_seconds)}s` : 'N/A';
+    // Anchor an absolute deadline so the client can tick the countdown
+    // every second without waiting for the next server push
+    const resetDeadline = hasReset ? Date.now() + g.reset_time_seconds * 1000 : null;
     const key = quotaGroupKey(g);
 
     // Cooldown items get a distinct warning card instead of a gauge
@@ -104,7 +115,11 @@
             </div>
           </div>
         `,
-        fields: { reset: resetSecs },
+        fields: {
+          reset: resetSecs,
+          resetDeadline,
+          resetPrefix: '',
+        },
       };
     }
 
@@ -175,6 +190,8 @@
         pct: `${pctLabel}% available`,
         bar: pctNum,
         reset: `Reset: ${resetSecs}`,
+        resetDeadline,
+        resetPrefix: 'Reset: ',
         usage: usageVariant === 'mono' ? usageLine : (g.model_id || ''),
       },
     };
@@ -186,6 +203,8 @@
     const el = tpl.content.firstElementChild;
     el.dataset.quotaKey = card.key;
     el.dataset.quotaSig = card.sig;
+    // Anchor countdown metadata (resetDeadline / resetPrefix) immediately
+    patchQuotaCard(el, card.fields);
     return el;
   }
 
@@ -193,6 +212,20 @@
   // touching (or recreating) the progress bar itself.
   function patchQuotaCard(el, fields) {
     Object.entries(fields || {}).forEach(([name, value]) => {
+      if (name === 'resetDeadline') {
+        if (value == null) {
+          delete el.dataset.resetDeadline;
+        } else {
+          const v = String(value);
+          if (el.dataset.resetDeadline !== v) el.dataset.resetDeadline = v;
+        }
+        return;
+      }
+      if (name === 'resetPrefix') {
+        const v = String(value ?? '');
+        if (el.dataset.resetPrefix !== v) el.dataset.resetPrefix = v;
+        return;
+      }
       const target = el.querySelector(`[data-field="${name}"]`);
       if (!target) return;
       if (name === 'bar') {
@@ -203,6 +236,24 @@
       const s = String(value ?? '');
       if (target.textContent !== s) target.textContent = s;
     });
+  }
+
+  // Tick all visible countdowns once per second from their anchored
+  // deadlines, so timers decrement smoothly between server pushes.
+  let _countdownTimer = null;
+  function startCountdownTicker() {
+    if (_countdownTimer) return;
+    _countdownTimer = setInterval(() => {
+      document.querySelectorAll('[data-reset-deadline]').forEach((card) => {
+        const target = card.querySelector('[data-field="reset"]');
+        if (!target) return;
+        const deadline = parseFloat(card.dataset.resetDeadline);
+        if (isNaN(deadline)) return;
+        const remaining = Math.max(0, (deadline - Date.now()) / 1000);
+        const text = `${card.dataset.resetPrefix || ''}${fmtCountdown(remaining)}`;
+        if (target.textContent !== text) target.textContent = text;
+      });
+    }, 1000);
   }
 
   // Reuse matching card nodes between renders; replace only when the visual
@@ -267,6 +318,7 @@
       quotaGroupKey(a).localeCompare(quotaGroupKey(b))
     );
     reconcileQuotaGrid(grid, sorted.map(buildQuotaCard));
+    startCountdownTicker();
   }
 
   // Load Quotas (initial load & manual refresh; live updates arrive via WebSocket)
