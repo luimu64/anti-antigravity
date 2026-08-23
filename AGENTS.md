@@ -58,7 +58,7 @@ google-gate/
 │   ├── client.py             # Router client singleton & backwards compatibility aliases
 │   ├── translator.py         # OpenAI <-> Google internal schema converter, thinking tokens, tools
 │   ├── providers/
-│   │   ├── base.py           # BaseAdapter, RateLimitError, InMemoryRateTracker
+│   │   ├── base.py           # BaseAdapter, RateLimitError, InMemoryRateTracker (disk-persistent sliding-window counters)
 │   │   ├── router.py         # MultiBackendRouter, fallback & routing strategies
 │   │   ├── antigravity.py    # AntigravityAdapter (Cloud Code internal backend)
 │   │   ├── gemini_api.py     # GeminiApiAdapter (Google AI Studio API)

@@ -1,10 +1,14 @@
+import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
+from app.config import RATE_LIMITS_FILE, RATE_LIMITS_PERSIST
 from app.telemetry import log_event
 
 logger = logging.getLogger("google_gate.providers.base")
@@ -42,15 +46,113 @@ class InMemoryRateTracker:
     """
     In-memory proactive sliding-window rate limit tracker per running process.
     Tracks requests per minute (RPM), tokens per minute (TPM), and requests per day (RPD).
+
+    When ``persist_path`` is set, the raw window entries are restored on startup
+    and written back (atomically) after every mutation, so counters survive
+    restarts. Restored entries older than their window are discarded by the
+    regular pruning logic, making reloads safe after any downtime.
     """
 
-    def __init__(self, rpm: int = 0, tpm: int = 0, rpd: int = 0):
+    def __init__(
+        self,
+        rpm: int = 0,
+        tpm: int = 0,
+        rpd: int = 0,
+        persist_path: Path | None = None,
+        persist_key: str = "default",
+    ):
         self.rpm = rpm
         self.tpm = tpm
         self.rpd = rpd
         self._minute_requests: deque[float] = deque()
         self._minute_tokens: deque[tuple[float, int]] = deque()
         self._day_requests: deque[float] = deque()
+        self._persist_path = Path(persist_path) if persist_path else None
+        self._persist_key = persist_key
+        if self._persist_path is not None:
+            self._load_persisted()
+
+    def _load_persisted(self) -> None:
+        """Restore sliding-window counters for this backend from the shared store."""
+        assert self._persist_path is not None
+        try:
+            data = json.loads(self._persist_path.read_text())
+            entry = (data.get("backends") or {}).get(self._persist_key) or {}
+
+            minute_requests: list[float] = []
+            for ts in entry.get("minute_requests") or []:
+                if isinstance(ts, int | float):
+                    minute_requests.append(float(ts))
+
+            minute_tokens: list[tuple[float, int]] = []
+            for pair in entry.get("minute_tokens") or []:
+                if (
+                    isinstance(pair, list | tuple)
+                    and len(pair) == 2
+                    and isinstance(pair[0], int | float)
+                    and isinstance(pair[1], int | float)
+                ):
+                    minute_tokens.append((float(pair[0]), int(pair[1])))
+
+            day_requests: list[float] = []
+            for ts in entry.get("day_requests") or []:
+                if isinstance(ts, int | float):
+                    day_requests.append(float(ts))
+
+            self._minute_requests = deque(minute_requests)
+            self._minute_tokens = deque(minute_tokens)
+            self._day_requests = deque(day_requests)
+            # Note: expired entries are NOT pruned here against the wall
+            # clock - every accessor prunes lazily against its caller's
+            # notion of "now", which also keeps synthetic-clock tests valid.
+            log_event(
+                logger,
+                logging.INFO,
+                "ratestate.restored",
+                f"Restored rate limit counters for '{self._persist_key}' from disk",
+                backend=self._persist_key,
+                minute_requests=len(self._minute_requests),
+                minute_tokens=sum(n for _, n in self._minute_tokens),
+                day_requests=len(self._day_requests),
+            )
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning(
+                f"Failed to restore rate limit state for '{self._persist_key}': {e}"
+            )
+
+    def _save_persisted(self) -> None:
+        """Write this backend's counters into the shared store (atomic replace)."""
+        if self._persist_path is None:
+            return
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                data = json.loads(self._persist_path.read_text())
+                if not isinstance(data, dict):
+                    data = {}
+            except (FileNotFoundError, ValueError):
+                data = {}
+
+            backends = data.setdefault("backends", {})
+            if not isinstance(backends, dict):
+                backends = data["backends"] = {}
+            backends[self._persist_key] = {
+                "minute_requests": list(self._minute_requests),
+                "minute_tokens": [[ts, n] for ts, n in self._minute_tokens],
+                "day_requests": list(self._day_requests),
+            }
+            data.setdefault("version", 1)
+            data["saved_at"] = time.time()
+
+            tmp = self._persist_path.with_suffix(self._persist_path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data))
+            os.replace(tmp, self._persist_path)
+        except Exception as e:
+            logger.warning(
+                f"Failed to persist rate limit state for '{self._persist_key}': {e}"
+            )
 
     def _prune(self, now: float | None = None) -> None:
         current = now if now is not None else time.time()
@@ -112,12 +214,14 @@ class InMemoryRateTracker:
         if tokens > 0 or self.tpm > 0:
             self._minute_tokens.append((current, max(1, tokens)))
         self._day_requests.append(current)
+        self._save_persisted()
 
     def reset(self) -> None:
-        """Reset all in-memory counters."""
+        """Reset all in-memory counters (and clear any persisted state)."""
         self._minute_requests.clear()
         self._minute_tokens.clear()
         self._day_requests.clear()
+        self._save_persisted()
 
     def get_stats(self, now: float | None = None) -> dict[str, Any]:
         """Return snapshot of current rate limit tracking state."""
@@ -157,7 +261,13 @@ class BaseAdapter(ABC):
         self.default_cooldown = default_cooldown
         self.min_quota_fraction = min_quota_fraction
         self.model_cache_ttl = model_cache_ttl
-        self.rate_limiter = InMemoryRateTracker(rpm=rpm, tpm=tpm, rpd=rpd)
+        self.rate_limiter = InMemoryRateTracker(
+            rpm=rpm,
+            tpm=tpm,
+            rpd=rpd,
+            persist_path=RATE_LIMITS_FILE if RATE_LIMITS_PERSIST else None,
+            persist_key=self.name,
+        )
         self._cached_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
 

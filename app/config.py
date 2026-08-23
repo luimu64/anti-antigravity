@@ -13,6 +13,15 @@ DATA_DIR.mkdir(exist_ok=True)
 CREDENTIALS_FILE = Path(
     os.getenv("CREDENTIALS_FILE", str(DATA_DIR / "credentials.json"))
 )
+# Sliding-window rate limit counter store (survives restarts; see providers/base.py)
+RATE_LIMITS_FILE = Path(
+    os.getenv("RATE_LIMITS_FILE", str(DATA_DIR / "rate_limits.json"))
+)
+RATE_LIMITS_PERSIST = os.getenv("RATE_LIMITS_PERSIST", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Google OAuth Constants (extracted from agy binary)
 DEFAULT_CLIENT_ID = os.getenv(

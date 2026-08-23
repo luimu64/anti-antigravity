@@ -1,3 +1,15 @@
+import os
+import tempfile
+
+# Isolate rate-limit counter persistence: keep test runs from reading or
+# writing the real data/rate_limits.json store. Must be set before any
+# `app.*` import because config values are resolved at import time.
+os.environ.setdefault("RATE_LIMITS_PERSIST", "false")
+os.environ.setdefault(
+    "RATE_LIMITS_FILE",
+    os.path.join(tempfile.gettempdir(), "google_gate_test_rate_limits.json"),
+)
+
 import pytest
 
 from app.auth import auth_manager
