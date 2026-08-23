@@ -1,7 +1,7 @@
 {% import 'macros/components.html' as ui %}
 
 <!-- Query History Widget -->
-{% call ui.section_card('history-card') %}
+{% call ui.section_card('history-card', body_class='px-2 sm:px-6') %}
   <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
     <div class="flex items-center gap-2">
       <h2 class="card-title text-lg font-bold">Query History</h2>
@@ -145,14 +145,14 @@
     return `
       <div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box" data-entry-id="${escapeHtml(q.id || '')}">
         <input type="checkbox" aria-label="Expand query entry">
-        <div class="collapse-title flex items-center justify-between gap-2 py-3 px-4 min-w-0">
+        <div class="collapse-title flex items-center justify-between gap-2 py-3 pl-3 pr-12 min-w-0">
           <div class="flex items-center gap-2 min-w-0">
             <span class="badge badge-sm ${badgeClass} uppercase font-mono text-[10px] shrink-0">${escapeHtml(q.status)}</span>
             <span class="font-bold text-xs truncate">${escapeHtml(q.model)}</span>
           </div>
           <span class="text-[11px] text-base-content/60 shrink-0" title="${escapeHtml(q.timestamp)}">${escapeHtml(timeStr)}</span>
         </div>
-        <div class="collapse-content px-4">
+        <div class="collapse-content px-3">
           <div class="text-xs space-y-1.5 pb-1">
             ${resolvedNote}
             <div class="flex justify-between gap-3"><span class="text-base-content/60">Backend</span><span class="font-mono truncate">${escapeHtml(q.backend || 'antigravity')}</span></div>

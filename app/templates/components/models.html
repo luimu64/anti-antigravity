@@ -1,7 +1,7 @@
 {% import 'macros/components.html' as ui %}
 
 <!-- Available Models Catalog -->
-{% call ui.section_card('models-card') %}
+{% call ui.section_card('models-card', body_class='px-2 sm:px-6') %}
   <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
     <div class="flex items-center gap-2">
       <h2 class="card-title text-lg font-bold">Available Models</h2>
@@ -253,14 +253,14 @@
       return `
         <div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box">
           <input type="checkbox" aria-label="Expand ${escapeHtml(v.displayName)}">
-          <div class="collapse-title flex items-start justify-between gap-2 py-3 px-4 min-w-0">
+          <div class="collapse-title flex items-start justify-between gap-2 py-3 pl-3 pr-12 min-w-0">
             <div class="min-w-0">
               <div class="font-bold text-sm break-words">${escapeHtml(v.displayName)}${v.hiddenBadge}</div>
               <div class="text-xs text-base-content/60 font-mono truncate mt-0.5">${escapeHtml(v.modelId)}</div>
             </div>
             <span class="shrink-0 text-sm pt-0.5" title="Model capabilities">${v.emojis}</span>
           </div>
-          <div class="collapse-content px-4">
+          <div class="collapse-content px-3">
             <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-start text-xs pb-1">
               <span class="text-base-content/60 pt-0.5">Reasoning</span>
               <div class="flex flex-wrap gap-1">${v.reasoningBadges}</div>
@@ -279,7 +279,7 @@
 
   function renderCategoryBlock(title, badgeClass, items) {
     return `
-      <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
+      <div class="border border-base-300 rounded-box py-3 px-1.5 sm:px-3 bg-base-200/50">
         <div class="flex items-center justify-between mb-3 px-1">
           <h3 class="text-sm font-bold flex items-center gap-2">
             <span>${title}</span>
