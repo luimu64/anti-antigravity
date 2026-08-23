@@ -4,6 +4,7 @@ import os
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ from app.providers.antigravity import AntigravityAdapter
 from app.providers.base import BaseAdapter, ModelNotFoundError, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
 from app.providers.gemini_web import GeminiWebAdapter
+from app.realtime import hub
 from app.telemetry import log_event
 from app.translator import OpenAITranslator
 
@@ -95,6 +97,11 @@ class MultiBackendRouter(BaseAdapter):
         # so callers (history, dashboard) can label requests accurately even
         # when the router fell back from the preferred backend.
         self.last_served_by: str | None = None
+
+        # Last routing failure per (backend, model): {backend: {model: info}}.
+        # Surfaced in the dashboard models table (⚠️ indicator) and pushed live
+        # via the realtime hub. Entries clear on the next successful attempt.
+        self._model_errors: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Backwards-compatibility attributes for direct AntigravityClient callers
         self.auth: OAuthManager = getattr(self.antigravity, "auth", auth_manager)
@@ -424,6 +431,46 @@ class MultiBackendRouter(BaseAdapter):
         else:
             for a in self.adapters.values():
                 a.clear_cooldown()
+
+    # ------------------------------------------------------------------
+    # Per-model routing health (dashboard ⚠️ indicators)
+    # ------------------------------------------------------------------
+    def record_model_error(
+        self, backend: str, model: str, error: str, op: str = ""
+    ) -> None:
+        """Store the last routing failure for (backend, model) and broadcast it."""
+        key = model.lower().replace("models/", "").strip()
+        entry = {
+            "error": (error or "Unknown error")[:300],
+            "at": datetime.now(timezone.utc).isoformat(),
+            "op": op,
+        }
+        self._model_errors.setdefault(backend, {})[key] = entry
+        try:
+            hub.publish("model.error", {"backend": backend, "model": key, **entry})
+        except Exception as e:
+            logger.debug(f"Failed to publish model.error event: {e}")
+
+    def clear_model_error(self, backend: str, model: str) -> None:
+        """Forget the failure marker once a routing attempt succeeds again."""
+        bucket = self._model_errors.get(backend)
+        if not bucket:
+            return
+        key = model.lower().replace("models/", "").strip()
+        if key in bucket:
+            del bucket[key]
+            if not bucket:
+                self._model_errors.pop(backend, None)
+            try:
+                hub.publish("model.ok", {"backend": backend, "model": key})
+            except Exception as e:
+                logger.debug(f"Failed to publish model.ok event: {e}")
+
+    def get_model_errors(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Return a copy of the last-error registry keyed by backend then model."""
+        return {
+            backend: dict(entries) for backend, entries in self._model_errors.items()
+        }
 
     def get_adapter(self, name: str) -> BaseAdapter | None:
         return self.adapters.get(name)
@@ -869,6 +916,7 @@ class MultiBackendRouter(BaseAdapter):
                 tokens_used = usage.get("totalTokenCount") or estimated_tokens or 1
                 adapter.record_usage(tokens=tokens_used)
                 self.last_served_by = adapter.name
+                self.clear_model_error(adapter.name, model)
                 if on_backend_served:
                     on_backend_served(adapter.name)
                 attempts.append(
@@ -912,6 +960,9 @@ class MultiBackendRouter(BaseAdapter):
                 return res
             except Exception as e:
                 duration_ms = (time.perf_counter() - attempt_started) * 1000
+                self.record_model_error(
+                    adapter.name, model, str(e), op="generate_content"
+                )
                 err_fields = {
                     "op": "generate_content",
                     "attempt": attempt_no + 1,
@@ -1078,6 +1129,7 @@ class MultiBackendRouter(BaseAdapter):
                     # Backend accepted the request: attribute THIS request now,
                     # so concurrent requests can't mislabel each other.
                     self.last_served_by = adapter.name
+                    self.clear_model_error(adapter.name, model)
                     if on_backend_served:
                         on_backend_served(adapter.name)
                     log_event(
@@ -1147,6 +1199,9 @@ class MultiBackendRouter(BaseAdapter):
 
             except Exception as e:
                 is_rate_limit = self._is_rate_limit_exception(e)
+                self.record_model_error(
+                    adapter.name, model, str(e), op="stream_generate_content"
+                )
                 err_fields = {
                     "op": "stream_generate_content",
                     "attempt": attempt_no + 1,
@@ -1293,6 +1348,7 @@ class MultiBackendRouter(BaseAdapter):
                 )
                 duration_ms = (time.perf_counter() - attempt_started) * 1000
                 adapter.record_usage(tokens=estimated_tokens)
+                self.clear_model_error(adapter.name, model)
                 usage_meta = (
                     res.get("usageMetadata", {}) if isinstance(res, dict) else {}
                 )
@@ -1319,6 +1375,9 @@ class MultiBackendRouter(BaseAdapter):
                 return res
             except Exception as e:
                 duration_ms = (time.perf_counter() - attempt_started) * 1000
+                self.record_model_error(
+                    adapter.name, model, str(e), op="embed_contents"
+                )
                 err_fields = {
                     "op": "embed_contents",
                     "attempt": attempt_no + 1,

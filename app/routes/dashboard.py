@@ -406,6 +406,10 @@ async def get_dashboard_models():
             "the_rest": the_rest,
             "models": all_models,
             "total": len(all_models),
+            # Last routing failure per (backend, model) for ⚠️ indicators
+            "model_errors": (
+                client.get_model_errors() if hasattr(client, "get_model_errors") else {}
+            ),
         }
     except Exception as e:
         logger.warning(f"Failed to fetch models for dashboard: {e}")

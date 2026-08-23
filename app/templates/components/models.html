@@ -35,6 +35,24 @@
   // Available Models Management
   window._allAvailableModels = [];
   window._showHiddenModels = false;
+  // Last routing failure per (backend, model): {"gemini_api": {"gemini-3.7-flash-medium": {...}}}
+  window._modelErrors = {};
+
+  // Re-render respecting current search filter and hidden toggle
+  function refreshModelsView() {
+    const searchInput = document.getElementById('models-search-input');
+    const query = searchInput ? searchInput.value.trim() : '';
+    if (query) {
+      filterModels(query);
+    } else {
+      renderModels(window._allAvailableModels);
+    }
+  }
+
+  function toggleHiddenModels(show) {
+    window._showHiddenModels = !!show;
+    refreshModelsView();
+  }
 
   // Export raw per-backend model catalogs as a JSON download
   async function exportModels() {
@@ -90,6 +108,7 @@
       const data = await res.json();
       const models = data.models || [];
       window._allAvailableModels = models;
+      window._modelErrors = data.model_errors || {};
 
       const visibleModels = window._showHiddenModels ? models : models.filter(m => !m.hidden);
 
@@ -113,6 +132,41 @@
       console.error('Failed to load models:', err);
       container.innerHTML = '<p class="text-xs text-error">Failed to load available models.</p>';
     }
+  }
+
+  // Find the last routing failure for a model row on a given backend.
+  // Errors are keyed by the resolved internal model id used for routing,
+  // so check every selectable id of the row (plus base id/name) as fallbacks.
+  function lookupModelError(model, backendKey) {
+    const errs = window._modelErrors ? window._modelErrors[backendKey] : null;
+    if (!errs) return null;
+    const candidates = [
+      model.id || '',
+      ...((model.selectable_model_ids || [])),
+      model.base_model_name || '',
+    ];
+    for (const key of candidates) {
+      if (!key) continue;
+      const hit = errs[String(key).toLowerCase()];
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function providerCellHtml(hasProvider, errInfo) {
+    if (!hasProvider) {
+      return '<span class="text-base-content/30">-</span>';
+    }
+    if (errInfo) {
+      let when = '';
+      if (errInfo.at && !isNaN(new Date(errInfo.at).getTime())) {
+        when = ` at ${new Date(errInfo.at).toLocaleTimeString()}`;
+      }
+      const op = errInfo.op ? ` (${errInfo.op})` : '';
+      const tip = `Recent routing failure${when}${op}:${errInfo.error || 'Unknown error'}`;
+      return `<span class="cursor-help" title="${escapeHtml(tip)}">⚠️</span>`;
+    }
+    return '<span class="text-success font-bold" title="Available">✓</span>';
   }
 
   function renderModelTableRows(items) {
@@ -167,6 +221,10 @@
       const modelId = model.id || (model.selectable_model_ids ? model.selectable_model_ids[0] : '');
       const displayName = model.base_model_name || model.displayName || modelId;
 
+      const agyErr = lookupModelError(model, 'antigravity');
+      const apiErr = lookupModelError(model, 'gemini_api');
+      const webErr = lookupModelError(model, 'gemini_web');
+
       const hiddenBadge = model.hidden
         ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Experimental</span>'
         : '';
@@ -186,9 +244,9 @@
           <td class="whitespace-nowrap">${reasoningBadges}</td>
           <td class="text-xs whitespace-nowrap">${contextText}</td>
           <td class="text-sm whitespace-nowrap" title="Model capabilities">${emojis || '—'}</td>
-          <td class="text-center">${hasAgy ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
-          <td class="text-center">${hasApi ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
-          <td class="text-center">${hasWeb ? '<span class="text-success font-bold">✓</span>' : '<span class="text-base-content/30">-</span>'}</td>
+          <td class="text-center">${providerCellHtml(hasAgy, agyErr)}</td>
+          <td class="text-center">${providerCellHtml(hasApi, apiErr)}</td>
+          <td class="text-center">${providerCellHtml(hasWeb, webErr)}</td>
         </tr>
       `;
     }).join('');
@@ -275,6 +333,7 @@
           <span class="inline-flex items-center gap-1.5"><span>🛠️</span><span>Tool Calling</span></span>
           <span class="inline-flex items-center gap-1.5"><span>👁️</span><span>Multimodal / Vision</span></span>
           <span class="inline-flex items-center gap-1.5"><span>🔢</span><span>Text Embeddings</span></span>
+          <span class="inline-flex items-center gap-1.5"><span>⚠️</span><span>Recent routing failure (hover for details)</span></span>
         </div>
       </div>
     `;
@@ -301,5 +360,27 @@
     });
 
     renderModels(filtered);
+  }
+
+  // Live routing-failure indicators via WebSocket (no polling)
+  if (window.Realtime) {
+    Realtime.on('model.error', (payload) => {
+      if (!payload || !payload.backend || !payload.model) return;
+      const bucket = (window._modelErrors = window._modelErrors || {});
+      const entry = { error: payload.error, at: payload.at, op: payload.op };
+      (bucket[payload.backend] = bucket[payload.backend] || {})[payload.model] = entry;
+
+      // Also mark the row immediately when the model list hasn't loaded yet
+      if (!window._allAvailableModels.length) return;
+      refreshModelsView();
+    });
+
+    Realtime.on('model.ok', (payload) => {
+      const bucket = window._modelErrors && window._modelErrors[payload.backend];
+      if (bucket && bucket[payload.model]) {
+        delete bucket[payload.model];
+        refreshModelsView();
+      }
+    });
   }
 </script>

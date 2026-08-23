@@ -107,12 +107,16 @@ class RealtimeHub:
 
         message = {"type": event, "payload": payload or {}}
         running = self._current_loop()
-        loop = running or self._loop
+        # The attached loop owns the WebSocket transports; only fall back to
+        # a running loop when nothing was attached yet (e.g. early startup).
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            loop = running
         if loop is None or loop.is_closed():
             return
 
         if running is loop:
-            running.create_task(self.broadcast(message))
+            loop.create_task(self.broadcast(message))
         else:
             # Loop closed between check and schedule - ignore
             with contextlib.suppress(RuntimeError):
@@ -141,7 +145,9 @@ class RealtimeHub:
         """Request a debounced quota fetch-and-push cycle."""
         self._quota_dirty = True
         running = self._current_loop()
-        loop = running or self._loop
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            loop = running
         if loop is None or loop.is_closed():
             return
 
