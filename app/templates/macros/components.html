@@ -1,7 +1,7 @@
 {# Reusable Jinja2 UI macros for google-gate dashboard #}
 
 {% macro section_card(id, class="mb-6") %}
-<div class="card bg-base-200 shadow-xl {{ class }}" id="{{ id }}">
+<div class="card bg-base-200 shadow-md {{ class }}" id="{{ id }}">
   <div class="card-body">
     {{ caller() }}
   </div>
@@ -9,7 +9,7 @@
 {% endmacro %}
 
 {% macro provider_card(id, title, toggle_id, backend_key, status_id) %}
-<div class="card bg-base-100 shadow border border-base-300" id="{{ id }}">
+<div class="card bg-base-100 shadow-sm border border-base-300" id="{{ id }}">
   <div class="card-body p-4">
     <div class="flex items-center justify-between border-b border-base-300 pb-2 mb-2">
       <h3 class="font-bold text-sm">{{ title }}</h3>

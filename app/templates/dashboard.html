@@ -1,6 +1,6 @@
 {% import 'macros/components.html' as ui %}
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dim">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -81,15 +81,15 @@
 <body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8">
   {% include 'components/toast.html' %}
 
-  <div class="container mx-auto max-w-6xl">
+  <div class="container mx-auto max-w-7xl">
     {% include 'components/header.html' %}
 
     <main>
-      {% include 'components/backends.html' %}
-      {% include 'components/models.html' %}
       {% include 'components/quotas.html' %}
-      {% include 'components/keys.html' %}
       {% include 'components/history.html' %}
+      {% include 'components/models.html' %}
+      {% include 'components/keys.html' %}
+      {% include 'components/backends.html' %}
     </main>
   </div>
 

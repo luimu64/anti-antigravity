@@ -14,7 +14,7 @@
     {{ ui.action_button('Clear', 'clearHistory()', variant="btn-outline btn-error btn-xs sm:btn-sm") }}
   </div>
 
-  <div id="history-container" class="overflow-x-auto overflow-y-auto max-h-96 border border-base-300 rounded-box">
+  <div id="history-container" class="overflow-y-auto max-h-96 border border-base-300 rounded-box">
     <div class="p-4">
       {{ ui.loading_placeholder('Loading query history...') }}
     </div>
@@ -52,22 +52,29 @@
     }
   }
 
-  function buildHistoryRowHtml(q) {
-    let badgeClass = 'badge-success';
-    if (q.status === 'error') {
-      badgeClass = 'badge-error';
-    } else if (q.status === 'stream-aborted') {
-      badgeClass = 'badge-warning';
-    } else if (q.status === 'rate_limited') {
-      badgeClass = 'badge-warning';
-    }
+  function historyStatusBadgeClass(q) {
+    if (q.status === 'error') return 'badge-error';
+    if (q.status === 'stream-aborted' || q.status === 'rate_limited') return 'badge-warning';
+    return 'badge-success';
+  }
 
+  function historyTimeStr(q) {
     const date = new Date(q.timestamp);
-    const timeStr = isNaN(date.getTime()) ? q.timestamp : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return isNaN(date.getTime())
+      ? q.timestamp
+      : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
 
-    const durationStr = q.duration_ms >= 1000 
-      ? `${(q.duration_ms / 1000).toFixed(2)}s` 
+  function historyDurationStr(q) {
+    return q.duration_ms >= 1000
+      ? `${(q.duration_ms / 1000).toFixed(2)}s`
       : `${Math.round(q.duration_ms)}ms`;
+  }
+
+  function buildHistoryRowHtml(q) {
+    const badgeClass = historyStatusBadgeClass(q);
+    const timeStr = historyTimeStr(q);
+    const durationStr = historyDurationStr(q);
 
     let tokenDisplay = '';
     if (q.status === 'error' && !q.total_tokens) {
@@ -86,12 +93,12 @@
       `;
     }
 
-    const errorHtml = q.error_message 
+    const errorHtml = q.error_message
       ? `<div class="text-[11px] text-error truncate max-w-xs" title="${escapeHtml(q.error_message)}">${escapeHtml(q.error_message)}</div>`
       : '';
 
     const resolvedNote = (q.resolved_model && q.resolved_model !== q.model && q.resolved_model !== 'unknown')
-      ? `<div class="text-[11px] text-base-content/60">&rarr; ${escapeHtml(q.resolved_model)}</div>`
+      ? `<div class="text-[11px] text-base-content/60 break-words">&rarr; ${escapeHtml(q.resolved_model)}</div>`
       : '';
 
     return `
@@ -103,7 +110,7 @@
           ${escapeHtml(timeStr)}
         </td>
         <td>
-          <div class="font-bold text-xs">${escapeHtml(q.model)}</div>
+          <div class="font-bold text-xs break-words min-w-[110px] max-w-[220px]" title="${escapeHtml(q.model)}">${escapeHtml(q.model)}</div>
           ${resolvedNote}
           ${errorHtml}
         </td>
@@ -113,6 +120,48 @@
         <td class="text-xs font-mono whitespace-nowrap">${escapeHtml(durationStr)}</td>
         <td class="text-xs whitespace-nowrap">${tokenDisplay}</td>
       </tr>
+    `;
+  }
+
+  // Mobile variant: same data as the table row, collapsed into a tappable card.
+  function buildHistoryCardHtml(q) {
+    const badgeClass = historyStatusBadgeClass(q);
+    const timeStr = historyTimeStr(q);
+    const durationStr = historyDurationStr(q);
+
+    const tokensLine = (q.status === 'error' && !q.total_tokens)
+      ? '<span class="text-base-content/50">N/A</span>'
+      : `<span class="font-bold">${(q.total_tokens || 0).toLocaleString()}</span> `
+        + `<span class="text-base-content/60">(${(q.prompt_tokens || 0).toLocaleString()} in / ${(q.completion_tokens || 0).toLocaleString()} out)</span>`;
+
+    const errorBlock = q.error_message
+      ? `<div><span class="text-base-content/60">Error</span><div class="text-error break-words">${escapeHtml(q.error_message)}</div></div>`
+      : '';
+
+    const resolvedNote = (q.resolved_model && q.resolved_model !== q.model && q.resolved_model !== 'unknown')
+      ? `<div><span class="text-base-content/60">Resolved</span> <span class="break-words">&rarr; ${escapeHtml(q.resolved_model)}</span></div>`
+      : '';
+
+    return `
+      <div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box" data-entry-id="${escapeHtml(q.id || '')}">
+        <input type="checkbox" aria-label="Expand query entry">
+        <div class="collapse-title flex items-center justify-between gap-2 py-3 px-4 min-w-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="badge badge-sm ${badgeClass} uppercase font-mono text-[10px] shrink-0">${escapeHtml(q.status)}</span>
+            <span class="font-bold text-xs truncate">${escapeHtml(q.model)}</span>
+          </div>
+          <span class="text-[11px] text-base-content/60 shrink-0" title="${escapeHtml(q.timestamp)}">${escapeHtml(timeStr)}</span>
+        </div>
+        <div class="collapse-content px-4">
+          <div class="text-xs space-y-1.5 pb-1">
+            ${resolvedNote}
+            <div class="flex justify-between gap-3"><span class="text-base-content/60">Backend</span><span class="font-mono truncate">${escapeHtml(q.backend || 'antigravity')}</span></div>
+            <div class="flex justify-between gap-3"><span class="text-base-content/60">Latency</span><span class="font-mono">${escapeHtml(durationStr)}</span></div>
+            <div class="flex justify-between gap-3"><span class="text-base-content/60 shrink-0">Tokens</span><span class="font-mono text-right">${tokensLine}</span></div>
+            ${errorBlock}
+          </div>
+        </div>
+      </div>
     `;
   }
 
@@ -127,23 +176,30 @@
       return;
     }
 
-    let html = `
-      <table class="table table-zebra table-sm table-pin-rows w-full">
-        <thead>
-          <tr class="bg-base-200">
-            <th>Status</th>
-            <th>Time</th>
-            <th>Model</th>
-            <th>Backend</th>
-            <th>Latency</th>
-            <th>Tokens</th>
-          </tr>
-        </thead>
-        <tbody id="history-tbody">
+    container.innerHTML = `
+      <!-- Desktop table -->
+      <div class="hidden md:block overflow-x-auto">
+        <table class="table table-zebra table-sm table-pin-rows w-full">
+          <thead>
+            <tr class="bg-base-200">
+              <th>Status</th>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Backend</th>
+              <th>Latency</th>
+              <th>Tokens</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            ${history.map(buildHistoryRowHtml).join('')}
+          </tbody>
+        </table>
+      </div>
+      <!-- Mobile expandable cards -->
+      <div id="history-cards" class="md:hidden p-2 space-y-2">
+        ${history.map(buildHistoryCardHtml).join('')}
+      </div>
     `;
-    history.forEach(q => { html += buildHistoryRowHtml(q); });
-    html += '</tbody></table>';
-    container.innerHTML = html;
   }
 
   // Clear Query History
@@ -189,25 +245,32 @@
   function prependHistoryEntry(entry) {
     if (!entry || !entry.id) return;
     const tbody = document.getElementById('history-tbody');
+    const cards = document.getElementById('history-cards');
 
-    if (!tbody) {
-      // Table not rendered yet (empty state) - do a full load instead
+    if (!tbody && !cards) {
+      // Neither view rendered yet (empty state) - do a full load instead
       loadHistory();
       return;
     }
 
     // Skip duplicates (e.g. after a manual refresh race)
-    if (tbody.querySelector(`tr[data-entry-id="${entry.id}"]`)) return;
+    if (tbody && tbody.querySelector(`tr[data-entry-id="${entry.id}"]`)) return;
+    if (cards && cards.querySelector(`div[data-entry-id="${entry.id}"]`)) return;
 
-    tbody.insertAdjacentHTML('afterbegin', buildHistoryRowHtml(entry));
-
-    // Keep the table capped at the server-side buffer size
+    let count = 0;
     const maxRows = 50;
-    while (tbody.rows.length > maxRows) {
-      tbody.deleteRow(-1);
+    if (tbody) {
+      tbody.insertAdjacentHTML('afterbegin', buildHistoryRowHtml(entry));
+      while (tbody.rows.length > maxRows) tbody.deleteRow(-1);
+      count = tbody.rows.length;
+    }
+    if (cards) {
+      cards.insertAdjacentHTML('afterbegin', buildHistoryCardHtml(entry));
+      while (cards.children.length > maxRows) cards.lastElementChild.remove();
+      count = cards.children.length;
     }
 
-    updateHistoryBadge(tbody.rows.length);
+    updateHistoryBadge(count);
   }
 
   // Reset the view when history is cleared from another session/tab

@@ -99,6 +99,30 @@
   }
 
   // Load Keys
+  function buildKeyCardHtml(k) {
+    const created = new Date(k.created_at * 1000).toLocaleDateString();
+    const lastUsed = k.last_used_at
+      ? new Date(k.last_used_at * 1000).toLocaleDateString()
+      : 'Never';
+
+    return `
+      <div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box">
+        <input type="checkbox" aria-label="Expand key ${escapeHtml(k.name)}">
+        <div class="collapse-title flex items-center justify-between gap-2 py-3 px-4 min-w-0">
+          <span class="font-bold text-sm truncate">${escapeHtml(k.name)}</span>
+          <code class="badge badge-neutral font-mono text-xs shrink-0">${escapeHtml(k.key_preview)}</code>
+        </div>
+        <div class="collapse-content px-4">
+          <div class="text-xs space-y-1.5 mb-3 pb-1">
+            <div class="flex justify-between gap-3"><span class="text-base-content/60">Created</span><span>${created}</span></div>
+            <div class="flex justify-between gap-3"><span class="text-base-content/60">Last Used</span><span>${lastUsed}</span></div>
+          </div>
+          <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn btn-error btn-outline btn-xs w-full" title="Revoke key">Revoke Key</button>
+        </div>
+      </div>
+    `;
+  }
+
   async function loadKeys() {
     const container = document.getElementById('keys-container');
     try {
@@ -111,8 +135,9 @@
         return;
       }
 
-      let html = `
-        <div class="overflow-x-auto">
+      container.innerHTML = `
+        <!-- Desktop table -->
+        <div class="hidden md:block overflow-x-auto">
           <table class="table table-zebra table-sm w-full">
             <thead>
               <tr>
@@ -124,29 +149,31 @@
               </tr>
             </thead>
             <tbody>
+              ${keys.map(k => {
+                const created = new Date(k.created_at * 1000).toLocaleDateString();
+                const lastUsed = k.last_used_at
+                  ? new Date(k.last_used_at * 1000).toLocaleDateString()
+                  : 'Never';
+                return `
+                  <tr class="hover">
+                    <td class="font-bold break-words min-w-[100px] max-w-[200px]">${escapeHtml(k.name)}</td>
+                    <td><code class="badge badge-neutral font-mono text-xs">${escapeHtml(k.key_preview)}</code></td>
+                    <td class="text-xs text-base-content/70 whitespace-nowrap">${created}</td>
+                    <td class="text-xs text-base-content/70 whitespace-nowrap">${lastUsed}</td>
+                    <td class="text-right">
+                      <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn btn-error btn-xs" title="Revoke key">Revoke</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <!-- Mobile expandable cards -->
+        <div class="md:hidden space-y-2">
+          ${keys.map(buildKeyCardHtml).join('')}
+        </div>
       `;
-
-      keys.forEach(k => {
-        const created = new Date(k.created_at * 1000).toLocaleDateString();
-        const lastUsed = k.last_used_at 
-          ? new Date(k.last_used_at * 1000).toLocaleDateString()
-          : 'Never';
-
-        html += `
-          <tr class="hover">
-            <td class="font-bold">${escapeHtml(k.name)}</td>
-            <td><code class="badge badge-neutral font-mono text-xs">${escapeHtml(k.key_preview)}</code></td>
-            <td class="text-xs text-base-content/70">${created}</td>
-            <td class="text-xs text-base-content/70">${lastUsed}</td>
-            <td class="text-right">
-              <button type="button" onclick="revokeKey('${escapeHtml(k.id)}', '${escapeHtml(k.name)}')" class="btn btn-error btn-xs" title="Revoke key">Revoke</button>
-            </td>
-          </tr>
-        `;
-      });
-
-      html += '</tbody></table></div>';
-      container.innerHTML = html;
     } catch (err) {
       container.innerHTML = '<p class="text-xs text-error">Failed to load keys.</p>';
     }

@@ -4,7 +4,7 @@
 {% call ui.section_card('models-card') %}
   <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3 mb-4">
     <div class="flex items-center gap-2">
-      <h2 class="card-title text-lg font-bold">✨ Available Models</h2>
+      <h2 class="card-title text-lg font-bold">Available Models</h2>
       <span id="models-count-badge" class="badge badge-info badge-sm hidden"></span>
     </div>
     <div class="flex items-center gap-3">
@@ -17,9 +17,9 @@
     </div>
   </div>
 
-  <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
-    <div class="flex-1 min-w-[260px]">
-      <input type="search" id="models-search-input" placeholder="Filter models by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" class="input input-bordered input-sm w-full">
+  <div class="flex flex-col sm:flex-row gap-2 sm:gap-3 sm:items-center justify-between mb-4">
+    <div class="flex-1 min-w-[200px]">
+      <input type="search" id="models-search-input" placeholder="Filter by name or provider (e.g. 3.7, claude, gemini)..." oninput="filterModels(this.value)" class="input input-bordered input-sm w-full">
     </div>
     <div class="text-xs text-base-content/70">
       Click any <strong>Model ID</strong> to copy it to clipboard.
@@ -38,7 +38,6 @@
   // Last routing failure per (backend, model): {"gemini_api": {"gemini-3.7-flash-medium": {...}}}
   window._modelErrors = {};
 
-  // Re-render respecting current search filter and hidden toggle
   function refreshModelsView() {
     const searchInput = document.getElementById('models-search-input');
     const query = searchInput ? searchInput.value.trim() : '';
@@ -87,17 +86,6 @@
     }
   }
 
-  function toggleHiddenModels(show) {
-    window._showHiddenModels = !!show;
-    const searchInput = document.getElementById('models-search-input');
-    const query = searchInput ? searchInput.value.trim() : '';
-    if (query) {
-      filterModels(query);
-    } else {
-      renderModels(window._allAvailableModels);
-    }
-  }
-
   async function loadModels() {
     const container = document.getElementById('models-container');
     const countBadge = document.getElementById('models-count-badge');
@@ -121,13 +109,7 @@
         }
       }
 
-      const searchInput = document.getElementById('models-search-input');
-      const query = searchInput ? searchInput.value.trim() : '';
-      if (query) {
-        filterModels(query);
-      } else {
-        renderModels(models);
-      }
+      refreshModelsView();
     } catch (err) {
       console.error('Failed to load models:', err);
       container.innerHTML = '<p class="text-xs text-error">Failed to load available models.</p>';
@@ -153,6 +135,13 @@
     return null;
   }
 
+  // Provider columns: short labels keep the table narrow; full names in tooltips.
+  const PROVIDER_COLUMNS = [
+    { key: 'antigravity', short: 'AG', full: 'Antigravity' },
+    { key: 'gemini_api', short: 'API', full: 'Gemini API' },
+    { key: 'gemini_web', short: 'Web', full: 'Gemini Web' },
+  ];
+
   function providerCellHtml(hasProvider, errInfo) {
     if (!hasProvider) {
       return '<span class="text-base-content/30">-</span>';
@@ -169,87 +158,158 @@
     return '<span class="text-success font-bold" title="Available">✓</span>';
   }
 
+  // Shared per-model view-model consumed by both the desktop table and the
+  // mobile card renderers so formatting stays identical across breakpoints.
+  function modelView(model) {
+    const sources = model.available_sources || [];
+    const caps = model.capabilities || [];
+    const isEmbed = caps.includes('embeddings') || (model.id && model.id.includes('embedding'));
+    const isThinking = caps.includes('thinking') || (model.id && (model.id.includes('thinking') || model.id.includes('3.7')));
+
+    let emojis = '';
+    if (isThinking) emojis += '🧠 ';
+    if (!isEmbed && (caps.includes('tools') || model.supportsTools !== false)) emojis += '🛠️ ';
+    if (!isEmbed && (caps.includes('vision') || model.supportsVision !== false)) emojis += '👁️ ';
+    if (isEmbed) emojis += '🔢 ';
+    emojis = emojis.trim();
+
+    let reasoningBadges = '<span class="text-base-content/40">—</span>';
+    if (model.reasoning_levels && model.reasoning_levels.length > 0) {
+      reasoningBadges = model.reasoning_levels.map(lvl => {
+        let color = 'badge-neutral';
+        if (lvl === 'High') color = 'badge-secondary';
+        else if (lvl === 'Medium') color = 'badge-primary';
+        else if (lvl === 'Low' || lvl === 'Extra Low') color = 'badge-info';
+        else if (lvl === 'Dynamic' || lvl === 'Thinking') color = 'badge-accent';
+        return `<span class="badge ${color} badge-xs font-mono font-medium">${escapeHtml(lvl)}</span>`;
+      }).join(' ');
+    }
+
+    let contextText = '1M tokens';
+    const ctxVal = model.context_window || model.maxTokens;
+    if (ctxVal) {
+      if (ctxVal >= 1048576) {
+        const mVal = ctxVal / 1048576;
+        contextText = `${mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1)}M tokens`;
+      } else if (ctxVal >= 1024) {
+        contextText = `${Math.round(ctxVal / 1024)}k tokens`;
+      } else {
+        contextText = `${ctxVal} tokens`;
+      }
+    }
+
+    const modelId = model.id || (model.selectable_model_ids ? model.selectable_model_ids[0] : '');
+    const displayName = model.base_model_name || model.displayName || modelId;
+    const hiddenBadge = model.hidden
+      ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Experimental</span>'
+      : '';
+
+    const providers = PROVIDER_COLUMNS.map(col => ({
+      ...col,
+      has: sources.includes(col.full) || ((model.providers || []).includes(col.key)),
+      err: lookupModelError(model, col.key),
+    }));
+
+    return { displayName, modelId, hiddenBadge, reasoningBadges, contextText, emojis, providers };
+  }
+
+  function copyModelIdButton(modelId, extraClass) {
+    return `
+      <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-start gap-1 w-fit max-w-full text-left ${extraClass || ''}" onclick="copyText('${escapeHtml(modelId)}', 'Model ID copied to clipboard!')" title="Click to copy '${escapeHtml(modelId)}'">
+        <span class="break-all whitespace-normal leading-snug">${escapeHtml(modelId)}</span>
+        <span class="text-xs opacity-60 shrink-0 pt-px">📋</span>
+      </button>
+    `;
+  }
+
   function renderModelTableRows(items) {
     if (!items || items.length === 0) {
       return `<tr><td colspan="8" class="text-center text-xs text-base-content/50 py-4">No models available in this category.</td></tr>`;
     }
-    return items.map(model => {
-      const sources = model.available_sources || [];
-      const hasAgy = sources.includes('Antigravity') || (model.providers && model.providers.includes('antigravity'));
-      const hasApi = sources.includes('Gemini API') || (model.providers && model.providers.includes('gemini_api'));
-      const hasWeb = sources.includes('Gemini Web') || (model.providers && model.providers.includes('gemini_web'));
-
-      // Context Window formatting
-      let contextText = '1M tokens';
-      const ctxVal = model.context_window || model.maxTokens;
-      if (ctxVal) {
-        if (ctxVal >= 1048576) {
-          const mVal = ctxVal / 1048576;
-          contextText = `${mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1)}M tokens`;
-        } else if (ctxVal >= 1024) {
-          contextText = `${Math.round(ctxVal / 1024)}k tokens`;
-        } else {
-          contextText = `${ctxVal} tokens`;
-        }
-      }
-
-      // Capabilities emojis
-      let emojis = '';
-      const caps = model.capabilities || [];
-      const isEmbed = caps.includes('embeddings') || (model.id && model.id.includes('embedding'));
-      const isThinking = caps.includes('thinking') || (model.id && (model.id.includes('thinking') || model.id.includes('3.7')));
-
-      if (isThinking) emojis += '🧠 ';
-      if (!isEmbed && (caps.includes('tools') || model.supportsTools !== false)) emojis += '🛠️ ';
-      if (!isEmbed && (caps.includes('vision') || model.supportsVision !== false)) emojis += '👁️ ';
-      if (isEmbed) emojis += '🔢 ';
-      emojis = emojis.trim();
-
-      // Reasoning levels badges
-      let reasoningBadges = '<span class="text-base-content/40">—</span>';
-      if (model.reasoning_levels && model.reasoning_levels.length > 0) {
-        reasoningBadges = model.reasoning_levels.map(lvl => {
-          let color = 'badge-neutral';
-          if (lvl === 'High') color = 'badge-secondary';
-          else if (lvl === 'Medium') color = 'badge-primary';
-          else if (lvl === 'Low' || lvl === 'Extra Low') color = 'badge-info';
-          else if (lvl === 'Dynamic' || lvl === 'Thinking') color = 'badge-accent';
-          return `<span class="badge ${color} badge-xs font-mono font-medium">${escapeHtml(lvl)}</span>`;
-        }).join(' ');
-      }
-
-      const modelId = model.id || (model.selectable_model_ids ? model.selectable_model_ids[0] : '');
-      const displayName = model.base_model_name || model.displayName || modelId;
-
-      const agyErr = lookupModelError(model, 'antigravity');
-      const apiErr = lookupModelError(model, 'gemini_api');
-      const webErr = lookupModelError(model, 'gemini_web');
-
-      const hiddenBadge = model.hidden
-        ? '<span class="badge badge-warning badge-xs ml-1.5 opacity-80">Experimental</span>'
-        : '';
-
+    return items.map(m => {
+      const v = modelView(m);
       return `
         <tr class="hover">
-          <td class="font-bold whitespace-nowrap flex items-center">
-            <span>${escapeHtml(displayName)}</span>
-            ${hiddenBadge}
-          </td>
-          <td>
-            <button type="button" class="kbd kbd-sm cursor-pointer hover:bg-base-300 font-mono text-primary flex items-center gap-1 w-fit" onclick="copyText('${escapeHtml(modelId)}', 'Model ID copied to clipboard!')" title="Click to copy '${escapeHtml(modelId)}'">
-              <span>${escapeHtml(modelId)}</span>
-              <span class="text-xs opacity-60">📋</span>
-            </button>
-          </td>
-          <td class="whitespace-nowrap">${reasoningBadges}</td>
-          <td class="text-xs whitespace-nowrap">${contextText}</td>
-          <td class="text-sm whitespace-nowrap" title="Model capabilities">${emojis || '—'}</td>
-          <td class="text-center">${providerCellHtml(hasAgy, agyErr)}</td>
-          <td class="text-center">${providerCellHtml(hasApi, apiErr)}</td>
-          <td class="text-center">${providerCellHtml(hasWeb, webErr)}</td>
+          <td class="font-bold align-top"><span class="break-words" title="${escapeHtml(v.displayName)}">${escapeHtml(v.displayName)}</span>${v.hiddenBadge}</td>
+          <td class="align-top">${copyModelIdButton(v.modelId)}</td>
+          <td class="align-top"><div class="flex flex-wrap gap-1 max-w-[190px]">${v.reasoningBadges}</div></td>
+          <td class="text-xs whitespace-nowrap align-top">${v.contextText}</td>
+          <td class="text-sm whitespace-nowrap align-top" title="Model capabilities">${v.emojis || '—'}</td>
+          ${v.providers.map(p => `<td class="text-center align-top">${providerCellHtml(p.has, p.err)}</td>`).join('')}
         </tr>
       `;
     }).join('');
+  }
+
+  function renderModelCards(items) {
+    if (!items || items.length === 0) {
+      return '<p class="text-sm text-base-content/50 py-3">No models available in this category.</p>';
+    }
+    return items.map(m => {
+      const v = modelView(m);
+      const provHtml = v.providers.map(p =>
+        `<span class="inline-flex items-center gap-1" title="${p.full}"><span class="font-mono font-semibold">${p.short}</span>${providerCellHtml(p.has, p.err)}</span>`
+      ).join('');
+      return `
+        <div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box">
+          <input type="checkbox" aria-label="Expand ${escapeHtml(v.displayName)}">
+          <div class="collapse-title flex items-start justify-between gap-2 py-3 px-4 min-w-0">
+            <div class="min-w-0">
+              <div class="font-bold text-sm break-words">${escapeHtml(v.displayName)}${v.hiddenBadge}</div>
+              <div class="text-xs text-base-content/60 font-mono truncate mt-0.5">${escapeHtml(v.modelId)}</div>
+            </div>
+            <span class="shrink-0 text-sm pt-0.5" title="Model capabilities">${v.emojis}</span>
+          </div>
+          <div class="collapse-content px-4">
+            <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-start text-xs pb-1">
+              <span class="text-base-content/60 pt-0.5">Reasoning</span>
+              <div class="flex flex-wrap gap-1">${v.reasoningBadges}</div>
+              <span class="text-base-content/60">Context</span>
+              <span>${v.contextText}</span>
+              <span class="text-base-content/60">Providers</span>
+              <div class="flex flex-wrap gap-x-4 gap-y-1">${provHtml}</div>
+              <span class="text-base-content/60">Model ID</span>
+              <div>${copyModelIdButton(v.modelId)}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderCategoryBlock(title, badgeClass, items) {
+    return `
+      <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
+        <div class="flex items-center justify-between mb-3 px-1">
+          <h3 class="text-sm font-bold flex items-center gap-2">
+            <span>${title}</span>
+            <span class="badge ${badgeClass} badge-xs">${items.length}</span>
+          </h3>
+        </div>
+        <!-- Desktop table -->
+        <div class="hidden md:block overflow-x-auto bg-base-100 rounded-box border border-base-300">
+          <table class="table table-zebra table-sm w-full">
+            <thead>
+              <tr>
+                <th class="min-w-[130px]">Model</th>
+                <th class="min-w-[180px]">Model ID</th>
+                <th>Reasoning Levels</th>
+                <th>Context</th>
+                <th>Capabilities</th>
+                ${PROVIDER_COLUMNS.map(c => `<th class="text-center" title="${c.full}">${c.short}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${renderModelTableRows(items)}
+            </tbody>
+          </table>
+        </div>
+        <!-- Mobile expandable cards -->
+        <div class="md:hidden space-y-2">
+          ${renderModelCards(items)}
+        </div>
+      </div>
+    `;
   }
 
   function renderModels(models) {
@@ -267,65 +327,10 @@
     const geminiList = activeList.filter(m => (m.id || '').includes('gemini') || (m.base_model_name || '').toLowerCase().includes('gemini'));
     const nonGoogleList = activeList.filter(m => !geminiList.includes(m));
 
-    let html = `
+    const html = `
       <div class="space-y-6">
-        <!-- Category 1: Google Gemini Models -->
-        <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
-          <div class="flex items-center justify-between mb-3 px-1">
-            <h3 class="text-sm font-bold flex items-center gap-2">
-              <span>✨ Google Gemini Models</span>
-              <span class="badge badge-primary badge-xs">${geminiList.length}</span>
-            </h3>
-          </div>
-          <div class="overflow-x-auto bg-base-100 rounded-box border border-base-300">
-            <table class="table table-zebra table-sm w-full">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Model ID</th>
-                  <th>Reasoning Levels</th>
-                  <th>Context</th>
-                  <th>Capabilities</th>
-                  <th class="text-center">Antigravity</th>
-                  <th class="text-center">Gemini API</th>
-                  <th class="text-center">Gemini Web</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${renderModelTableRows(geminiList)}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Category 2: Non-Google Models (Claude, GPT-OSS, etc.) -->
-        <div class="border border-base-300 rounded-box p-3 bg-base-200/50">
-          <div class="flex items-center justify-between mb-3 px-1">
-            <h3 class="text-sm font-bold flex items-center gap-2">
-              <span>🚀 Non-Google Models (Claude, GPT, OSS)</span>
-              <span class="badge badge-secondary badge-xs">${nonGoogleList.length}</span>
-            </h3>
-          </div>
-          <div class="overflow-x-auto bg-base-100 rounded-box border border-base-300">
-            <table class="table table-zebra table-sm w-full">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Model ID</th>
-                  <th>Reasoning Levels</th>
-                  <th>Context</th>
-                  <th>Capabilities</th>
-                  <th class="text-center">Antigravity</th>
-                  <th class="text-center">Gemini API</th>
-                  <th class="text-center">Gemini Web</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${renderModelTableRows(nonGoogleList)}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        ${renderCategoryBlock('Google Gemini Models', 'badge-primary', geminiList)}
+        ${renderCategoryBlock('Non-Google Models (Claude, GPT, OSS)', 'badge-secondary', nonGoogleList)}
 
         <div class="card bg-base-100 p-3 rounded-box flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-xs border border-base-300">
           <span class="font-semibold text-base-content/80">Capabilities Legend:</span>
