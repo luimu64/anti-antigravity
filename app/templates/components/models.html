@@ -253,17 +253,18 @@
       return `
         <div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-box">
           <input type="checkbox" aria-label="Expand ${escapeHtml(v.displayName)}">
-          <div class="collapse-title flex items-start justify-between gap-2 py-3 pl-3 pr-12 min-w-0">
+          <div class="collapse-title flex items-center justify-between gap-2 py-3 pl-3 pr-12 min-w-0">
             <div class="min-w-0">
               <div class="font-bold text-sm break-words">${escapeHtml(v.displayName)}${v.hiddenBadge}</div>
               <div class="text-xs text-base-content/60 font-mono truncate mt-0.5">${escapeHtml(v.modelId)}</div>
             </div>
-            <span class="shrink-0 text-sm pt-0.5" title="Model capabilities">${v.emojis}</span>
           </div>
           <div class="collapse-content px-3">
             <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-start text-xs pb-1">
               <span class="text-base-content/60 pt-0.5">Reasoning</span>
               <div class="flex flex-wrap gap-1">${v.reasoningBadges}</div>
+              <span class="text-base-content/60">Capabilities</span>
+              <span title="Model capabilities">${v.emojis || '—'}</span>
               <span class="text-base-content/60">Context</span>
               <span>${v.contextText}</span>
               <span class="text-base-content/60">Providers</span>
