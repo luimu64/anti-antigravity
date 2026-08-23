@@ -5,12 +5,11 @@
   <div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
     <div class="flex items-center gap-2">
       <h2 class="card-title text-lg font-bold">Usage &amp; Quotas</h2>
-      <span id="quotas-live-indicator" class="flex items-center gap-1.5 text-[11px] font-medium ml-1 text-success">
-        <span id="quotas-live-dot" class="inline-block w-2 h-2 rounded-full bg-success animate-pulse"></span>
-        <span id="quotas-live-text">Live</span>
+      <span id="quotas-live-indicator" class="flex items-center gap-1.5 text-[11px] font-medium ml-1 text-base-content/50">
+        <span id="quotas-live-dot" class="inline-block w-2 h-2 rounded-full bg-base-content/30"></span>
+        <span id="quotas-live-text">Connecting&hellip;</span>
       </span>
     </div>
-    {{ ui.action_button('Refresh', 'loadQuotas()') }}
   </div>
 
   <div id="quotas-container">
@@ -180,6 +179,8 @@
   // Live updates via WebSocket (no polling)
   if (window.Realtime) {
     Realtime.on('quotas.update', (payload) => renderQuotaGroups(payload.groups || []));
+    // After a reconnect, fetch anything missed while offline
+    Realtime.on('_resync', () => loadQuotas());
     Realtime.onStatus(updateQuotasLiveIndicator);
   }
 </script>

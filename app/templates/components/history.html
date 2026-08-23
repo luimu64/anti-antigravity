@@ -6,15 +6,12 @@
     <div class="flex items-center gap-2">
       <h2 class="card-title text-lg font-bold">Query History</h2>
       <span id="history-count-badge" class="badge badge-sm badge-neutral">0 queries</span>
-      <span id="history-live-indicator" class="flex items-center gap-1.5 text-[11px] font-medium ml-1 text-success">
-        <span id="history-live-dot" class="inline-block w-2 h-2 rounded-full bg-success animate-pulse"></span>
-        <span id="history-live-text">Live</span>
+      <span id="history-live-indicator" class="flex items-center gap-1.5 text-[11px] font-medium ml-1 text-base-content/50">
+        <span id="history-live-dot" class="inline-block w-2 h-2 rounded-full bg-base-content/30"></span>
+        <span id="history-live-text">Connecting&hellip;</span>
       </span>
     </div>
-    <div class="flex items-center gap-2">
-      {{ ui.action_button('Clear', 'clearHistory()', variant="btn-outline btn-error btn-xs sm:btn-sm") }}
-      {{ ui.action_button('Refresh', 'loadHistory()') }}
-    </div>
+    {{ ui.action_button('Clear', 'clearHistory()', variant="btn-outline btn-error btn-xs sm:btn-sm") }}
   </div>
 
   <div id="history-container" class="overflow-x-auto overflow-y-auto max-h-96 border border-base-300 rounded-box">
@@ -222,6 +219,8 @@
   if (window.Realtime) {
     Realtime.on('history.new', prependHistoryEntry);
     Realtime.on('history.clear', resetHistoryView);
+    // After a reconnect, fetch anything missed while offline
+    Realtime.on('_resync', () => loadHistory());
     Realtime.onStatus(updateHistoryLiveIndicator);
   }
 </script>

@@ -8,31 +8,16 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✨</text></svg>">
   <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
   <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8">
-  {% include 'components/toast.html' %}
-
-  <div class="container mx-auto max-w-6xl">
-    {% include 'components/header.html' %}
-
-    <main>
-      {% include 'components/backends.html' %}
-      {% include 'components/models.html' %}
-      {% include 'components/quotas.html' %}
-      {% include 'components/keys.html' %}
-      {% include 'components/history.html' %}
-    </main>
-  </div>
-
   <script>
     // Realtime event client: single WebSocket connection dispatching typed
     // events to component subscribers. Reconnects with exponential backoff.
+    // Defined in <head> so component scripts can subscribe immediately.
     window.Realtime = (function () {
       const listeners = {};
       const statusListeners = [];
       let socket = null;
       let attempts = 0;
-      let stopped = false;
+      let everConnected = false;
 
       function on(type, handler) {
         (listeners[type] = listeners[type] || []).push(handler);
@@ -56,13 +41,11 @@
       }
 
       function scheduleReconnect() {
-        if (stopped) return;
         const delay = Math.min(15000, 1000 * Math.pow(2, attempts++));
         setTimeout(connect, delay);
       }
 
       function connect() {
-        if (stopped) return;
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
         try {
           socket = new WebSocket(`${proto}://${window.location.host}/ws`);
@@ -70,7 +53,15 @@
           scheduleReconnect();
           return;
         }
-        socket.onopen = () => { attempts = 0; setStatus(true); };
+        socket.onopen = () => {
+          attempts = 0;
+          setStatus(true);
+          if (everConnected) {
+            // Re-joined after an outage: resync widgets with missed events
+            emit('_resync', {});
+          }
+          everConnected = true;
+        };
         socket.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data);
@@ -85,7 +76,24 @@
 
       return { on, onStatus };
     })();
+  </script>
+</head>
+<body class="bg-base-300 min-h-screen text-base-content p-4 md:p-8">
+  {% include 'components/toast.html' %}
 
+  <div class="container mx-auto max-w-6xl">
+    {% include 'components/header.html' %}
+
+    <main>
+      {% include 'components/backends.html' %}
+      {% include 'components/models.html' %}
+      {% include 'components/quotas.html' %}
+      {% include 'components/keys.html' %}
+      {% include 'components/history.html' %}
+    </main>
+  </div>
+
+  <script>
     // Auto-load widgets on page initialization
     window.addEventListener('DOMContentLoaded', () => {
       loadBackends();

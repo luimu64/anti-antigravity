@@ -194,3 +194,34 @@ def test_record_without_loop_does_not_break_history_buffering():
     )
     assert len(mgr) == 1
     assert entry["id"] == "req_offline"
+
+
+def test_dashboard_defines_realtime_before_components_subscribe():
+    """
+    Regression: component scripts execute during body parse, so the
+    Realtime client must be defined earlier (in <head>) than any
+    ``Realtime.on(...)`` subscription, otherwise subscriptions are skipped.
+    """
+    with TestClient(app) as tc:
+        resp = tc.get("/")
+        assert resp.status_code == 200
+        html = resp.text
+
+    realtime_pos = html.find("window.Realtime")
+    subscribe_pos = html.find("Realtime.on('history.new'")
+    assert realtime_pos != -1
+    assert subscribe_pos != -1
+    assert realtime_pos < subscribe_pos
+
+
+def test_dashboard_history_and_quota_widgets_have_no_refresh_button():
+    with TestClient(app) as tc:
+        resp = tc.get("/")
+        assert resp.status_code == 200
+        html = resp.text
+
+    # Live widgets must be fully automatic: no manual refresh buttons
+    assert ">Refresh</button>" not in html
+    assert "'loadHistory()', variant" not in html  # sanity: Clear stays
+    assert "clearHistory()" in html
+    assert "_resync" in html
