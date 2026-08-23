@@ -28,12 +28,12 @@ def test_resolve_model_robust_normalization():
 
     # Vendor / routing prefixes
     assert rm("models/gpt-4o") == "gemini-3.7-flash-high"
-    assert rm("google/gemini-3.7-flash") == "gemini-3.7-flash-high"
+    assert rm("google/gemini-3.7-flash") == "gemini-3.7-flash-medium"
     assert rm("openai/gpt-4o") == "gemini-3.7-flash-high"
     assert rm("anthropic/claude-3-7-sonnet") == "claude-sonnet-4-6"
 
     # OpenRouter-style modifiers
-    assert rm("google/gemini-3.7-flash:free") == "gemini-3.7-flash-high"
+    assert rm("google/gemini-3.7-flash:free") == "gemini-3.7-flash-medium"
     assert rm("anthropic/claude-3-7-sonnet:beta") == "claude-sonnet-4-6"
 
     # Casing, whitespace, quotes, separator variants
@@ -47,7 +47,7 @@ def test_resolve_model_robust_normalization():
     assert rm("gpt-4o-2024-11-20") == "gemini-3.7-flash-high"
     assert rm("gpt-4o-mini-2024") == "gemini-3.6-flash-high"
     assert rm("claude-3-7-sonnet-20250219") == "claude-sonnet-4-6"
-    assert rm("gemini-3.7-flash-preview") == "gemini-3.7-flash-high"
+    assert rm("gemini-3.7-flash-preview") == "gemini-3.7-flash-medium"
     assert rm("gpt-oss-120b-v2") == "gpt-oss-120b-medium"
     assert rm("gemini-3.1-pro-latest") == "gemini-3.1-pro-high"
 
@@ -55,7 +55,7 @@ def test_resolve_model_robust_normalization():
     assert rm("gemini-3.6-flash", "LOW") == "gemini-3.6-flash-low"
     assert rm("gemini-3.6-flash", "minimal") == "gemini-3.6-flash-low"
     assert rm("gemini-3.6-flash", "max") == "gemini-3.6-flash-high"
-    assert rm("gemini-3.6-flash", "bogus") == "gemini-3.6-flash-high"
+    assert rm("gemini-3.6-flash", "bogus") == "gemini-3.6-flash-medium"
 
     # Unknown models pass through unchanged
     assert rm("totally-unknown-model") == "totally-unknown-model"
@@ -628,7 +628,50 @@ def test_vision_alias_and_multimodal_payload_translation():
     internal_model_gemini, contents_gemini, _, _, _ = (
         OpenAITranslator.openai_to_internal_request(gemini_req)
     )
-    assert internal_model_gemini == "gemini-3.7-flash-high"
+    assert internal_model_gemini == "gemini-3.7-flash-medium"
     assert contents_gemini[0]["parts"][1] == {
         "text": "[Image URL: https://example.com/photo.jpg]"
     }
+
+
+def test_reasoning_effort_maps_to_tier_and_budget():
+    """reasoning_effort must select the matching tier variant and budget."""
+    expected = {
+        "low": ("gemini-3.7-flash-low", 1000),
+        "medium": ("gemini-3.7-flash-medium", 4000),
+        "high": ("gemini-3.7-flash-high", 16000),
+    }
+    for effort, (want_model, want_budget) in expected.items():
+        req = ChatCompletionRequest(
+            model="gemini-3.7-flash",
+            messages=[{"role": "user", "content": "hi"}],
+            reasoning_effort=effort,
+        )
+        internal, _, _, gen_cfg, _ = OpenAITranslator.openai_to_internal_request(req)
+        assert internal == want_model, effort
+        assert gen_cfg["thinkingConfig"]["thinkingBudget"] == want_budget, effort
+
+    # No effort -> derived provider default (medium) with dynamic budget
+    req = ChatCompletionRequest(
+        model="gemini-3.7-flash", messages=[{"role": "user", "content": "hi"}]
+    )
+    internal, _, _, gen_cfg, _ = OpenAITranslator.openai_to_internal_request(req)
+    assert internal == "gemini-3.7-flash-medium"
+    assert gen_cfg["thinkingConfig"]["thinkingBudget"] == -1
+
+
+def test_reasoning_effort_accepts_alternate_field_shapes():
+    """OpenRouter-style reasoning objects and plain strings map to effort."""
+    for payload in (
+        {"reasoning": {"effort": "medium"}},
+        {"reasoning": "medium"},
+        {"reasoning_effort": "medium"},
+    ):
+        req = ChatCompletionRequest(
+            model="gemini-3.7-flash",
+            messages=[{"role": "user", "content": "hi"}],
+            **payload,
+        )
+        internal, _, _, gen_cfg, _ = OpenAITranslator.openai_to_internal_request(req)
+        assert internal == "gemini-3.7-flash-medium", payload
+        assert gen_cfg["thinkingConfig"]["thinkingBudget"] == 4000, payload

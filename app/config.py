@@ -1,4 +1,5 @@
 import os
+from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -126,6 +127,25 @@ ANTIGRAVITY_TIER_MAP = {
     "claude-3.5-sonnet": {"default": "claude-sonnet-4-6"},
     "claude-3-opus": {"default": "claude-opus-4-6-thinking"},
 }
+
+# Native default reasoning effort per provider. The gateway-wide no-effort
+# default is derived from these: the most common value wins.
+#   antigravity: tiered model variants; medium = dynamic-thinking equivalent
+#   gemini_api:  AI Studio treats omitted thinkingConfig as dynamic (~medium)
+#   gemini_web:  web client default thinking level is standard (~medium)
+PROVIDER_DEFAULT_EFFORTS = {
+    "antigravity": "medium",
+    "gemini_api": "medium",
+    "gemini_web": "medium",
+}
+
+# Gateway-wide default when a request carries no reasoning effort: the most
+# common native provider default.
+DEFAULT_REASONING_EFFORT: str = (
+    Counter(PROVIDER_DEFAULT_EFFORTS.values()).most_common(1)[0][0]
+    if PROVIDER_DEFAULT_EFFORTS
+    else "medium"
+)
 
 # Canonical model consolidation mapping (Antigravity quirk -> Public clean name)
 CANONICAL_MODEL_MAP = {

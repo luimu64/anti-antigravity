@@ -6,9 +6,14 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.config import ANTIGRAVITY_TIER_MAP, CANONICAL_MODEL_MAP, MODEL_ALIASES
+from app.config import (
+    ANTIGRAVITY_TIER_MAP,
+    CANONICAL_MODEL_MAP,
+    DEFAULT_REASONING_EFFORT,
+    MODEL_ALIASES,
+)
 
 logger = logging.getLogger("google_gate.translator")
 
@@ -110,6 +115,23 @@ class ChatCompletionRequest(BaseModel):
     reasoning_effort: str | None = None
     user: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_reasoning_aliases(cls, data: Any) -> Any:
+        """
+        Accept common non-standard reasoning-effort shapes so clients that
+        don't use the OpenAI field still get honored:
+          - "reasoning": {"effort": "medium"}   (OpenRouter style)
+          - "reasoning": "medium"
+        """
+        if isinstance(data, dict) and not data.get("reasoning_effort"):
+            alt = data.get("reasoning")
+            if isinstance(alt, dict) and alt.get("effort"):
+                data["reasoning_effort"] = alt["effort"]
+            elif isinstance(alt, str) and alt.strip():
+                data["reasoning_effort"] = alt
+        return data
+
 
 class EmbeddingRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -152,11 +174,22 @@ class OpenAITranslator:
         effort = normalize_reasoning_effort(reasoning_effort)
 
         def _lookup(candidate: str) -> str | None:
+            # Concrete internal model ids (self-mapping aliases such as
+            # "gemini-3.7-flash-high") must never be re-resolved through
+            # base-tier defaults; only bases go through tier selection.
+            direct = _ALIAS_LOOKUP.get(candidate)
+            if direct is not None and normalize_model_key(direct) == candidate:
+                return direct
             base = _CANONICAL_LOOKUP.get(candidate, candidate)
             tiers = _TIER_LOOKUP.get(base)
             if tiers:
                 if effort and effort in tiers:
                     return tiers[effort]
+                # No (or unknown) effort: fall back to the gateway-wide
+                # default derived from provider defaults, then any explicit
+                # per-base default.
+                if DEFAULT_REASONING_EFFORT in tiers:
+                    return tiers[DEFAULT_REASONING_EFFORT]
                 if "default" in tiers:
                     return tiers["default"]
             return _ALIAS_LOOKUP.get(candidate)

@@ -475,7 +475,9 @@ async def test_models_hidden_and_reasoning_tier_mapping():
         OpenAITranslator.resolve_model("gemini-3.7-flash", reasoning_effort="high")
         == "gemini-3.7-flash-high"
     )
-    assert OpenAITranslator.resolve_model("gemini-3.7-flash") == "gemini-3.7-flash-high"
+    assert (
+        OpenAITranslator.resolve_model("gemini-3.7-flash") == "gemini-3.7-flash-medium"
+    )
 
     assert (
         OpenAITranslator.resolve_model("gemini-3.6-flash", reasoning_effort="low")
