@@ -73,7 +73,9 @@
     if (s < 60) return `${s}s`;
     const m = Math.floor(s / 60);
     const r = s % 60;
-    return `${m}m ${String(r).padStart(2, '0')}s`;
+    if (m < 60) return `${m}m ${String(r).padStart(2, '0')}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${String(m % 60).padStart(2, '0')}m ${String(r).padStart(2, '0')}s`;
   }
 
   // Build a card descriptor: static HTML skeleton + dynamic field values.
@@ -88,7 +90,9 @@
     const pctLabel = fmtPct(Math.max(0, Math.min(1, remainingFrac)));
     const isCooldown = !!g.in_cooldown || g.display_name === 'Cooldown';
     const hasReset = g.reset_time_seconds != null && g.reset_time_seconds >= 0;
-    const resetSecs = hasReset ? `${Math.round(g.reset_time_seconds)}s` : 'N/A';
+    // Countdown text is owned exclusively by the ticker (single writer =
+    // no flicker); pushes only re-anchor the absolute deadline below.
+    const resetLabel = hasReset ? fmtCountdown(g.reset_time_seconds) : 'N/A';
     // Anchor an absolute deadline so the client can tick the countdown
     // every second without waiting for the next server push
     const resetDeadline = hasReset ? Date.now() + g.reset_time_seconds * 1000 : null;
@@ -106,7 +110,7 @@
                 <strong class="text-sm truncate">${escapeHtml(g.display_name)}</strong>
                 <span class="badge badge-warning badge-xs font-semibold shrink-0">cooling down</span>
               </div>
-              <span data-field="reset" class="font-mono text-warning text-sm shrink-0">${resetSecs}</span>
+              <span data-field="reset" class="font-mono text-warning text-sm shrink-0">${resetLabel}</span>
             </div>
             <progress class="progress progress-warning w-full mb-2"></progress>
             <div class="flex justify-between text-xs text-base-content/70">
@@ -116,7 +120,6 @@
           </div>
         `,
         fields: {
-          reset: resetSecs,
           resetDeadline,
           resetPrefix: '',
         },
@@ -181,7 +184,7 @@
           </div>
           <progress data-field="bar" class="progress ${progressColor} w-full mb-2" value="${pctNum}" max="100"></progress>
           <div class="flex justify-between text-xs text-base-content/70 gap-2">
-            <span data-field="reset">Reset: ${resetSecs}</span>
+            <span data-field="reset">Reset: ${resetLabel}</span>
             <span data-field="usage" class="${usageVariant === 'mono' ? 'font-mono shrink-0' : 'truncate max-w-[150px]'}">${usageVariant === 'mono' ? usageLine : escapeHtml(g.model_id || '')}</span>
           </div>
         </div>
@@ -189,7 +192,6 @@
       fields: {
         pct: `${pctLabel}% available`,
         bar: pctNum,
-        reset: `Reset: ${resetSecs}`,
         resetDeadline,
         resetPrefix: 'Reset: ',
         usage: usageVariant === 'mono' ? usageLine : (g.model_id || ''),
@@ -240,20 +242,24 @@
 
   // Tick all visible countdowns once per second from their anchored
   // deadlines, so timers decrement smoothly between server pushes.
+  // The ticker is the ONLY writer of countdown text (single writer = no
+  // format flicker when pushes re-anchor deadlines).
+  function tickCountdowns() {
+    document.querySelectorAll('[data-reset-deadline]').forEach((card) => {
+      const target = card.querySelector('[data-field="reset"]');
+      if (!target) return;
+      const deadline = parseFloat(card.dataset.resetDeadline);
+      if (isNaN(deadline)) return;
+      const remaining = Math.max(0, (deadline - Date.now()) / 1000);
+      const text = `${card.dataset.resetPrefix || ''}${fmtCountdown(remaining)}`;
+      if (target.textContent !== text) target.textContent = text;
+    });
+  }
+
   let _countdownTimer = null;
   function startCountdownTicker() {
     if (_countdownTimer) return;
-    _countdownTimer = setInterval(() => {
-      document.querySelectorAll('[data-reset-deadline]').forEach((card) => {
-        const target = card.querySelector('[data-field="reset"]');
-        if (!target) return;
-        const deadline = parseFloat(card.dataset.resetDeadline);
-        if (isNaN(deadline)) return;
-        const remaining = Math.max(0, (deadline - Date.now()) / 1000);
-        const text = `${card.dataset.resetPrefix || ''}${fmtCountdown(remaining)}`;
-        if (target.textContent !== text) target.textContent = text;
-      });
-    }, 1000);
+    _countdownTimer = setInterval(tickCountdowns, 1000);
   }
 
   // Reuse matching card nodes between renders; replace only when the visual
@@ -319,6 +325,7 @@
     );
     reconcileQuotaGrid(grid, sorted.map(buildQuotaCard));
     startCountdownTicker();
+    tickCountdowns(); // render freshly anchored values immediately
   }
 
   // Load Quotas (initial load & manual refresh; live updates arrive via WebSocket)
