@@ -20,7 +20,7 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
     <!-- 1. Google Gemini AI Studio API Card -->
     {% call ui.provider_card('card-gemini-api', 'Gemini AI Studio API', 'toggle-gemini-api', 'gemini_api', 'status-gemini-api') %}
       <!-- Configured view (shown when valid key exists) -->
@@ -70,7 +70,26 @@
       </form>
     {% endcall %}
 
-    <!-- 3. Antigravity OAuth Backend Card -->
+    <!-- 3. Google AI Studio Web Card (MakerSuite RPC) -->
+    {% call ui.provider_card('card-aistudio-web', 'AI Studio Web Interface', 'toggle-aistudio-web', 'aistudio_web', 'status-aistudio-web') %}
+      <!-- Configured view (shown when valid cookies exist) -->
+      <div id="aistudio-web-configured-view" class="hidden flex-col gap-2">
+        <div class="text-xs flex flex-col gap-1 mb-2">
+          {{ ui.info_row('Session', 'Configured', id='aistudio-web-session-display', is_strong=True) }}
+          {{ ui.info_row('SAPISID', '***', id='aistudio-web-sapisid-display') }}
+          {{ ui.info_row('Status', 'Valid', id='aistudio-web-validity-display') }}
+        </div>
+        <button type="button" onclick="resetBackend('aistudio_web')" class="btn btn-error btn-outline btn-sm w-full">Reset Cookies</button>
+      </div>
+
+      <!-- Unconfigured form (shown when cookies absent/reset) -->
+      <form id="aistudio-web-form" onsubmit="event.preventDefault(); saveAIStudioWebCookies();" class="flex flex-col gap-2">
+        <textarea id="aistudio-web-cookies-input" placeholder="Paste full Cookie header copied from aistudio.google.com DevTools (must contain SAPISID)" class="textarea textarea-bordered textarea-sm w-full text-xs" rows="3"></textarea>
+        <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
+      </form>
+    {% endcall %}
+
+    <!-- 4. Antigravity OAuth Backend Card -->
     {% call ui.provider_card('card-antigravity', 'Antigravity Backend', 'toggle-antigravity', 'antigravity', 'status-antigravity') %}
       <div class="text-xs flex flex-col gap-1 mb-3">
         {{ ui.info_row('Account', auth_status.user_email or 'Not logged in', id='antigravity-account-display', is_strong=True, max_w='max-w-[160px]') }}
@@ -237,7 +256,46 @@
         if (webForm) webForm.classList.remove('hidden');
       }
 
-      // 4. Antigravity Backend
+      // 4. AI Studio Web Backend
+      const aWeb = backends.aistudio_web || {};
+      const toggleAWeb = document.getElementById('toggle-aistudio-web');
+      if (toggleAWeb) toggleAWeb.checked = !!aWeb.enabled;
+      const statusAWeb = document.getElementById('status-aistudio-web');
+      if (statusAWeb) {
+        if (!aWeb.enabled) statusAWeb.innerHTML = '<span class="badge badge-ghost badge-sm">Disabled</span>';
+        else if (!aWeb.configured) statusAWeb.innerHTML = '<span class="badge badge-error badge-sm">Cookies Required</span>';
+        else if (aWeb.cooldown_remaining > 0) statusAWeb.innerHTML = `<span class="badge badge-warning badge-sm">Cooldown (${Math.round(aWeb.cooldown_remaining)}s)</span>`;
+        else statusAWeb.innerHTML = '<span class="badge badge-success badge-sm">● Active</span>';
+      }
+
+      const aStudioConfiguredView = document.getElementById('aistudio-web-configured-view');
+      const aStudioForm = document.getElementById('aistudio-web-form');
+      const hasValidAStudio = !!(aWeb.configured && aWeb.has_cookies && aWeb.valid !== false);
+
+      if (hasValidAStudio) {
+        if (aStudioConfiguredView) {
+          aStudioConfiguredView.classList.remove('hidden');
+          aStudioConfiguredView.classList.add('flex');
+        }
+        if (aStudioForm) aStudioForm.classList.add('hidden');
+
+        const sessEl = document.getElementById('aistudio-web-session-display');
+        if (sessEl) sessEl.textContent = 'Cookie Session';
+        const sapisidEl = document.getElementById('aistudio-web-sapisid-display');
+        if (sapisidEl) sapisidEl.textContent = aWeb.masked_cookies || '***';
+        const valAWebEl = document.getElementById('aistudio-web-validity-display');
+        if (valAWebEl) {
+          valAWebEl.innerHTML = aWeb.valid !== false ? '<span class="badge badge-success badge-xs">Valid</span>' : '<span class="badge badge-error badge-xs">Invalid</span>';
+        }
+      } else {
+        if (aStudioConfiguredView) {
+          aStudioConfiguredView.classList.add('hidden');
+          aStudioConfiguredView.classList.remove('flex');
+        }
+        if (aStudioForm) aStudioForm.classList.remove('hidden');
+      }
+
+      // 5. Antigravity Backend
       const agy = backends.antigravity || {};
       const toggleAgy = document.getElementById('toggle-antigravity');
       if (toggleAgy) toggleAgy.checked = !!agy.enabled;
@@ -257,6 +315,7 @@
     const backendNames = {
       gemini_api: 'Gemini AI Studio API Key',
       gemini_web: 'Gemini Web Session Cookies',
+      aistudio_web: 'AI Studio Web Session Cookies',
       antigravity: 'Antigravity OAuth Tokens'
     };
     const name = backendNames[backendId] || backendId;
@@ -376,6 +435,38 @@
         if (typeof loadQuotas === 'function') loadQuotas();
       } else {
         showToast('Failed to save cookies', 'error');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  }
+
+  async function saveAIStudioWebCookies() {
+    const cookiesInput = document.getElementById('aistudio-web-cookies-input');
+    const cookies = cookiesInput ? cookiesInput.value.trim() : '';
+
+    if (!cookies || !cookies.toUpperCase().includes('SAPISID=')) {
+      showToast('Cookie header must contain SAPISID (copy the full Cookie header from aistudio.google.com)', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/backends', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aistudio_web_cookies: cookies,
+          aistudio_web_enabled: true
+        })
+      });
+      if (res.ok) {
+        showToast('AI Studio Web cookies saved!');
+        if (cookiesInput) cookiesInput.value = '';
+        loadBackends();
+        loadModels();
+        if (typeof loadQuotas === 'function') loadQuotas();
+      } else {
+        showToast('Failed to save AI Studio Web cookies', 'error');
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');

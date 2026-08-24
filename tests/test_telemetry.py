@@ -236,7 +236,12 @@ async def test_routing_events_on_429_fallback_success(routing_capture, base_capt
     assert len(eval_events) == 1
     ev = eval_events[0].fields
     assert ev["model"] == "gemini-3.7-flash-high"
-    assert set(ev["backends"].keys()) == {"antigravity", "gemini_api", "gemini_web"}
+    assert set(ev["backends"].keys()) == {
+        "antigravity",
+        "gemini_api",
+        "gemini_web",
+        "aistudio_web",
+    }
     for state in ev["backends"].values():
         assert {
             "enabled",

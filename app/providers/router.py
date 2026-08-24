@@ -18,6 +18,7 @@ from app.config import (
     HIDDEN_MODELS,
     MODEL_ALIASES,
 )
+from app.providers.aistudio_web import AIStudioWebAdapter
 from app.providers.antigravity import AntigravityAdapter
 from app.providers.base import BaseAdapter, ModelNotFoundError, RateLimitError
 from app.providers.gemini_api import GeminiApiAdapter
@@ -75,13 +76,15 @@ class MultiBackendRouter(BaseAdapter):
         antigravity: AntigravityAdapter | None = None,
         gemini_api: GeminiApiAdapter | None = None,
         gemini_web: GeminiWebAdapter | None = None,
+        aistudio_web: AIStudioWebAdapter | None = None,
         routing_strategy: str = "free_first",
     ):
         super().__init__(enabled=True)
-        custom_instances = bool(antigravity or gemini_api or gemini_web)
+        custom_instances = bool(antigravity or gemini_api or gemini_web or aistudio_web)
         self.antigravity = antigravity or AntigravityAdapter()
         self.gemini_api = gemini_api or GeminiApiAdapter()
         self.gemini_web = gemini_web or GeminiWebAdapter()
+        self.aistudio_web = aistudio_web or AIStudioWebAdapter()
         # Persist rotated __Secure-1PSIDTS tokens so sessions survive restarts.
         self.gemini_web.persist_cb = self.save_config
 
@@ -89,6 +92,7 @@ class MultiBackendRouter(BaseAdapter):
             "antigravity": self.antigravity,
             "gemini_api": self.gemini_api,
             "gemini_web": self.gemini_web,
+            "aistudio_web": self.aistudio_web,
         }
 
         self.routing_strategy = routing_strategy
@@ -141,6 +145,20 @@ class MultiBackendRouter(BaseAdapter):
                 "1",
             )
 
+        env_aistudio_cookies = os.getenv("AISTUDIO_WEB_COOKIES") or os.getenv(
+            "AISTUDIO_COOKIES"
+        )
+        if env_aistudio_cookies:
+            self.aistudio_web.cookies = env_aistudio_cookies
+        if os.getenv("AISTUDIO_WEB_API_KEY"):
+            self.aistudio_web.api_key = os.getenv("AISTUDIO_WEB_API_KEY", "")
+        if os.getenv("AISTUDIO_WEB_SESSION"):
+            self.aistudio_web.session_blob = os.getenv("AISTUDIO_WEB_SESSION", "")
+        if os.getenv("AISTUDIO_WEB_ENABLED"):
+            self.aistudio_web.enabled = os.getenv(
+                "AISTUDIO_WEB_ENABLED", ""
+            ).lower() in ("true", "1")
+
         env_psid = (
             os.getenv("GEMINI_WEB_PSID")
             or os.getenv("SECURE_1PSID")
@@ -192,6 +210,15 @@ class MultiBackendRouter(BaseAdapter):
                 if "gemini_web_enabled" in data:
                     self.gemini_web.enabled = bool(data["gemini_web_enabled"])
 
+                if data.get("aistudio_web_cookies"):
+                    self.aistudio_web.cookies = data["aistudio_web_cookies"]
+                if data.get("aistudio_web_api_key"):
+                    self.aistudio_web.api_key = data["aistudio_web_api_key"]
+                if data.get("aistudio_web_session"):
+                    self.aistudio_web.session_blob = data["aistudio_web_session"]
+                if "aistudio_web_enabled" in data:
+                    self.aistudio_web.enabled = bool(data["aistudio_web_enabled"])
+
                 if "antigravity_enabled" in data:
                     self.antigravity.enabled = bool(data["antigravity_enabled"])
 
@@ -219,6 +246,10 @@ class MultiBackendRouter(BaseAdapter):
                 "gemini_web_psidts": self.gemini_web.psidts,
                 "gemini_web_sapisid": self.gemini_web.sapisid,
                 "gemini_web_enabled": self.gemini_web.enabled,
+                "aistudio_web_cookies": self.aistudio_web.cookies,
+                "aistudio_web_api_key": self.aistudio_web.api_key,
+                "aistudio_web_session": self.aistudio_web.session_blob,
+                "aistudio_web_enabled": self.aistudio_web.enabled,
                 "antigravity_enabled": self.antigravity.enabled,
             }
         )
@@ -268,6 +299,30 @@ class MultiBackendRouter(BaseAdapter):
             self.gemini_web.enabled = bool(updates["gemini_web_enabled"])
 
         if (
+            "aistudio_web_cookies" in updates
+            and updates["aistudio_web_cookies"] is not None
+        ):
+            self.aistudio_web.cookies = str(updates["aistudio_web_cookies"]).strip()
+            self.aistudio_web.is_valid_session = None
+        if (
+            "aistudio_web_api_key" in updates
+            and updates["aistudio_web_api_key"] is not None
+        ):
+            self.aistudio_web.api_key = str(updates["aistudio_web_api_key"]).strip()
+        if (
+            "aistudio_web_session" in updates
+            and updates["aistudio_web_session"] is not None
+        ):
+            self.aistudio_web.session_blob = str(
+                updates["aistudio_web_session"]
+            ).strip()
+        if (
+            "aistudio_web_enabled" in updates
+            and updates["aistudio_web_enabled"] is not None
+        ):
+            self.aistudio_web.enabled = bool(updates["aistudio_web_enabled"])
+
+        if (
             "antigravity_enabled" in updates
             and updates["antigravity_enabled"] is not None
         ):
@@ -310,6 +365,16 @@ class MultiBackendRouter(BaseAdapter):
                     "gemini_web_psidts",
                     "gemini_web_sapisid",
                     "gemini_web_enabled",
+                ]
+            )
+        elif backend_id == "aistudio_web":
+            self.aistudio_web.reset_credentials()
+            self._remove_from_credentials_file(
+                [
+                    "aistudio_web_cookies",
+                    "aistudio_web_api_key",
+                    "aistudio_web_session",
+                    "aistudio_web_enabled",
                 ]
             )
         elif backend_id == "antigravity":
@@ -420,6 +485,28 @@ class MultiBackendRouter(BaseAdapter):
                         self.gemini_web, "subscription_tier", None
                     ),
                     "valid": g_web_valid,
+                },
+                "aistudio_web": {
+                    "id": "aistudio_web",
+                    "name": "Google AI Studio Web (MakerSuite)",
+                    "enabled": self.aistudio_web.enabled,
+                    "configured": self.aistudio_web.is_configured(),
+                    "available": self.aistudio_web.is_available(),
+                    "cooldown_remaining": round(
+                        self.aistudio_web.get_cooldown_remaining(), 1
+                    ),
+                    "rate_limits": self.aistudio_web.rate_limiter.get_stats()
+                    if hasattr(self.aistudio_web, "rate_limiter")
+                    else {},
+                    "has_cookies": bool(self.aistudio_web.cookies),
+                    "masked_cookies": mask_secret(
+                        self.aistudio_web.extract_sapisid(self.aistudio_web.cookies)
+                    ),
+                    "valid": (
+                        self.aistudio_web.is_valid_session
+                        if self.aistudio_web.is_valid_session is not None
+                        else self.aistudio_web.is_configured()
+                    ),
                 },
             },
         }
@@ -684,6 +771,16 @@ class MultiBackendRouter(BaseAdapter):
                 )
             )
 
+        # 4. AI Studio Web Adapter (MakerSuiteService RPC)
+        if adapter.name == "aistudio_web":
+            from app.providers.aistudio_web import (
+                FALLBACK_MODELS as AISTUDIO_FALLBACK,
+            )
+
+            if clean_model in AISTUDIO_FALLBACK:
+                return True
+            return any(clean_model.startswith(k) for k in ("gemini-", "vision"))
+
         return True
 
     def get_capable_adapters(
@@ -740,8 +837,13 @@ class MultiBackendRouter(BaseAdapter):
                 self._rr_counter += 1
             return available[idx:] + available[:idx]
 
-        # Default "free_first": Gemini Web -> Gemini AI Studio API -> Antigravity
-        priority_order = [self.gemini_web, self.gemini_api, self.antigravity]
+        # Default "free_first": Gemini Web -> AI Studio Web -> Gemini API -> Antigravity
+        priority_order = [
+            self.gemini_web,
+            self.aistudio_web,
+            self.gemini_api,
+            self.antigravity,
+        ]
         return [a for a in priority_order if a in available]
 
     def check_availability(

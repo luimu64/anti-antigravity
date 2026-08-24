@@ -1,0 +1,618 @@
+import base64
+import contextlib
+import hashlib
+import json
+import logging
+import os
+import re
+import secrets
+import time
+import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
+
+import httpx
+
+from app.config import MODEL_CACHE_TTL, PROVIDER_RATE_LIMITS
+from app.providers.base import BaseAdapter, RateLimitError
+
+logger = logging.getLogger("google_gate.providers.aistudio_web")
+
+RPC_BASE = (
+    "https://alkalimakersuite-pa.clients6.google.com/$rpc/"
+    "google.internal.alkali.applications.makersuite.v1.MakerSuiteService"
+)
+ORIGIN = "https://aistudio.google.com"
+# Public web client key embedded in the AI Studio frontend (same for all users).
+DEFAULT_WEB_API_KEY = "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs"
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/150.0.0.0 Safari/537.36"
+)
+MAX_OUTPUT_TOKENS_LIMIT = 65536
+
+# Harm categories 7-10 with threshold 5 (BLOCK_NONE) exactly as sent by the
+# live AI Studio web client in the tool/safety config slot.
+SAFETY_CONFIG: list[list[Any]] = [
+    [None, None, 7, 5],
+    [None, None, 8, 5],
+    [None, None, 9, 5],
+    [None, None, 10, 5],
+]
+
+FINISH_REASONS = {
+    "STOP",
+    "MAX_TOKENS",
+    "SAFETY",
+    "RECITATION",
+    "BLOCKLIST",
+    "PROHIBITED_CONTENT",
+    "SPII",
+    "MALFORMED_FUNCTION_CALL",
+}
+
+# Static catalog of models exposed by the AI Studio web UI. The MakerSuite
+# RPC surface has no reliable public ListModels wire format, so this catalog
+# is maintained manually (mirrors the gemini_web fallback approach).
+# Note: gateway-wide deprecated models (e.g. gemini-2.5-*) are intentionally
+# excluded - the router rejects them before adapter capability checks.
+FALLBACK_MODELS: dict[str, dict[str, Any]] = {
+    "gemini-3.7-flash": {
+        "displayName": "Gemini 3.7 Flash (AI Studio Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "supportsTools": False,
+        "supportsVision": True,
+        "isEmbedding": False,
+    },
+    "gemini-3.1-pro": {
+        "displayName": "Gemini 3.1 Pro (AI Studio Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "supportsTools": False,
+        "supportsVision": True,
+        "isEmbedding": False,
+    },
+    "gemini-3.5-flash-lite": {
+        "displayName": "Gemini 3.5 Flash-Lite (AI Studio Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "supportsTools": False,
+        "supportsVision": True,
+        "isEmbedding": False,
+    },
+    "gemini-2.0-flash": {
+        "displayName": "Gemini 2.0 Flash (AI Studio Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": False,
+        "supportsTools": False,
+        "supportsVision": True,
+        "isEmbedding": False,
+    },
+}
+
+
+def _iter_text_parts(node: Any):
+    """Yield text values from protobuf-as-json DataItem nodes ([None, "<text>"])."""
+    if isinstance(node, list):
+        if len(node) >= 2 and node[0] is None and isinstance(node[1], str):
+            yield node[1]
+            return
+        for child in node:
+            yield from _iter_text_parts(child)
+
+
+def _find_finish_reason(node: Any) -> str | None:
+    """Locate a bare finish-reason enum string anywhere in the response tree."""
+    if isinstance(node, str):
+        return node if node in FINISH_REASONS else None
+    if isinstance(node, list):
+        for child in node:
+            found = _find_finish_reason(child)
+            if found:
+                return found
+    return None
+
+
+def _extract_error_payload(body: Any) -> dict[str, Any] | None:
+    """Detect gRPC-style error objects ({\"error\": {...}}) in decoded bodies."""
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            return err
+    return None
+
+
+class AIStudioWebAdapter(BaseAdapter):
+    name = "aistudio_web"
+
+    def __init__(
+        self,
+        cookies: str | None = None,
+        api_key: str | None = None,
+        session: str | None = None,
+        enabled: bool = False,
+        model_cache_ttl: float = MODEL_CACHE_TTL,
+    ):
+        limits = PROVIDER_RATE_LIMITS.get("aistudio_web", {})
+        super().__init__(
+            enabled=enabled,
+            rpm=limits.get("rpm", 10),
+            tpm=limits.get("tpm", 250000),
+            rpd=limits.get("rpd", 0),
+            default_cooldown=limits.get("default_cooldown", 60.0),
+            min_quota_fraction=limits.get("min_quota_fraction", 0.0),
+            model_cache_ttl=model_cache_ttl,
+        )
+        self.cookies = (
+            cookies
+            or os.getenv("AISTUDIO_WEB_COOKIES")
+            or os.getenv("AISTUDIO_COOKIES")
+            or ""
+        )
+        self.api_key = (
+            api_key or os.getenv("AISTUDIO_WEB_API_KEY") or DEFAULT_WEB_API_KEY
+        )
+        # Opaque client-context blob copied from a live browser request
+        # (payload slot 4). Optional; a synthetic value is used when absent.
+        self.session_blob = session or os.getenv("AISTUDIO_WEB_SESSION") or ""
+        self.proxy = os.getenv("AISTUDIO_WEB_PROXY") or None
+
+        self._http_client: httpx.AsyncClient | None = None
+        self._visit_id = self._generate_visit_id()
+        self.is_valid_session: bool | None = None
+
+    # ------------------------------------------------------------------
+    # Credentials & headers
+    # ------------------------------------------------------------------
+    def is_configured(self) -> bool:
+        return bool(self.cookies.strip()) and bool(self.extract_sapisid(self.cookies))
+
+    @staticmethod
+    def extract_sapisid(cookie_header: str) -> str:
+        match = re.search(r"(?:^|;\s*)SAPISID=([^;]+)", cookie_header or "")
+        return match.group(1).strip() if match else ""
+
+    def reset_credentials(self) -> None:
+        """Clear cookies and cached session state."""
+        self.cookies = ""
+        self.session_blob = ""
+        self.enabled = False
+        self.is_valid_session = None
+        self._visit_id = self._generate_visit_id()
+        self.clear_cooldown()
+        if hasattr(self, "rate_limiter"):
+            self.rate_limiter.reset()
+
+    def get_http_client(self) -> httpx.AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=30.0),
+                proxy=self.proxy,
+            )
+        return self._http_client
+
+    @staticmethod
+    def _sapisidhash(sapisid: str, origin: str = ORIGIN) -> str:
+        timestamp = int(time.time())
+        digest = hashlib.sha1(f"{timestamp} {sapisid} {origin}".encode()).hexdigest()
+        return f"{timestamp}_{digest}"
+
+    def _authorization_header(self) -> str | None:
+        sapisid = self.extract_sapisid(self.cookies)
+        if not sapisid:
+            return None
+        # The web client sends all three hash variants; 1P/3P APISID cookies
+        # mirror SAPISID for consumer accounts.
+        core = self._sapisidhash(sapisid)
+        return f"SAPISIDHASH {core} SAPISID1PHASH {core} SAPISID3PHASH {core}"
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = {
+            "Accept": "*/*",
+            "Content-Type": "application/json+protobuf",
+            "Origin": ORIGIN,
+            "Referer": f"{ORIGIN}/",
+            "User-Agent": USER_AGENT,
+            "X-Goog-Api-Key": self.api_key,
+            "X-Goog-Authuser": "0",
+            "X-User-Agent": "grpc-web-javascript/0.1",
+            "X-AiStudio-G1-Tier": "TIER1",
+            "X-AiStudio-Visit-Id": self._visit_id,
+        }
+        auth = self._authorization_header()
+        if auth:
+            headers["Authorization"] = auth
+        cookie_header = self.cookies.strip()
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+        return headers
+
+    @staticmethod
+    def _generate_visit_id() -> str:
+        # Header variant observed in live traffic: "v1_" + b64(uuid hex).
+        return "v1_" + base64.b64encode(uuid.uuid4().hex.encode()).decode()
+
+    @staticmethod
+    def _generate_session_blob() -> str:
+        # Synthetic stand-in for the opaque payload slot 4 client context.
+        alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+        raw = "".join(secrets.choice(alphabet) for _ in range(22))
+        prefix = "LS" + "".join(secrets.choice(alphabet) for _ in range(8))
+        filler = "".join(secrets.choice(alphabet) for _ in range(512))
+        return f"!{prefix}ARg{filler}{raw}"
+
+    # ------------------------------------------------------------------
+    # Request building (protobuf-as-json wire schema)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _convert_part(part: dict[str, Any]) -> list[Any] | None:
+        text = part.get("text")
+        if isinstance(text, str) and not part.get("thought"):
+            return [None, text]
+        # Non-text parts (images/audio/function calls) have unverified wire
+        # slots; skip them rather than corrupting the request.
+        return None
+
+    def _convert_contents(
+        self,
+        contents: list[dict[str, Any]] | None,
+        system_instruction: dict[str, Any] | None = None,
+    ) -> tuple[list[Any], list[Any] | None]:
+        """Convert Google-schema contents into makersuite wire contents.
+
+        Returns (contents_wire, system_wire) where system_wire uses the same
+        Content shape and is placed at payload slot 5 by the caller.
+        """
+        wire_contents: list[Any] = []
+        for turn in contents or []:
+            role = "model" if turn.get("role") in ("model", "assistant") else "user"
+            parts_wire: list[Any] = []
+            for part in turn.get("parts", []) or []:
+                if not isinstance(part, dict):
+                    continue
+                converted = self._convert_part(part)
+                if converted is not None:
+                    parts_wire.append(converted)
+                sig = part.get("thoughtSignature")
+                if sig:
+                    # Thought-signature carrier part observed in live traffic:
+                    # empty text with the signature blob at DataItem index 14.
+                    sig_part: list[Any] = [None] * 15
+                    sig_part[1] = ""
+                    sig_part[14] = sig
+                    parts_wire.append(sig_part)
+            if parts_wire:
+                wire_contents.append([parts_wire, role])
+
+        system_wire: list[Any] | None = None
+        if system_instruction:
+            sys_texts = [
+                p["text"]
+                for p in system_instruction.get("parts", [])
+                if isinstance(p, dict) and p.get("text")
+            ]
+            if sys_texts:
+                system_wire = [[[None, "\n\n".join(sys_texts)]], "user"]
+
+        return wire_contents, system_wire
+
+    def _build_generation_config(
+        self, generation_config: dict[str, Any] | None
+    ) -> list[Any]:
+        gc = generation_config or {}
+
+        max_tokens = gc.get("maxOutputTokens") or MAX_OUTPUT_TOKENS_LIMIT
+        cfg: list[Any] = [None] * 16
+        cfg[3] = max(1, min(int(max_tokens), MAX_OUTPUT_TOKENS_LIMIT))
+        if gc.get("temperature") is not None:
+            cfg[4] = float(gc["temperature"])
+        if gc.get("topP") is not None:
+            cfg[5] = float(gc["topP"])
+        if gc.get("topK") is not None:
+            cfg[6] = int(gc["topK"])
+        candidates = int(gc.get("candidateCount") or 1)
+        cfg[12] = max(1, candidates)
+
+        thinking = gc.get("thinkingConfig") or {}
+        budget = thinking.get("thinkingBudget")
+        if thinking.get("includeThoughts") and (budget is None or budget != 0):
+            # [includeThoughts=1, ..., level] per live captures; level 2 is the
+            # standard extended-thinking mode, 1 maps to low effort.
+            level = 1 if budget == 1 else 2
+            cfg[15] = [1, None, None, level]
+
+        unsupported = [
+            k
+            for k in (
+                "stopSequences",
+                "responseMimeType",
+                "responseSchema",
+                "presencePenalty",
+                "frequencyPenalty",
+                "seed",
+            )
+            if k in gc
+        ]
+        if unsupported:
+            logger.debug(
+                f"[AIStudioWeb] Ignoring unsupported generation config keys: "
+                f"{unsupported}"
+            )
+        return cfg
+
+    def build_request_payload(
+        self,
+        model: str,
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+    ) -> list[Any]:
+        contents_wire, system_wire = self._convert_contents(
+            contents, system_instruction
+        )
+        clean_model = model if model.startswith("models/") else f"models/{model}"
+        session_blob = self.session_blob or self._generate_session_blob()
+        payload: list[Any] = [
+            clean_model,
+            contents_wire,
+            SAFETY_CONFIG,
+            self._build_generation_config(generation_config),
+            session_blob,
+            system_wire,
+            None,
+            None,
+            None,
+            None,
+            1,
+            self._visit_id,
+        ]
+        return payload
+
+    # ------------------------------------------------------------------
+    # Response handling
+    # ------------------------------------------------------------------
+    async def _raise_for_response(
+        self, resp: httpx.Response, decoded_error: dict[str, Any] | None = None
+    ) -> None:
+        status = resp.status_code
+        if status < 400:
+            return
+        detail = ""
+        if decoded_error:
+            detail = str(decoded_error.get("message") or decoded_error.get("status"))
+        if not detail:
+            detail = resp.text[:300]
+        retry_after = 60.0
+        header = resp.headers.get("retry-after")
+        if header:
+            with contextlib.suppress(ValueError):
+                retry_after = max(1.0, float(header.strip()))
+
+        if status == 429:
+            self.set_cooldown(retry_after, reason=f"AI Studio Web 429: {detail[:200]}")
+            raise RateLimitError(
+                f"AI Studio Web rate limited (429): {detail}",
+                status_code=429,
+                retry_after=retry_after,
+            )
+        if status in (401, 403):
+            self.is_valid_session = False
+            raise ValueError(
+                f"AI Studio Web authentication failed ({status}): {detail}. "
+                "Re-export fresh cookies from https://aistudio.google.com."
+            )
+        raise ValueError(f"AI Studio Web Error ({status}): {detail}")
+
+    async def generate_content(
+        self,
+        model: str,
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        full_text = ""
+        finish_reason = "STOP"
+        usage: dict[str, Any] = {}
+        async for chunk in self.stream_generate_content(
+            model=model,
+            contents=contents,
+            system_instruction=system_instruction,
+            generation_config=generation_config,
+            tools=tools,
+        ):
+            for cand in chunk.get("candidates", []):
+                for part in cand.get("content", {}).get("parts", []):
+                    if part.get("text"):
+                        full_text += part["text"]
+                if cand.get("finishReason"):
+                    finish_reason = cand["finishReason"]
+            if chunk.get("usageMetadata"):
+                usage = chunk["usageMetadata"]
+
+        prompt_tokens = sum(
+            len(p.get("text", "").split())
+            for c in contents
+            for p in c.get("parts", [])
+            if isinstance(p, dict) and p.get("text")
+        )
+        completion_tokens = len(full_text.split()) if full_text else 0
+        if not usage:
+            usage = {
+                "promptTokenCount": max(1, prompt_tokens),
+                "candidatesTokenCount": completion_tokens,
+                "totalTokenCount": max(1, prompt_tokens) + completion_tokens,
+            }
+
+        return {
+            "responseId": f"aistudio-web-{uuid.uuid4().hex[:12]}",
+            "modelVersion": model,
+            "candidates": [
+                {
+                    "index": 0,
+                    "text": full_text,
+                    "thoughts": "",
+                    "content": {"parts": [{"text": full_text}], "role": "model"},
+                    "finishReason": finish_reason,
+                    "thoughtSignature": None,
+                }
+            ],
+            "text": full_text,
+            "thoughts": "",
+            "toolCalls": [],
+            "finishReason": finish_reason,
+            "usageMetadata": usage,
+            "thoughtSignature": None,
+        }
+
+    async def stream_generate_content(
+        self,
+        model: str,
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+        generation_config: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream from StreamGenerateContent ($rpc newline-delimited JSON chunks)."""
+        if not self.is_configured():
+            raise ValueError(
+                "AI Studio Web cookies are not configured (set AISTUDIO_WEB_COOKIES)."
+            )
+
+        payload = self.build_request_payload(
+            model, contents, system_instruction, generation_config
+        )
+        url = f"{RPC_BASE}/StreamGenerateContent"
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        headers = self._get_headers()
+        http = self.get_http_client()
+
+        emitted = ""
+        finish_reason: str | None = None
+
+        try:
+            async with http.stream(
+                "POST", url, content=body.encode("utf-8"), headers=headers
+            ) as resp:
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    await self._raise_for_response(resp)
+                self.is_valid_session = True
+
+                buffer = b""
+
+                def _process_line(text_line: str) -> None:
+                    nonlocal emitted, finish_reason
+                    text_line = text_line.strip()
+                    if not text_line:
+                        return
+                    try:
+                        parsed = json.loads(text_line)
+                    except ValueError:
+                        return
+                    err = _extract_error_payload(parsed)
+                    if err:
+                        code = int(err.get("code") or 500)
+                        if code == 429:
+                            self.set_cooldown(
+                                60.0, reason=str(err.get("message"))[:200]
+                            )
+                            raise RateLimitError(
+                                f"AI Studio Web rate limited: {err.get('message')}",
+                                status_code=429,
+                                retry_after=60.0,
+                            )
+                        raise ValueError(
+                            f"AI Studio Web Error ({code}): {err.get('message')}"
+                        )
+
+                    delta_parts = [
+                        t for t in _iter_text_parts(parsed) if t and t.strip()
+                    ]
+                    delta = "".join(delta_parts)
+                    if not delta:
+                        reason = _find_finish_reason(parsed)
+                        if reason and not finish_reason:
+                            finish_reason = reason
+                        return
+
+                    # Tolerate cumulative snapshots as well as true deltas.
+                    if delta.startswith(emitted):
+                        delta = delta[len(emitted) :]
+                    emitted += delta
+                    stream_chunks.append(
+                        {
+                            "candidates": [
+                                {
+                                    "content": {
+                                        "parts": [{"text": delta}],
+                                        "role": "model",
+                                    },
+                                    "index": 0,
+                                }
+                            ],
+                            "modelVersion": model,
+                        }
+                    )
+
+                    reason = _find_finish_reason(parsed)
+                    if reason and not finish_reason:
+                        finish_reason = reason
+
+                # Chunks are buffered inside _process_line because generators
+                # cannot yield from a nested function; they are flushed after
+                # each parsed line so downstream consumers still stream.
+                stream_chunks: list[dict[str, Any]] = []
+                async for raw_chunk in resp.aiter_bytes():
+                    buffer += raw_chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        _process_line(line.decode("utf-8", errors="replace"))
+                        while stream_chunks:
+                            yield stream_chunks.pop(0)
+                # Flush any final unterminated line (e.g. error payloads).
+                if buffer.strip():
+                    _process_line(buffer.decode("utf-8", errors="replace"))
+                while stream_chunks:
+                    yield stream_chunks.pop(0)
+        except RateLimitError:
+            raise
+        except httpx.HTTPError as e:
+            logger.warning(f"AI Studio Web request network error: {e}")
+            self.set_cooldown(30.0, reason="network error")
+            raise RateLimitError(f"AI Studio Web network error: {e}") from e
+
+        if not emitted:
+            raise ValueError(
+                "AI Studio Web returned an empty response (no content chunks parsed)."
+            )
+
+        prompt_tokens = sum(
+            len(p.get("text", "").split())
+            for c in contents
+            for p in c.get("parts", [])
+            if isinstance(p, dict) and p.get("text")
+        )
+        completion_tokens = len(emitted.split())
+        yield {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": ""}], "role": "model"},
+                    "finishReason": finish_reason or "STOP",
+                    "index": 0,
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": max(1, prompt_tokens),
+                "candidatesTokenCount": completion_tokens,
+                "totalTokenCount": max(1, prompt_tokens) + completion_tokens,
+            },
+            "modelVersion": model,
+        }
+
+    async def fetch_available_models(
+        self, force_refresh: bool = False
+    ) -> dict[str, Any]:
+        """Return the static AI Studio Web catalog (no network probe)."""
+        return {"models": FALLBACK_MODELS}

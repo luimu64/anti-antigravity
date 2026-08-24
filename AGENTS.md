@@ -6,7 +6,7 @@ This guide is intended for AI coding agents and human developers maintaining, de
 
 ## 1. Project Purpose & Architecture
 
-`google-gate` translates internal Google Cloud Code / Jetski API (Antigravity), Google Gemini AI Studio API, and Gemini Web backends into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
+`google-gate` translates internal Google Cloud Code / Jetski API (Antigravity), Google Gemini AI Studio API, Gemini Web, and AI Studio Web (MakerSuiteService) backends into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
 
 ### Data Flow Diagram
 
@@ -62,7 +62,8 @@ google-gate/
 │   │   ├── router.py         # MultiBackendRouter, fallback & routing strategies
 │   │   ├── antigravity.py    # AntigravityAdapter (Cloud Code internal backend)
 │   │   ├── gemini_api.py     # GeminiApiAdapter (Google AI Studio API)
-│   │   └── gemini_web.py     # GeminiWebAdapter (Gemini Web cookies & RPC)
+│   │   ├── gemini_web.py     # GeminiWebAdapter (Gemini Web cookies & RPC)
+│   │   └── aistudio_web.py   # AIStudioWebAdapter (AI Studio MakerSuiteService web RPCs)
 │   ├── routes/
 │   │   ├── openai.py         # /v1/chat/completions, /v1/models, /v1/completions, /v1/embeddings
 │   │   ├── auth_routes.py    # /auth/login, /auth/callback, /auth/status, /auth/refresh, /auth/logout

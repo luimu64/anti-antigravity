@@ -183,6 +183,7 @@ def transform_model_catalog(
         source_antigravity = bool(r.get("source_antigravity", False))
         source_gemini_api = bool(r.get("source_gemini_api", False))
         source_gemini_web = bool(r.get("source_gemini_web", False))
+        source_aistudio_web = bool(r.get("source_aistudio_web", False))
 
         available_sources: list[str] = []
         if source_antigravity:
@@ -191,6 +192,8 @@ def transform_model_catalog(
             available_sources.append("Gemini API")
         if source_gemini_web:
             available_sources.append("Gemini Web")
+        if source_aistudio_web:
+            available_sources.append("AI Studio Web")
 
         if "available_sources" in r and isinstance(r["available_sources"], list):
             for src in r["available_sources"]:

@@ -1,6 +1,6 @@
 # Google Gate
 
-A lightweight, high-performance API gateway that translates **Google AI backends** (Antigravity CLI OAuth backend, Gemini AI Studio API, and Gemini Web session cookies) into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
+A lightweight, high-performance API gateway that translates **Google AI backends** (Antigravity CLI OAuth backend, Gemini AI Studio API, Gemini Web session cookies, and AI Studio Web MakerSuite RPCs) into the standard **OpenAI API Schema** (`/v1/chat/completions`, `/v1/models`, `/v1/completions`, `/v1/embeddings`).
 
 Supports all **Google and partner models** (Gemini 3.7 Flash with reasoning, Claude Sonnet 4.6, Claude Opus 4.6 Thinking, Gemini 3.1 Pro, GPT-OSS 120B), multi-turn conversations, tool/function calling, multimodal input, real-time Server-Sent Events (SSE) streaming, Google OAuth 2.0 PKCE authentication, and dedicated **Bridge API Key Management & Enforcement**.
 
@@ -40,7 +40,7 @@ Supports all **Google and partner models** (Gemini 3.7 Flash with reasoning, Cla
   - Auto-discovery from Linux Secret Service / Keyring (`secret-tool` / DBus)
   - Automatic token refresh before expiration
   - Headless environment support via environment variables (`REFRESH_TOKEN` / `ACCESS_TOKEN`)
-- **Multi-Backend Routing with Rate-Limit Awareness**: Aggregates Antigravity (OAuth), Gemini API (AI Studio key), and Gemini Web (session cookies); requests route only to backends with remaining capacity (`free_first` / `round_robin` strategies), with automatic cooldowns on upstream 429s and SOCKS/HTTP proxy support for Gemini Web egress.
+- **Multi-Backend Routing with Rate-Limit Awareness**: Aggregates Antigravity (OAuth), Gemini API (AI Studio key), Gemini Web (session cookies), and AI Studio Web (MakerSuite RPCs); requests route only to backends with remaining capacity (`free_first` / `round_robin` strategies), with automatic cooldowns on upstream 429s and SOCKS/HTTP proxy support for web egress.
 - **Modern Web Dashboard**: View auth state, quota gauges, token expiration, and generate/revoke API keys.
 - **Dockerized**: Multi-stage lightweight container with volume persistence for credentials and API keys.
 
@@ -114,7 +114,7 @@ python main.py --port 8000
 
 ## Backend Configuration & Provider Quirks
 
-All three backends are **disabled by default**. Enable them in the Web Dashboard's provider cards, or via environment variables (`ANTIGRAVITY_ENABLED`, `GEMINI_API_ENABLED`, `GEMINI_WEB_ENABLED`).
+All backends are **disabled by default**. Enable them in the Web Dashboard's provider cards, or via environment variables (`ANTIGRAVITY_ENABLED`, `GEMINI_API_ENABLED`, `GEMINI_WEB_ENABLED`, `AISTUDIO_WEB_ENABLED`).
 
 ### Antigravity (OAuth)
 
@@ -139,10 +139,20 @@ Quirks you should know about:
   GEMINI_WEB_PROXY=socks5://user:pass@host:port   # requires httpx[socks] (included)
   ```
 
+### AI Studio Web (MakerSuite session cookies)
+
+Rides the same quota as the [aistudio.google.com](https://aistudio.google.com) web UI by calling its internal `MakerSuiteService/GenerateContent` RPCs — no API key required. Open AI Studio, send any message, copy the **full `Cookie` request header** from DevTools → Network → `alkalimakersuite-pa.clients6.google.com` request, and paste it into the dashboard card or set `AISTUDIO_WEB_COOKIES` (must contain `SAPISID`; the gateway computes the `SAPISIDHASH` authorization itself). Optional overrides: `AISTUDIO_WEB_API_KEY` (defaults to the public web client key), `AISTUDIO_WEB_SESSION`, `AISTUDIO_WEB_PROXY`.
+
+Quirks you should know about:
+
+- **Text-only**: the reverse-engineered wire format for image/function-call parts is unverified, so non-text parts are dropped rather than corrupting requests. Tool definitions are accepted but ignored.
+- **Session blob**: requests carry an opaque client-context token; the gateway generates a synthetic one unless you paste the real value from a live capture (`AISTUDIO_WEB_SESSION`). If generation fails with upstream errors, re-export both cookies and session blob together.
+- **Cookies expire like any Google web session** — if you get 401/403 errors, re-copy a fresh Cookie header from your browser.
+
 ### Quota gauges (`Usage & Quotas` card)
 
 - **Antigravity** rows show authoritative upstream percentages and reset times.
-- **Gemini API / Gemini Web** rows show the gateway's *local sliding-window usage* against the configured caps above — they measure traffic through this gateway only (60-second RPM/TPM memory, 24-hour RPD), not Google-side consumption, which those backends do not expose. During cooldowns the affected backend shows a distinct cooldown card instead of falsified gauges.
+- **Gemini API / Gemini Web / AI Studio Web** rows show the gateway's *local sliding-window usage* against the configured caps above — they measure traffic through this gateway only (60-second RPM/TPM memory, 24-hour RPD), not Google-side consumption, which those backends do not expose. During cooldowns the affected backend shows a distinct cooldown card instead of falsified gauges.
 
 ---
 

@@ -468,6 +468,57 @@ Responses arrive as chunked JSON wrapped in `wrb.fr` / JSPB envelopes prefixed b
 
 ---
 
+## 7b. AI Studio Web Mapping (MakerSuiteService Reverse-Engineered Reference)
+
+Implemented in `app/providers/aistudio_web.py` (backend id `aistudio_web`). This section
+documents the protocol spoken by the [aistudio.google.com](https://aistudio.google.com)
+frontend, which the gateway replays to offer a keyless AI Studio backend.
+
+### 7b.1 Endpoints & Authentication
+
+- **Base URL**: `https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService`
+- **Methods**: `GenerateContent` (unary), `StreamGenerateContent` (newline-delimited JSON chunks)
+- **Content-Type**: `application/json+protobuf` — protobuf messages encoded as positional JSON arrays (array index = proto field number − 1; absent fields are `null`)
+- **Authentication**:
+  - Session cookies copied from the browser (`SID`, `HSID`, `SSID`, `SAPISID`, `__Secure-1PAPISID`, `__Secure-*PSID`, ...)
+  - `Authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>` — origin is `https://aistudio.google.com`; the web client additionally appends `SAPISID1PHASH` / `SAPISID3PHASH` variants computed from the same values
+  - `x-goog-api-key: AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs` — public web client key embedded in the AI Studio frontend (identical for all users)
+
+### 7b.2 Request Payload Layout (GenerateContentRequest)
+
+| Slot | Content | Notes |
+|---|---|---|
+| `[0]` | `"models/<model>"` | e.g. `models/gemini-3.7-flash` |
+| `[1]` | contents array | Each turn: `[parts, role]`; a text part is a DataItem `[null, "<text>"]` |
+| `[2]` | tool/safety config | Live client sends 4 harm categories with threshold 5: `[[null,null,7,5],[null,null,8,5],[null,null,9,5],[null,null,10,5]]` |
+| `[3]` | generation config | idx 3 = maxOutputTokens, 4 = temperature, 5 = topP, 6 = topK, 12 = candidateCount, 15 = thinking config `[1,null,null,<level>]` |
+| `[4]` | opaque session blob | Client-context token (~2 KB); synthetic value accepted so far |
+| `[5]` | system instruction | Same Content shape as turns: `[[[null,"<system>"]], "user"]`; `null` when absent |
+| `[10]` | constant `1` | Observed in every live capture |
+| `[11]` | visit id | `v1_...` string, also sent as header `x-aistudio-visit-id` |
+
+Thought signatures from multi-turn function calling ride as an extra assistant part:
+`[null,"",null×12,"<signature-blob>"]` (blob at DataItem index 14) — mirroring the live capture.
+
+### 7b.3 Response Format
+
+Responses (both unary and streamed chunks) are protobuf-as-json arrays containing Content
+nodes shaped like the request's. Text arrives as `[null, "<text>"]` DataItem pairs; the
+gateway extracts them via recursive tree walking (`_iter_text_parts`) and tolerates both
+true deltas and cumulative snapshots. gRPC errors surface as JSON objects
+`{"error": {"code": ..., "message": ..., "status": ...}}` and map to OpenAI-style 429/401
+handling. Finish reasons (`STOP`, `MAX_TOKENS`, `SAFETY`, ...) appear as bare enum strings.
+
+### 7b.4 Known Limitations
+
+- **Text-only generation**: wire slots for image/audio parts and function-call declarations
+  are unverified; non-text parts are dropped and tools ignored.
+- **No model discovery RPC** is implemented; the adapter serves a static catalog.
+- **Token usage is estimated locally** (whitespace heuristic) as upstream usageMetadata has
+  no confirmed slot.
+
+---
+
 ## 8. Upstream Rate Limits & Quotas (Reference)
 
 Rate limits enforced by each backend, their sources, and how `google-gate` models them.
@@ -556,6 +607,9 @@ through a real browser context (e.g. CDP-driven headless Chrome).
 | `GEMINI_WEB_RPM` | `60` | gemini_web | Local estimate only |
 | `GEMINI_WEB_TPM` | `500000` | gemini_web | Local estimate only |
 | `GEMINI_WEB_RPD` | `0` (off) | gemini_web | Daily request tracker |
+| `AISTUDIO_WEB_RPM` | `10` | aistudio_web | Conservative free-tier Flash-class estimate |
+| `AISTUDIO_WEB_TPM` | `250000` | aistudio_web | Local estimate only |
+| `AISTUDIO_WEB_RPD` | `0` (off) | aistudio_web | Daily request tracker |
 
 Setting any value to `0` disables that dimension of the local tracker.
 

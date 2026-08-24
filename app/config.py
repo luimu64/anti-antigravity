@@ -146,6 +146,7 @@ PROVIDER_DEFAULT_EFFORTS = {
     "antigravity": "medium",
     "gemini_api": "medium",
     "gemini_web": "medium",
+    "aistudio_web": "medium",
 }
 
 # Gateway-wide default when a request carries no reasoning effort: the most
@@ -231,5 +232,17 @@ PROVIDER_RATE_LIMITS = {
         "rpd": int(os.getenv("GEMINI_WEB_RPD", "0")),
         "min_quota_fraction": float(os.getenv("GEMINI_WEB_MIN_QUOTA_FRACTION", "0.0")),
         "default_cooldown": float(os.getenv("GEMINI_WEB_DEFAULT_COOLDOWN", "60.0")),
+    },
+    "aistudio_web": {
+        # AI Studio web (MakerSuiteService RPC) rides the user's personal
+        # free-tier allowance; defaults mirror conservative Flash-class
+        # free-tier limits and are env-overridable.
+        "rpm": int(os.getenv("AISTUDIO_WEB_RPM", "10")),
+        "tpm": int(os.getenv("AISTUDIO_WEB_TPM", "250000")),
+        "rpd": int(os.getenv("AISTUDIO_WEB_RPD", "0")),
+        "min_quota_fraction": float(
+            os.getenv("AISTUDIO_WEB_MIN_QUOTA_FRACTION", "0.0")
+        ),
+        "default_cooldown": float(os.getenv("AISTUDIO_WEB_DEFAULT_COOLDOWN", "60.0")),
     },
 }

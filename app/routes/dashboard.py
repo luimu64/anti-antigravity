@@ -40,6 +40,10 @@ class UpdateBackendsRequest(BaseModel):
     gemini_web_psidts: str | None = None
     gemini_web_sapisid: str | None = None
     gemini_web_enabled: bool | None = None
+    aistudio_web_cookies: str | None = None
+    aistudio_web_api_key: str | None = None
+    aistudio_web_session: str | None = None
+    aistudio_web_enabled: bool | None = None
     antigravity_enabled: bool | None = None
 
 
@@ -373,6 +377,7 @@ async def get_dashboard_models():
                                 "source_antigravity": (name == "antigravity"),
                                 "source_gemini_api": (name == "gemini_api"),
                                 "source_gemini_web": (name == "gemini_web"),
+                                "source_aistudio_web": (name == "aistudio_web"),
                             }
                         )
                 except Exception as e:
@@ -391,6 +396,7 @@ async def get_dashboard_models():
                         "source_antigravity": "antigravity" in provs,
                         "source_gemini_api": "gemini_api" in provs,
                         "source_gemini_web": "gemini_web" in provs,
+                        "source_aistudio_web": "aistudio_web" in provs,
                     }
                 )
 
