@@ -13,6 +13,14 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       - API_KEY=
+      # --- AI Studio UI-oracle (Playwright persistent profile) ---
+      # Durable Google login state; MUST be a volume or logins evaporate
+      # on container recreate.
+      - AISTUDIO_ORACLE_PROFILE_DIR=/app/data/aistudio-profile
+      # Use the Debian chromium baked into the image (no browser download).
+      - AISTUDIO_ORACLE_CHROMIUM=/usr/bin/chromium
+      # oracle|http|auto — auto uses the oracle when the profile dir is set.
+      - AISTUDIO_WEB_MODE=auto
       # Optional: set pre-existing credentials if running headless
       # - REFRESH_TOKEN=
       # - ACCESS_TOKEN=

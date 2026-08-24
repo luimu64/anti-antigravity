@@ -22,17 +22,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/root/.local/bin:${PATH}" \
     PORT=8000 \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
+# curl (healthcheck) + Xvfb/x11vnc/websockify/novnc (one-time headless login)
+# + Chromium runtime deps per playwright --with-deps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    xvfb x11vnc websockify novnc \
+    chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/chromium /opt/ms-playwright-chromium
 
 COPY --from=builder /root/.local /root/.local
 
 # Copy application files
 COPY pyproject.toml .
 COPY app app/
+COPY scripts scripts/
 COPY main.py .
 
 # Create data directory for credentials persistence

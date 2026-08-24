@@ -30,6 +30,9 @@ ORACLE_PROFILE_DIR = os.getenv(
     "AISTUDIO_ORACLE_PROFILE_DIR", "/opt/data/user-files/anti-antigravity/data/aistudio-profile"
 )
 ORACLE_HEADLESS = os.getenv("AISTUDIO_ORACLE_HEADLESS", "1") != "0"
+# Path to a Chromium executable; empty = Playwright's own downloaded build.
+# Docker images install Debian chromium instead to keep the image small.
+ORACLE_CHROMIUM = os.getenv("AISTUDIO_ORACLE_CHROMIUM", "")
 ORACLE_TAB_TIMEOUT = float(os.getenv("AISTUDIO_ORACLE_TAB_TIMEOUT", "120"))
 ORACLE_POLL_INTERVAL = float(os.getenv("AISTUDIO_ORACLE_POLL_INTERVAL", "1.5"))
 
@@ -72,10 +75,13 @@ class _Browser:
 
             os.makedirs(ORACLE_PROFILE_DIR, exist_ok=True)
             self._pw = sync_playwright().start()
+            launch_kwargs: dict = {"headless": ORACLE_HEADLESS}
+            if ORACLE_CHROMIUM:
+                launch_kwargs["executable_path"] = ORACLE_CHROMIUM
             self._context = self._pw.chromium.launch_persistent_context(
                 ORACLE_PROFILE_DIR,
-                headless=ORACLE_HEADLESS,
                 args=["--disable-blink-features=AutomationControlled"],
+                **launch_kwargs,
             )
         pages = [p for p in self._context.pages if "aistudio" in p.url] or \
             self._context.pages

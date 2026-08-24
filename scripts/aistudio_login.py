@@ -11,7 +11,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.providers.aistudio_oracle import NEW_CHAT_URL, ORACLE_PROFILE_DIR  # noqa: E402
+from app.providers.aistudio_oracle import (  # noqa: E402
+    NEW_CHAT_URL,
+    ORACLE_CHROMIUM,
+    ORACLE_PROFILE_DIR,
+)
 
 
 def main() -> None:
@@ -20,10 +24,13 @@ def main() -> None:
     os.makedirs(ORACLE_PROFILE_DIR, exist_ok=True)
     print(f"profile: {ORACLE_PROFILE_DIR}")
     with sync_playwright() as pw:
+        kwargs = {"headless": False}
+        if ORACLE_CHROMIUM:
+            kwargs["executable_path"] = ORACLE_CHROMIUM
         ctx = pw.chromium.launch_persistent_context(
             ORACLE_PROFILE_DIR,
-            headless=False,
             args=["--disable-blink-features=AutomationControlled"],
+            **kwargs,
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(NEW_CHAT_URL)
