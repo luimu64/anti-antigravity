@@ -14,7 +14,11 @@ from typing import Any
 import httpx
 
 from app.config import MODEL_CACHE_TTL, PROVIDER_RATE_LIMITS
-from app.providers.aistudio_oracle import AistudioOracle, OracleError
+from app.providers.aistudio_oracle import (
+    AistudioOracle,
+    OracleError,
+    OracleLoginRequired,
+)
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("google_gate.providers.aistudio_web")
@@ -973,6 +977,11 @@ class AIStudioWebAdapter(BaseAdapter):
             prompt_text = self._build_flat_prompt(contents, system_instruction)
             try:
                 reply = await self.oracle.generate(prompt_text)
+            except OracleLoginRequired as e:
+                logger.warning(f"[AIStudioWeb] oracle login required: {e}")
+                raise ValueError(
+                    f"AI Studio Web needs a one-time manual sign-in. {e}"
+                ) from e
             except OracleError as e:
                 logger.warning(f"[AIStudioWeb] oracle failed: {e}")
                 raise ValueError(f"AI Studio Web oracle error: {e}") from e
