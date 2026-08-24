@@ -84,7 +84,7 @@
 
       <!-- Unconfigured form (shown when cookies absent/reset) -->
       <form id="aistudio-web-form" onsubmit="event.preventDefault(); saveAIStudioWebCookies();" class="flex flex-col gap-2">
-        <textarea id="aistudio-web-cookies-input" placeholder="Paste full Cookie header from aistudio.google.com DevTools (must contain SAPISID). If you get 403s, also paste the whole --data-raw request body into AISTUDIO_WEB_SESSION - slot [4] is auto-extracted." class="textarea textarea-bordered textarea-sm w-full text-xs" rows="3"></textarea>
+        <textarea id="aistudio-web-cookies-input" placeholder="Paste full Cookie header from aistudio.google.com DevTools (must contain SAPISID)" class="textarea textarea-bordered textarea-sm w-full text-xs" rows="3"></textarea>
         <button type="submit" class="btn btn-primary btn-sm w-full">Save Cookies</button>
       </form>
     {% endcall %}

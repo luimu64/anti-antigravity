@@ -146,8 +146,8 @@ Rides the same quota as the [aistudio.google.com](https://aistudio.google.com) w
 Quirks you should know about:
 
 - **Copy the FULL Cookie header**: Google gates these RPCs on a complete session (`SID`, `HSID`, `SSID`, `SAPISID`, `__Secure-1PSID`, `__Secure-3PSID`, ...). Partial cookie sets fail; on 401/403 the gateway logs which cookies it saw and names the missing ones.
-- **If you get 403 PERMISSION_DENIED**: authentication succeeded but the anti-abuse gate rejected the request context. Paste your real client-context blob into `AISTUDIO_WEB_SESSION` — copy the whole `--data-raw` body of a live request from DevTools and it auto-extracts slot `[4]` (synthetic blobs are frequently denied).
-- **Sessions rotate fast**: `__Secure-1PSIDTS` changes frequently — the gateway auto-refreshes it via `RotateCookies`, but re-copy fresh cookies if permission errors persist. Datacenter egress IPs can also be gated; route via `AISTUDIO_WEB_PROXY`.
+- **403 PERMISSION_DENIED is handled automatically**: generation requests carry an opaque client-context blob that normally embeds a browser-computed device attestation. When the anti-abuse gate rejects it, the gateway retries with simpler request shapes (blob → null → empty) and pins whichever passes — no manual capture needed. If all fallbacks are denied, the egress IP is likely gated; route via `AISTUDIO_WEB_PROXY`. An explicitly configured `AISTUDIO_WEB_SESSION` blob always takes precedence over the synthetic one.
+- **Sessions rotate fast**: `__Secure-1PSIDTS` changes frequently — the gateway auto-refreshes it via `RotateCookies`, but re-copy fresh cookies if auth errors persist.
 - **Attachments supported**: OpenAI `image_url`/`input_audio`/file parts arrive at this backend as `inlineData`; bytes are uploaded once per unique payload to the AI Studio Drive app folder (`GetAppFolder` → `GenerateAccessToken` → Drive multipart upload) and referenced by file id in generation requests.
 - **Tool definitions ignored**: function-call wire slots are unverified, so tools are accepted but dropped; text + attachments are fully supported.
 

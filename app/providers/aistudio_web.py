@@ -137,6 +137,10 @@ def _extract_error_payload(body: Any) -> dict[str, Any] | None:
     return None
 
 
+class AistudioPermissionDenied(ValueError):
+    """403 PERMISSION_DENIED - authorization stage rejected the request context."""
+
+
 def _extract_grpc_detail(text: str) -> str:
     """Pull a human-readable message out of protobuf-as-json google.rpc.Status
     bodies (e.g. [,[3,\"Invalid value at 'generation_config...'\",[...]]])."""
@@ -220,6 +224,8 @@ class AIStudioWebAdapter(BaseAdapter):
         # Optional callback (usually router.save_config) invoked after cookie
         # mutations so rotated tokens survive restarts.
         self.persist_cb = None
+        # Index into BLOB_MODES: slot-4 strategy that last passed authz.
+        self._blob_mode_index: int = 0
 
         # File-upload state (GetAppFolder / GenerateAccessToken / Drive).
         self._app_folder_id: str | None = None
@@ -254,6 +260,7 @@ class AIStudioWebAdapter(BaseAdapter):
         self._drive_token = None
         self._drive_token_fetched_at = 0.0
         self._uploaded_files.clear()
+        self._blob_mode_index = 0
         self.clear_cooldown()
         if hasattr(self, "rate_limiter"):
             self.rate_limiter.reset()
@@ -425,41 +432,25 @@ class AIStudioWebAdapter(BaseAdapter):
 
     def _generate_session_blob(self) -> str:
         # Synthetic stand-in for the opaque payload slot 4 client context.
-        # Live blobs embed a stable device fingerprint; a purely random blob
-        # can be rejected by the authorization stage (PERMISSION_DENIED), so
-        # pasting a real capture via AISTUDIO_WEB_SESSION is recommended.
+        # Live blobs embed a client-computed device attestation; when the
+        # anti-abuse gate rejects it (403), the adapter automatically retries
+        # with simpler slot values via _blob_modes / _advance_blob_mode.
         alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
         raw = "".join(secrets.choice(alphabet) for _ in range(22))
         prefix = "LS" + "".join(secrets.choice(alphabet) for _ in range(8))
         filler = "".join(secrets.choice(alphabet) for _ in range(512))
         return f"!{prefix}ARg{filler}{raw}"
 
-    def set_session_from_capture(self, value: str) -> bool:
-        """Accept either the raw session blob or a full copied request payload.
+    # Slot-4 fallback ladder tried automatically on 403 PERMISSION_DENIED:
+    # configured/synthetic blob -> explicit null -> empty string.
+    BLOB_MODES = ("blob", "null", "empty")
 
-        When a complete `--data-raw` JSON array from DevTools is pasted, the
-        client-context blob is extracted from slot 4 automatically.
-        """
-        v = (value or "").strip()
-        if not v:
-            return False
-        if v.startswith("["):
-            with contextlib.suppress(ValueError):
-                parsed = json.loads(v)
-                if (
-                    isinstance(parsed, list)
-                    and len(parsed) > 4
-                    and isinstance(parsed[4], str)
-                    and parsed[4]
-                ):
-                    self.session_blob = parsed[4]
-                    logger.info(
-                        "[AIStudioWeb] Session blob extracted from pasted "
-                        "request payload"
-                    )
-                    return True
-        self.session_blob = v
-        return True
+    def _slot4_value(self, mode: str) -> str | None:
+        if mode == "null":
+            return None
+        if mode == "empty":
+            return ""
+        return self.session_blob or self._generate_session_blob()
 
     # ------------------------------------------------------------------
     # File uploads (GetAppFolder -> GenerateAccessToken -> Drive multipart)
@@ -763,6 +754,7 @@ class AIStudioWebAdapter(BaseAdapter):
         contents: list[dict[str, Any]],
         system_instruction: dict[str, Any] | None = None,
         generation_config: dict[str, Any] | None = None,
+        blob_mode: str | None = None,
     ) -> list[Any]:
         contents_wire, system_wire = await self._convert_contents(
             contents, system_instruction
@@ -773,7 +765,9 @@ class AIStudioWebAdapter(BaseAdapter):
             if clean_model.startswith("models/")
             else f"models/{clean_model}"
         )
-        session_blob = self.session_blob or self._generate_session_blob()
+        session_blob = self._slot4_value(
+            blob_mode or self.BLOB_MODES[self._blob_mode_index]
+        )
         payload: list[Any] = [
             wire_model,
             contents_wire,
@@ -818,17 +812,10 @@ class AIStudioWebAdapter(BaseAdapter):
                 retry_after=retry_after,
             )
         if status == 403:
-            guidance = (
-                " Authenticated but not authorized: paste the real client-"
-                "context blob into AISTUDIO_WEB_SESSION (copy the whole "
-                "--data-raw body of a live request - slot [4] is extracted "
-                "automatically); the synthetic blob is often rejected by the "
-                "anti-abuse gate. If it persists, try AISTUDIO_WEB_PROXY."
+            raise AistudioPermissionDenied(
+                f"AI Studio Web permission denied (403): {detail}"
             )
-            raise ValueError(
-                f"AI Studio Web permission denied (403): {detail}.{guidance}"
-            )
-        if status in (401, 403):
+        if status == 401:
             self.is_valid_session = False
             missing = self.missing_cookie_names()
             guidance = ""
@@ -944,12 +931,7 @@ class AIStudioWebAdapter(BaseAdapter):
             )
 
         await self.ensure_fresh_session()
-        payload = await self.build_request_payload(
-            model, contents, system_instruction, generation_config
-        )
         url = f"{RPC_BASE}/GenerateContent"
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        self._last_request_head = body[:800]
         headers = self._get_headers()
         http = self.get_http_client()
 
@@ -997,19 +979,53 @@ class AIStudioWebAdapter(BaseAdapter):
                 }
             )
 
-        try:
-            resp = await http.post(url, content=body.encode("utf-8"), headers=headers)
-        except httpx.HTTPError as e:
-            logger.warning(f"AI Studio Web request network error: {e}")
-            self.set_cooldown(30.0, reason="network error")
-            raise RateLimitError(f"AI Studio Web network error: {e}") from e
+        # Anti-abuse gate fallback: when the authorization stage denies the
+        # request (403), retry automatically with simpler slot-4 values and
+        # remember the first mode that passes - no manual pasting required.
+        for attempt in range(len(self.BLOB_MODES)):
+            mode_index = min(self._blob_mode_index + attempt, len(self.BLOB_MODES) - 1)
+            mode = self.BLOB_MODES[mode_index]
+            payload = await self.build_request_payload(
+                model,
+                contents,
+                system_instruction,
+                generation_config,
+                blob_mode=mode,
+            )
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            self._last_request_head = body[:800]
+
+            try:
+                resp = await http.post(
+                    url, content=body.encode("utf-8"), headers=headers
+                )
+            except httpx.HTTPError as e:
+                logger.warning(f"AI Studio Web request network error: {e}")
+                self.set_cooldown(30.0, reason="network error")
+                raise RateLimitError(f"AI Studio Web network error: {e}") from e
+
+            try:
+                await self._raise_for_response(resp)
+            except AistudioPermissionDenied as e:
+                if mode_index < len(self.BLOB_MODES) - 1:
+                    logger.warning(
+                        f"[AIStudioWeb] 403 with session-blob mode '{mode}'; "
+                        f"retrying with "
+                        f"'{self.BLOB_MODES[mode_index + 1]}'"
+                    )
+                    continue
+                raise ValueError(
+                    f"{e} All session-context fallbacks exhausted; the "
+                    "egress IP may be gated (try AISTUDIO_WEB_PROXY)."
+                ) from e
+
+            # Succeeded: pin this blob mode for subsequent requests.
+            self._blob_mode_index = mode_index
+            self.is_valid_session = True
+            break
 
         try:
-            await self._raise_for_response(resp)
-            self.is_valid_session = True
             parsed = resp.json()
-        except ValueError:
-            raise
         except Exception as e:
             raise ValueError(
                 f"AI Studio Web returned an unparsable response: {e}"

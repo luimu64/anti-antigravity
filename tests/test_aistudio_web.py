@@ -118,27 +118,83 @@ def test_headers_shape(monkeypatch):
     assert "Authorization" not in unauthed._get_headers()
 
 
-def test_set_session_from_capture():
+def test_slot4_blob_modes():
     adapter = make_adapter(session="")
+    # blob mode -> synthetic; null/empty modes -> literal values
+    assert adapter._slot4_value("blob").startswith("!")
+    assert adapter._slot4_value("null") is None
+    assert adapter._slot4_value("empty") == ""
+    # Configured blob wins over synthetic in blob mode
+    configured = make_adapter(session="!MINE")
+    assert configured._slot4_value("blob") == "!MINE"
 
-    full_payload = json.dumps(
-        [
-            "models/gemini-3.7-flash",
-            [[[None, "hi"]], "user"],
-            [[None, None, 7, 5]],
-            [None, None, None, 65536],
-            "!REALBLOB123NAAZxZfekUWVC",
-            None,
-        ]
+
+@pytest.mark.asyncio
+async def test_permission_denied_ladder_retries_then_pins_mode():
+    seen_blobs: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        blob = payload[4]
+        seen_blobs.append(blob)
+        if blob is not None:
+            # Synthetic blob rejected at the authz stage
+            return httpx.Response(
+                403,
+                content=b'[,[7,"The caller does not have permission"]]',
+            )
+        return httpx.Response(
+            200, content=stream_response_body([[[[None, "ok"]], "model"]])
+        )
+
+    adapter = mock_stream_adapter(handler)
+    chunks = []
+    async for chunk in adapter.stream_generate_content(
+        model="gemini-2.0-flash",
+        contents=[{"role": "user", "parts": [{"text": "hi"}]}],
+    ):
+        chunks.append(chunk)
+
+    text = "".join(
+        p["text"]
+        for c in chunks
+        for cand in c.get("candidates", [])
+        for p in cand.get("content", {}).get("parts", [])
+        if p.get("text")
     )
-    assert adapter.set_session_from_capture(full_payload) is True
-    assert adapter.session_blob == "!REALBLOB123NAAZxZfekUWVC"
+    assert text == "ok"
+    # Ladder advanced from the configured blob to explicit null and pinned it
+    assert len(seen_blobs) == 2
+    assert seen_blobs[0] == "test_session_blob"
+    assert seen_blobs[1] is None
+    assert adapter.BLOB_MODES[adapter._blob_mode_index] == "null"
 
-    # Raw blob passthrough; empty values are rejected
-    assert adapter.set_session_from_capture("!RAW") is True
-    assert adapter.session_blob == "!RAW"
-    adapter.set_session_from_capture("")
-    assert adapter.session_blob == "!RAW"
+    # Subsequent requests reuse the pinned mode directly (single attempt)
+    seen_blobs.clear()
+    async for _ in adapter.stream_generate_content(
+        model="gemini-2.0-flash",
+        contents=[{"role": "user", "parts": [{"text": "hi"}]}],
+    ):
+        pass
+    assert len(seen_blobs) == 1
+    assert seen_blobs[0] is None
+
+
+@pytest.mark.asyncio
+async def test_permission_denied_exhausted_raises_clear_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            content=b'[,[7,"The caller does not have permission"]]',
+        )
+
+    adapter = mock_stream_adapter(handler)
+    with pytest.raises(ValueError, match="fallbacks exhausted"):
+        async for _ in adapter.stream_generate_content(
+            model="gemini-2.0-flash",
+            contents=[{"role": "user", "parts": [{"text": "hi"}]}],
+        ):
+            pass
 
 
 def test_cookie_diagnostics():
