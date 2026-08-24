@@ -24,7 +24,11 @@ from app.providers.router import MultiBackendRouter
 
 def make_adapter(**kwargs) -> AIStudioWebAdapter:
     defaults = {
-        "cookies": "SID=abc; SAPISID=test_sapisid_123; __Secure-1PAPISID=test_sapisid_123;",
+        "cookies": (
+            "SID=abc; HSID=hsid; SSID=ssid; SAPISID=test_sapisid_123; "
+            "__Secure-1PAPISID=test_sapisid_123; "
+            "__Secure-1PSID=psid1; __Secure-3PSID=psid3;"
+        ),
         "session": "test_session_blob",
     }
     defaults.update(kwargs)
@@ -95,6 +99,21 @@ def test_headers_shape():
     assert headers["Authorization"].startswith("SAPISIDHASH ")
     assert "SAPISID=test_sapisid_123" in headers["Cookie"]
     assert headers["X-AiStudio-Visit-Id"].startswith("v1_")
+    # Browser fingerprint headers required by Google frontends
+    assert headers["Sec-Fetch-Site"] == "same-site"
+    assert headers["Sec-Fetch-Mode"] == "cors"
+    assert headers["Sec-Fetch-Dest"] == "empty"
+    assert "Google Chrome" in headers["sec-ch-ua"]
+
+
+def test_cookie_diagnostics():
+    full = make_adapter().cookies
+    assert AIStudioWebAdapter(cookies=full).missing_cookie_names() == []
+
+    partial = "SAPISID=abc; NID=xyz;"
+    missing = AIStudioWebAdapter(cookies=partial).missing_cookie_names()
+    assert "SID" in missing and "__Secure-1PSID" in missing
+    assert "SAPISID" not in missing
 
 
 # ---------------------------------------------------------------------------

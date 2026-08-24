@@ -244,9 +244,18 @@ class AIStudioWebAdapter(BaseAdapter):
 
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
+            # Google's $rpc bridges are gRPC-web endpoints served over HTTP/2;
+            # match the browser transport when the h2 package is available.
+            try:
+                import h2  # noqa: F401
+
+                http2 = True
+            except ImportError:
+                http2 = False
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(300.0, connect=30.0),
                 proxy=self.proxy,
+                http2=http2,
             )
         return self._http_client
 
@@ -268,10 +277,22 @@ class AIStudioWebAdapter(BaseAdapter):
     def _get_headers(self) -> dict[str, str]:
         headers = {
             "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
             "Content-Type": "application/json+protobuf",
             "Origin": ORIGIN,
             "Referer": f"{ORIGIN}/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
             "User-Agent": USER_AGENT,
+            # Chrome client hints matching the UA above (present in every
+            # browser capture; frontends gate cookie-authed RPCs on these).
+            "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", '
+            '"Google Chrome";v="150"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Linux"',
             "X-Goog-Api-Key": self.api_key,
             "X-Goog-Authuser": "0",
             "X-Goog-Ext-519733851-Bin": X_GOOG_EXT_CLIENT_BIN,
@@ -286,6 +307,28 @@ class AIStudioWebAdapter(BaseAdapter):
         if cookie_header:
             headers["Cookie"] = cookie_header
         return headers
+
+    REQUIRED_COOKIE_NAMES = (
+        "SID",
+        "HSID",
+        "SSID",
+        "SAPISID",
+        "__Secure-1PSID",
+        "__Secure-3PSID",
+    )
+
+    def missing_cookie_names(self) -> list[str]:
+        """Return required Google session cookies absent from the pasted header."""
+        present = self.present_cookie_names()
+        return [name for name in self.REQUIRED_COOKIE_NAMES if name not in present]
+
+    def present_cookie_names(self) -> set[str]:
+        """Return the cookie names present in the pasted header."""
+        return {
+            pair.split("=", 1)[0].strip()
+            for pair in self.cookies.split(";")
+            if "=" in pair
+        }
 
     @staticmethod
     def _generate_visit_id() -> str:
@@ -653,9 +696,27 @@ class AIStudioWebAdapter(BaseAdapter):
             )
         if status in (401, 403):
             self.is_valid_session = False
+            missing = self.missing_cookie_names()
+            guidance = ""
+            if missing:
+                guidance = (
+                    f" Missing cookies: {', '.join(missing)}. Copy the FULL "
+                    "Cookie header from a live request."
+                )
+            else:
+                guidance = (
+                    " Cookies look complete; the session may have expired "
+                    "(__Secure-1PSIDTS rotates frequently) or the egress IP "
+                    "may be gated - re-copy a fresh Cookie header from an "
+                    "active https://aistudio.google.com tab, optionally via "
+                    "AISTUDIO_WEB_PROXY."
+                )
+            logger.warning(
+                f"[AIStudioWeb] {status} PERMISSION/auth failure. Present "
+                f"cookies: {sorted(self.present_cookie_names())}"
+            )
             raise ValueError(
-                f"AI Studio Web authentication failed ({status}): {detail}. "
-                "Re-export fresh cookies from https://aistudio.google.com."
+                f"AI Studio Web authentication failed ({status}): {detail}.{guidance}"
             )
         if status == 400:
             # Opaque Google HTML error pages usually mean a malformed payload
