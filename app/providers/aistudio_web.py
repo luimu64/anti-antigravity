@@ -202,12 +202,14 @@ class AIStudioWebAdapter(BaseAdapter):
         # (payload slot 4). Optional; a synthetic value is used when absent.
         self.session_blob = session or os.getenv("AISTUDIO_WEB_SESSION") or ""
         self.proxy = os.getenv("AISTUDIO_WEB_PROXY") or None
-        # The AI Studio web client authenticates purely via cookies; sending a
-        # SAPISIDHASH that upstream cannot validate yields PERMISSION_DENIED.
-        # Opt in only for debugging via AISTUDIO_WEB_SEND_AUTH=1.
-        self.send_authorization = os.getenv("AISTUDIO_WEB_SEND_AUTH", "").lower() in (
+        # The web client authorizes via SAPISIDHASH over its cookie session
+        # (visible in "Copy as cURL" captures; HAR exports redact the
+        # header). Cookies alone yield 401 CREDENTIALS_MISSING.
+        # Disable only for debugging via AISTUDIO_WEB_SEND_AUTH=0.
+        self.send_authorization = os.getenv("AISTUDIO_WEB_SEND_AUTH", "1").lower() in (
             "1",
             "true",
+            "yes",
         )
 
         self._http_client: httpx.AsyncClient | None = None
@@ -421,14 +423,43 @@ class AIStudioWebAdapter(BaseAdapter):
         # Header variant observed in live traffic: "v1_" + b64(uuid hex).
         return "v1_" + base64.b64encode(uuid.uuid4().hex.encode()).decode()
 
-    @staticmethod
-    def _generate_session_blob() -> str:
+    def _generate_session_blob(self) -> str:
         # Synthetic stand-in for the opaque payload slot 4 client context.
+        # Live blobs embed a stable device fingerprint; a purely random blob
+        # can be rejected by the authorization stage (PERMISSION_DENIED), so
+        # pasting a real capture via AISTUDIO_WEB_SESSION is recommended.
         alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
         raw = "".join(secrets.choice(alphabet) for _ in range(22))
         prefix = "LS" + "".join(secrets.choice(alphabet) for _ in range(8))
         filler = "".join(secrets.choice(alphabet) for _ in range(512))
         return f"!{prefix}ARg{filler}{raw}"
+
+    def set_session_from_capture(self, value: str) -> bool:
+        """Accept either the raw session blob or a full copied request payload.
+
+        When a complete `--data-raw` JSON array from DevTools is pasted, the
+        client-context blob is extracted from slot 4 automatically.
+        """
+        v = (value or "").strip()
+        if not v:
+            return False
+        if v.startswith("["):
+            with contextlib.suppress(ValueError):
+                parsed = json.loads(v)
+                if (
+                    isinstance(parsed, list)
+                    and len(parsed) > 4
+                    and isinstance(parsed[4], str)
+                    and parsed[4]
+                ):
+                    self.session_blob = parsed[4]
+                    logger.info(
+                        "[AIStudioWeb] Session blob extracted from pasted "
+                        "request payload"
+                    )
+                    return True
+        self.session_blob = v
+        return True
 
     # ------------------------------------------------------------------
     # File uploads (GetAppFolder -> GenerateAccessToken -> Drive multipart)
@@ -785,6 +816,17 @@ class AIStudioWebAdapter(BaseAdapter):
                 f"AI Studio Web rate limited (429): {detail}",
                 status_code=429,
                 retry_after=retry_after,
+            )
+        if status == 403:
+            guidance = (
+                " Authenticated but not authorized: paste the real client-"
+                "context blob into AISTUDIO_WEB_SESSION (copy the whole "
+                "--data-raw body of a live request - slot [4] is extracted "
+                "automatically); the synthetic blob is often rejected by the "
+                "anti-abuse gate. If it persists, try AISTUDIO_WEB_PROXY."
+            )
+            raise ValueError(
+                f"AI Studio Web permission denied (403): {detail}.{guidance}"
             )
         if status in (401, 403):
             self.is_valid_session = False

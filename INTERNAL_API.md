@@ -480,9 +480,10 @@ frontend, which the gateway replays to offer a keyless AI Studio backend.
 - **Methods**: `GenerateContent` (unary), `StreamGenerateContent` (newline-delimited JSON chunks)
 - **Content-Type**: `application/json+protobuf` — protobuf messages encoded as positional JSON arrays (array index = proto field number − 1; absent fields are `null`)
 - **Authentication**:
-  - **Cookie-only** — the web client sends *no* `Authorization` header on any MakerSuite RPC; the full browser session (`SID`, `HSID`, `SSID`, `SAPISID`, `__Secure-1PAPISID`, `__Secure-*PSID/PSIDTS`, ...) is the sole credential. Injecting a SAPISIDHASH that upstream cannot validate yields `403 PERMISSION_DENIED` even with valid cookies, so the gateway omits it by default (`AISTUDIO_WEB_SEND_AUTH=1` re-enables for debugging).
+  - Session cookies copied from the browser (`SID`, `HSID`, `SSID`, `SAPISID`, `__Secure-1PAPISID`, `__Secure-*PSID/PSIDTS`, ...)
+  - `Authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>` with origin `https://aistudio.google.com` (the web client also appends `SAPISID1PHASH`/`SAPISID3PHASH` variants). Visible in "Copy as cURL"; note Chrome HAR exports **redact** Cookie/Authorization headers unless sensitive data is included. Cookies alone yield `401 CREDENTIALS_MISSING` ("API keys are not supported by this API"); the hash is required.
   - `x-goog-api-key: AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs` — public web client key embedded in the AI Studio frontend (identical for all users)
-  - The page also runs a Web Anti-Abuse handshake (`waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create`) at load time; its token is not carried in GenerateContent bodies or headers and is not currently reproduced by the gateway.
+  - The page also runs a Web Anti-Abuse handshake (`waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create`) at load time; its token is not carried in GenerateContent bodies or headers. The opaque client-context blob at payload slot `[4]` embeds a stable device-fingerprint segment observed across sessions - requests carrying purely synthetic blobs can be rejected at the authorization stage (`403 PERMISSION_DENIED`) even when authentication succeeds, so pasting a real capture is recommended (`AISTUDIO_WEB_SESSION` accepts the whole `--data-raw` body and extracts slot `[4]`).
 
 ### 7b.2 Request Payload Layout (GenerateContentRequest)
 

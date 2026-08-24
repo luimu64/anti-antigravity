@@ -101,9 +101,9 @@ def test_headers_shape(monkeypatch):
     assert headers["Origin"] == ORIGIN
     assert headers["X-Goog-Api-Key"].startswith("AIzaSy")
     assert headers["X-Goog-Authuser"] == "0"
-    # Browser sends pure cookie auth on these RPCs; SAPISIDHASH must be
-    # omitted by default (present-but-invalid hashes yield PERMISSION_DENIED)
-    assert "Authorization" not in headers
+    # SAPISIDHASH over the cookie session (matches Copy-as-cURL captures);
+    # cookies alone yield 401 CREDENTIALS_MISSING upstream.
+    assert headers["Authorization"].startswith("SAPISIDHASH ")
     assert "SAPISID=test_sapisid_123" in headers["Cookie"]
     assert headers["X-AiStudio-Visit-Id"].startswith("v1_")
     # Browser fingerprint headers required by Google frontends
@@ -112,10 +112,33 @@ def test_headers_shape(monkeypatch):
     assert headers["Sec-Fetch-Dest"] == "empty"
     assert "Google Chrome" in headers["sec-ch-ua"]
 
-    # Opt-in debug mode restores the legacy hash header
-    monkeypatch.setenv("AISTUDIO_WEB_SEND_AUTH", "1")
-    authed = make_adapter()
-    assert authed._get_headers()["Authorization"].startswith("SAPISIDHASH ")
+    # Opt-out debug switch drops the hash header entirely
+    monkeypatch.setenv("AISTUDIO_WEB_SEND_AUTH", "0")
+    unauthed = make_adapter()
+    assert "Authorization" not in unauthed._get_headers()
+
+
+def test_set_session_from_capture():
+    adapter = make_adapter(session="")
+
+    full_payload = json.dumps(
+        [
+            "models/gemini-3.7-flash",
+            [[[None, "hi"]], "user"],
+            [[None, None, 7, 5]],
+            [None, None, None, 65536],
+            "!REALBLOB123NAAZxZfekUWVC",
+            None,
+        ]
+    )
+    assert adapter.set_session_from_capture(full_payload) is True
+    assert adapter.session_blob == "!REALBLOB123NAAZxZfekUWVC"
+
+    # Raw blob passthrough; empty values are rejected
+    assert adapter.set_session_from_capture("!RAW") is True
+    assert adapter.session_blob == "!RAW"
+    adapter.set_session_from_capture("")
+    assert adapter.session_blob == "!RAW"
 
 
 def test_cookie_diagnostics():
@@ -256,8 +279,8 @@ async def test_stream_generate_content_parses_chunks():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "alkalimakersuite-pa.clients6.google.com"
         assert request.url.path.endswith("/GenerateContent")
-        # Pure cookie auth, matching the browser exactly
-        assert "authorization" not in request.headers
+        # SAPISIDHASH over the cookie session, matching Copy-as-cURL captures
+        assert request.headers["authorization"].startswith("SAPISIDHASH")
         assert "SAPISID=" in request.headers["cookie"]
         assert request.headers["x-goog-ext-519733851-bin"]
         sent = json.loads(request.content.decode())

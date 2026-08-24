@@ -154,7 +154,9 @@ class MultiBackendRouter(BaseAdapter):
         if os.getenv("AISTUDIO_WEB_API_KEY"):
             self.aistudio_web.api_key = os.getenv("AISTUDIO_WEB_API_KEY", "")
         if os.getenv("AISTUDIO_WEB_SESSION"):
-            self.aistudio_web.session_blob = os.getenv("AISTUDIO_WEB_SESSION", "")
+            self.aistudio_web.set_session_from_capture(
+                os.getenv("AISTUDIO_WEB_SESSION", "")
+            )
         if os.getenv("AISTUDIO_WEB_ENABLED"):
             self.aistudio_web.enabled = os.getenv(
                 "AISTUDIO_WEB_ENABLED", ""
@@ -216,7 +218,9 @@ class MultiBackendRouter(BaseAdapter):
                 if data.get("aistudio_web_api_key"):
                     self.aistudio_web.api_key = data["aistudio_web_api_key"]
                 if data.get("aistudio_web_session"):
-                    self.aistudio_web.session_blob = data["aistudio_web_session"]
+                    self.aistudio_web.set_session_from_capture(
+                        data["aistudio_web_session"]
+                    )
                 if "aistudio_web_enabled" in data:
                     self.aistudio_web.enabled = bool(data["aistudio_web_enabled"])
 
@@ -314,9 +318,9 @@ class MultiBackendRouter(BaseAdapter):
             "aistudio_web_session" in updates
             and updates["aistudio_web_session"] is not None
         ):
-            self.aistudio_web.session_blob = str(
-                updates["aistudio_web_session"]
-            ).strip()
+            self.aistudio_web.set_session_from_capture(
+                str(updates["aistudio_web_session"])
+            )
         if (
             "aistudio_web_enabled" in updates
             and updates["aistudio_web_enabled"] is not None
