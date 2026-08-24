@@ -162,6 +162,13 @@ class AIStudioWebAdapter(BaseAdapter):
         self._visit_id = self._generate_visit_id()
         self.is_valid_session: bool | None = None
 
+        # File-upload state (GetAppFolder / GenerateAccessToken / Drive).
+        self._app_folder_id: str | None = None
+        self._drive_token: str | None = None
+        self._drive_token_fetched_at: float = 0.0
+        # (sha256, mime) -> Drive file id cache for inline attachments.
+        self._uploaded_files: dict[tuple[str, str], str] = {}
+
     # ------------------------------------------------------------------
     # Credentials & headers
     # ------------------------------------------------------------------
@@ -180,6 +187,10 @@ class AIStudioWebAdapter(BaseAdapter):
         self.enabled = False
         self.is_valid_session = None
         self._visit_id = self._generate_visit_id()
+        self._app_folder_id = None
+        self._drive_token = None
+        self._drive_token_fetched_at = 0.0
+        self._uploaded_files.clear()
         self.clear_cooldown()
         if hasattr(self, "rate_limiter"):
             self.rate_limiter.reset()
@@ -243,18 +254,180 @@ class AIStudioWebAdapter(BaseAdapter):
         return f"!{prefix}ARg{filler}{raw}"
 
     # ------------------------------------------------------------------
+    # File uploads (GetAppFolder -> GenerateAccessToken -> Drive multipart)
+    # ------------------------------------------------------------------
+    DRIVE_DRIVE_UPLOAD_HOST = "https://content.googleapis.com"
+
+    async def _get_app_folder(self) -> str | None:
+        """Fetch the AI Studio app Drive folder id used as upload parent."""
+        if self._app_folder_id:
+            return self._app_folder_id
+        http = self.get_http_client()
+        try:
+            resp = await http.post(
+                f"{RPC_BASE}/GetAppFolder", content="[]", headers=self._get_headers()
+            )
+            if resp.status_code == 200:
+                parsed = resp.json()
+                if isinstance(parsed, list) and parsed and isinstance(parsed[0], str):
+                    self._app_folder_id = parsed[0]
+        except Exception as e:
+            logger.debug(f"[AIStudioWeb] GetAppFolder failed: {e}")
+        return self._app_folder_id
+
+    async def _get_drive_token(self, force_refresh: bool = False) -> str | None:
+        """Obtain a short-lived Drive Bearer token via GenerateAccessToken."""
+        now = time.time()
+        if (
+            not force_refresh
+            and self._drive_token
+            and now - self._drive_token_fetched_at < 3000.0
+        ):
+            return self._drive_token
+        http = self.get_http_client()
+        try:
+            resp = await http.post(
+                f"{RPC_BASE}/GenerateAccessToken",
+                content='["users/me"]',
+                headers=self._get_headers(),
+            )
+            if resp.status_code == 200:
+                parsed = resp.json()
+                if isinstance(parsed, list) and parsed and isinstance(parsed[0], str):
+                    self._drive_token = parsed[0]
+                    self._drive_token_fetched_at = now
+        except Exception as e:
+            logger.debug(f"[AIStudioWeb] GenerateAccessToken failed: {e}")
+        return self._drive_token
+
+    async def upload_file(
+        self,
+        data: bytes,
+        mime_type: str,
+        filename: str | None = None,
+    ) -> str:
+        """Upload attachment bytes to the AI Studio Drive app folder.
+
+        Returns the Drive file id referenced by generation requests as a
+        DataItem file part ([null,null,null,null,null,["<id>"]]).
+        Identical payloads (hash + mime) are uploaded once per session.
+        """
+        digest = hashlib.sha256(data).hexdigest()
+        cache_key = (digest, mime_type)
+        cached = self._uploaded_files.get(cache_key)
+        if cached:
+            return cached
+
+        folder_id = await self._get_app_folder()
+        metadata: dict[str, Any] = {
+            "name": filename or f"attachment-{digest[:12]}",
+        }
+        if folder_id:
+            metadata["parents"] = [folder_id]
+
+        boundary = uuid.uuid4().hex
+        body = (
+            f"--{boundary}\r\n"
+            f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+            f"{json.dumps(metadata)}\r\n"
+            f"--{boundary}\r\n"
+            f"Content-Type: {mime_type}\r\n"
+            f"Content-Transfer-Encoding: base64\r\n\r\n"
+            f"{base64.b64encode(data).decode()}\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+
+        url = (
+            f"{self.DRIVE_DRIVE_UPLOAD_HOST}/upload/drive/v3/files"
+            f"?uploadType=multipart&key={self.api_key}"
+        )
+
+        http = self.get_http_client()
+        token = await self._get_drive_token()
+
+        for attempt in range(2):
+            if not token:
+                raise ValueError(
+                    "AI Studio Web could not obtain a Drive access token "
+                    "(GenerateAccessToken failed); check cookies."
+                )
+            try:
+                resp = await http.post(
+                    url,
+                    content=body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "X-Goog-Api-Key": self.api_key,
+                        "X-JavaScript-User-Agent": "google-api-javascript-client/1.1.0",
+                        "Origin": ORIGIN,
+                        "Referer": f"{ORIGIN}/",
+                        "User-Agent": USER_AGENT,
+                        "Content-Type": f'multipart/related; boundary="{boundary}"',
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"[AIStudioWeb] Drive upload network error: {e}")
+                raise ValueError(f"AI Studio Web file upload failed: {e}") from e
+
+            if resp.status_code == 401 and attempt == 0:
+                # ya29 tokens expire quickly; force one refresh and retry.
+                token = await self._get_drive_token(force_refresh=True)
+                continue
+
+            if resp.status_code not in (200, 201):
+                raise ValueError(
+                    f"AI Studio Web file upload failed "
+                    f"({resp.status_code}): {resp.text[:200]}"
+                )
+            break
+        else:
+            raise ValueError("AI Studio Web file upload failed after token refresh.")
+
+        file_id = str(resp.json().get("id") or "")
+        if not file_id:
+            raise ValueError("AI Studio Web file upload returned no file id.")
+        self._uploaded_files[cache_key] = file_id
+        logger.info(
+            f"[AIStudioWeb] Uploaded attachment '{metadata['name']}' "
+            f"({len(data)} bytes, {mime_type}) -> {file_id}"
+        )
+        return file_id
+
+    # ------------------------------------------------------------------
     # Request building (protobuf-as-json wire schema)
     # ------------------------------------------------------------------
-    @staticmethod
-    def _convert_part(part: dict[str, Any]) -> list[Any] | None:
+    async def _convert_part(self, part: dict[str, Any]) -> list[Any] | None:
         text = part.get("text")
         if isinstance(text, str) and not part.get("thought"):
             return [None, text]
-        # Non-text parts (images/audio/function calls) have unverified wire
+
+        inline = part.get("inlineData") or part.get("inline_data")
+        if isinstance(inline, dict):
+            data_b64 = inline.get("data") or ""
+            mime_type = inline.get("mimeType") or inline.get("mime_type") or ""
+            if data_b64:
+                try:
+                    data = base64.b64decode(data_b64)
+                except Exception:
+                    logger.debug(
+                        "[AIStudioWeb] Dropping attachment with invalid base64 data"
+                    )
+                    return None
+                file_id = await self.upload_file(
+                    data,
+                    mime_type or "application/octet-stream",
+                    filename=part.get("fileName") or inline.get("fileName"),
+                )
+                # File-reference DataItem observed in live captures:
+                # field 6 holds a single-element file id list.
+                return [None, None, None, None, None, [file_id]]
+            return None
+
+        # Other non-text parts (function calls etc.) have unverified wire
         # slots; skip them rather than corrupting the request.
         return None
 
-    def _convert_contents(
+    async def _convert_contents(
         self,
         contents: list[dict[str, Any]] | None,
         system_instruction: dict[str, Any] | None = None,
@@ -271,7 +444,7 @@ class AIStudioWebAdapter(BaseAdapter):
             for part in turn.get("parts", []) or []:
                 if not isinstance(part, dict):
                     continue
-                converted = self._convert_part(part)
+                converted = await self._convert_part(part)
                 if converted is not None:
                     parts_wire.append(converted)
                 sig = part.get("thoughtSignature")
@@ -341,14 +514,14 @@ class AIStudioWebAdapter(BaseAdapter):
             )
         return cfg
 
-    def build_request_payload(
+    async def build_request_payload(
         self,
         model: str,
         contents: list[dict[str, Any]],
         system_instruction: dict[str, Any] | None = None,
         generation_config: dict[str, Any] | None = None,
     ) -> list[Any]:
-        contents_wire, system_wire = self._convert_contents(
+        contents_wire, system_wire = await self._convert_contents(
             contents, system_instruction
         )
         clean_model = model if model.startswith("models/") else f"models/{model}"
@@ -480,7 +653,7 @@ class AIStudioWebAdapter(BaseAdapter):
                 "AI Studio Web cookies are not configured (set AISTUDIO_WEB_COOKIES)."
             )
 
-        payload = self.build_request_payload(
+        payload = await self.build_request_payload(
             model, contents, system_instruction, generation_config
         )
         url = f"{RPC_BASE}/StreamGenerateContent"

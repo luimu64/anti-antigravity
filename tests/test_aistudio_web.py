@@ -1,7 +1,9 @@
 """Tests for the AI Studio Web (MakerSuiteService RPC) backend adapter."""
 
+import base64
 import hashlib
 import json
+import re
 import time
 from unittest.mock import MagicMock
 
@@ -107,10 +109,11 @@ def test_iter_text_parts_and_finish_reason():
     assert _find_finish_reason([["STOP"]]) == "STOP"
 
 
-def test_build_request_payload_layout():
+@pytest.mark.asyncio
+async def test_build_request_payload_layout():
     adapter = make_adapter(session="sess_blob", enabled=True)
     contents = [{"role": "user", "parts": [{"text": "Hi there"}]}]
-    payload = adapter.build_request_payload(
+    payload = await adapter.build_request_payload(
         model="gemini-3.7-flash",
         contents=contents,
         system_instruction={"parts": [{"text": "Be terse."}]},
@@ -134,7 +137,8 @@ def test_build_request_payload_layout():
     assert payload[11].startswith("v1_")
 
 
-def test_convert_contents_roles_and_thought_signature():
+@pytest.mark.asyncio
+async def test_convert_contents_roles_and_thought_signature():
     adapter = make_adapter()
     contents = [
         {"role": "assistant", "parts": [{"text": "Reply"}]},
@@ -143,7 +147,7 @@ def test_convert_contents_roles_and_thought_signature():
     # Assistant turn carrying a cached thoughtSignature (tool-calling turns)
     contents[0]["parts"][0]["thoughtSignature"] = "sig_blob=="
 
-    wire, system_wire = adapter._convert_contents(contents)
+    wire, system_wire = await adapter._convert_contents(contents)
     assert system_wire is None
     model_turn, user_turn = wire
     assert model_turn[1] == "model"
@@ -377,3 +381,166 @@ def test_supports_model_gate():
     assert router.supports_model(adapter, model="gemini-2.5-pro") is False
     # Non-Gemini models are out of scope for this backend
     assert router.supports_model(adapter, model="claude-sonnet-4-6") is False
+
+
+# ---------------------------------------------------------------------------
+# File attachment uploads (GetAppFolder -> token -> Drive multipart)
+# ---------------------------------------------------------------------------
+
+
+class UploadHarness:
+    """MockTransport handler emulating the AI Studio upload RPC chain."""
+
+    def __init__(self, fail_first_upload: bool = False):
+        self.fail_first_upload = fail_first_upload
+        self.calls: list[httpx.Request] = []
+        self.upload_count = 0
+        self.token_requests = 0
+        self.folder_requests = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+
+        url = str(request.url)
+        self.calls.append(request)
+        if url.endswith("/GetAppFolder"):
+            self.folder_requests += 1
+            return httpx.Response(200, content=b'["app_folder_123"]')
+        if url.endswith("/GenerateAccessToken"):
+            self.token_requests += 1
+            return httpx.Response(
+                200,
+                content=json.dumps([f"ya29.token_v{self.token_requests}"]).encode(),
+            )
+        if "/upload/drive/v3/files" in url:
+            self.upload_count += 1
+            if self.fail_first_upload and self.upload_count == 1:
+                return httpx.Response(401, content=b'{"error": "expired"}')
+            body = request.content.decode("utf-8", errors="replace")
+            assert "app_folder_123" in body  # parent folder metadata present
+            assert "Content-Transfer-Encoding: base64" in body
+            assert re.fullmatch(
+                r"Bearer ya29\.token_v\d+", request.headers["authorization"]
+            )
+            return httpx.Response(
+                200,
+                content=json.dumps({"id": "DRIVEFILE123", "name": "x"}).encode(),
+            )
+        if url.endswith("/StreamGenerateContent"):
+            return httpx.Response(
+                200, content=stream_response_body([[[[None, "ok"]], "model"]])
+            )
+        return httpx.Response(404)
+
+
+@pytest.mark.asyncio
+async def test_inline_data_part_uploads_and_references_file():
+    harness = UploadHarness()
+    adapter = make_adapter(enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(harness))
+
+    png_b64 = base64.b64encode(b"PNGDATA").decode()
+    contents = [
+        {
+            "role": "user",
+            "parts": [
+                {"inlineData": {"mimeType": "image/png", "data": png_b64}},
+                {"text": "what is this?"},
+            ],
+        }
+    ]
+    payload = await adapter.build_request_payload("gemini-2.0-flash", contents)
+
+    user_turn = payload[1][0]
+    file_part, text_part = user_turn[0]
+    assert file_part == [None, None, None, None, None, ["DRIVEFILE123"]]
+    assert text_part == [None, "what is this?"]
+    assert harness.folder_requests == 1
+    assert harness.token_requests == 1
+    assert harness.upload_count == 1
+
+
+@pytest.mark.asyncio
+async def test_identical_attachment_uploaded_once():
+    harness = UploadHarness()
+    adapter = make_adapter(enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(harness))
+
+    data = base64.b64encode(b"SAMEDATA").decode()
+    inline = {"inlineData": {"mimeType": "application/pdf", "data": data}}
+    await adapter.build_request_payload(
+        "gemini-2.0-flash",
+        [{"role": "user", "parts": [inline]}],
+    )
+    await adapter.build_request_payload(
+        "gemini-2.0-flash",
+        [{"role": "user", "parts": [inline]}],
+    )
+    assert harness.upload_count == 1
+
+    # Different bytes -> second upload
+    other = base64.b64encode(b"OTHERDATA").decode()
+    await adapter.build_request_payload(
+        "gemini-2.0-flash",
+        [
+            {
+                "role": "user",
+                "parts": [
+                    {"inlineData": {"mimeType": "application/pdf", "data": other}}
+                ],
+            }
+        ],
+    )
+    assert harness.upload_count == 2
+
+
+@pytest.mark.asyncio
+async def test_drive_token_refresh_on_401():
+    harness = UploadHarness(fail_first_upload=True)
+    adapter = make_adapter(enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(harness))
+
+    data = base64.b64encode(b"TOKENDATA").decode()
+    payload = await adapter.build_request_payload(
+        "gemini-2.0-flash",
+        [
+            {
+                "role": "user",
+                "parts": [{"inlineData": {"mimeType": "text/plain", "data": data}}],
+            }
+        ],
+    )
+    assert payload[1][0][0][0] == [None, None, None, None, None, ["DRIVEFILE123"]]
+    assert harness.upload_count == 2  # first attempt 401, retry succeeded
+    assert harness.token_requests == 2  # forced refresh
+
+
+@pytest.mark.asyncio
+async def test_streaming_with_attachment_end_to_end():
+    harness = UploadHarness()
+    adapter = make_adapter(enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(harness))
+
+    data = base64.b64encode(b"E2EDATA").decode()
+    chunks = []
+    async for chunk in adapter.stream_generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {"inlineData": {"mimeType": "text/markdown", "data": data}},
+                    {"text": "summarize"},
+                ],
+            }
+        ],
+    ):
+        chunks.append(chunk)
+    text = "".join(
+        p["text"]
+        for c in chunks
+        for cand in c.get("candidates", [])
+        for p in cand.get("content", {}).get("parts", [])
+        if p.get("text")
+    )
+    assert text == "ok"
+    assert harness.upload_count == 1

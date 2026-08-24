@@ -500,7 +500,23 @@ frontend, which the gateway replays to offer a keyless AI Studio backend.
 Thought signatures from multi-turn function calling ride as an extra assistant part:
 `[null,"",null×12,"<signature-blob>"]` (blob at DataItem index 14) — mirroring the live capture.
 
-### 7b.3 Response Format
+### 7b.3 File Attachment Upload Flow
+
+Attachments (images, audio, documents) observed via `inlineData` parts are uploaded to the
+user's AI Studio Drive app folder before generation:
+
+1. **`POST .../GetAppFolder`** — body `[]`, response `["<app-folder-id>"]` (Drive parent; cached per session).
+2. **`POST .../GenerateAccessToken`** — body `["users/me"]`, response `["ya29.<token>"]` (short-lived Drive bearer token, cached ~50 min with forced refresh on 401).
+3. **`POST https://content.googleapis.com/upload/drive/v3/files?uploadType=multipart&key=<web api key>`**
+   - Headers: `Authorization: Bearer <ya29>`, `x-javascript-user-agent: google-api-javascript-client/1.1.0`
+   - `multipart/related`: part 1 = JSON metadata `{"name": ..., "parents": ["<app-folder-id>"]}`; part 2 = file bytes (`Content-Type: <mime>`, `Content-Transfer-Encoding: base64`)
+   - Response: Drive file resource `{"id": "<file-id>", "name": ..., "mimeType": ...}`
+4. **Reference in GenerateContent contents**: DataItem file part `[null,null,null,null,null,["<file-id>"]]` (field 6 = file id list), placed in the user turn alongside text parts.
+
+The gateway caches uploads by `(sha256, mime)` so identical attachments are uploaded once
+per session.
+
+### 7b.4 Response Format
 
 Responses (both unary and streamed chunks) are protobuf-as-json arrays containing Content
 nodes shaped like the request's. Text arrives as `[null, "<text>"]` DataItem pairs; the
@@ -509,10 +525,10 @@ true deltas and cumulative snapshots. gRPC errors surface as JSON objects
 `{"error": {"code": ..., "message": ..., "status": ...}}` and map to OpenAI-style 429/401
 handling. Finish reasons (`STOP`, `MAX_TOKENS`, `SAFETY`, ...) appear as bare enum strings.
 
-### 7b.4 Known Limitations
+### 7b.5 Known Limitations
 
-- **Text-only generation**: wire slots for image/audio parts and function-call declarations
-  are unverified; non-text parts are dropped and tools ignored.
+- **Tool definitions ignored**: function-call declaration/request wire slots are
+  unverified; text and file attachments are fully supported.
 - **No model discovery RPC** is implemented; the adapter serves a static catalog.
 - **Token usage is estimated locally** (whitespace heuristic) as upstream usageMetadata has
   no confirmed slot.

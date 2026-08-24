@@ -145,7 +145,8 @@ Rides the same quota as the [aistudio.google.com](https://aistudio.google.com) w
 
 Quirks you should know about:
 
-- **Text-only**: the reverse-engineered wire format for image/function-call parts is unverified, so non-text parts are dropped rather than corrupting requests. Tool definitions are accepted but ignored.
+- **Attachments supported**: OpenAI `image_url`/`input_audio`/file parts arrive at this backend as `inlineData`; bytes are uploaded once per unique payload to the AI Studio Drive app folder (`GetAppFolder` → `GenerateAccessToken` → Drive multipart upload) and referenced by file id in generation requests.
+- **Tool definitions ignored**: function-call wire slots are unverified, so tools are accepted but dropped; text + attachments are fully supported.
 - **Session blob**: requests carry an opaque client-context token; the gateway generates a synthetic one unless you paste the real value from a live capture (`AISTUDIO_WEB_SESSION`). If generation fails with upstream errors, re-export both cookies and session blob together.
 - **Cookies expire like any Google web session** — if you get 401/403 errors, re-copy a fresh Cookie header from your browser.
 
