@@ -242,11 +242,11 @@ class AIStudioWebAdapter(BaseAdapter):
         self._models_fetched_at: float = 0.0
         # Head of the last request body (DEBUG diagnostics for upstream 400s).
         self._last_request_head: str = ""
-        # UI-oracle transport (camofox-driven AI Studio tab). Preferred path:
-        # the app mints its own WAA attestation per request, which we cannot
-        # reproduce outside a real browser session.
+        # UI-oracle transport (Playwright-driven AI Studio tab, persistent
+        # profile): the app mints its own WAA attestation per request, which we
+        # cannot reproduce outside a real browser session.
         self.oracle = AistudioOracle()
-        # AISTUDIO_WEB_MODE=oracle|http|auto (auto = oracle when camofox is
+        # AISTUDIO_WEB_MODE=oracle|http|auto (auto = oracle when the profile is
         # configured, else http).
         self.transport_mode = os.getenv("AISTUDIO_WEB_MODE", "auto").lower()
 
@@ -964,7 +964,7 @@ class AIStudioWebAdapter(BaseAdapter):
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Generate content via the AI Studio web app.
 
-        Primary transport is the UI oracle (camofox-driven tab): Google's own
+        Primary transport is the UI oracle (Playwright-driven tab): Google's own
         frontend mints the WAA attestation, which cannot be reproduced over
         plain HTTP (FINDINGS-2). The legacy direct-RPC path remains available
         via AISTUDIO_WEB_MODE=http for debugging.
