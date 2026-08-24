@@ -491,7 +491,7 @@ frontend, which the gateway replays to offer a keyless AI Studio backend.
 | `[0]` | `"models/<model>"` | Base catalog names only — Antigravity reasoning-tier suffixes (`-high`/`-medium`/`-low`) must be stripped first (`normalize_model`); unknown models get an opaque HTML 400 |
 | `[1]` | contents array | Each turn: `[parts, role]`; a text part is a DataItem `[null, "<text>"]` |
 | `[2]` | tool/safety config | Live client sends 4 harm categories with threshold 5: `[[null,null,7,5],[null,null,8,5],[null,null,9,5],[null,null,10,5]]` |
-| `[3]` | generation config | idx 3 = maxOutputTokens, 4 = temperature, 5 = topP, 6 = topK, 12 = candidateCount, 15 = thinking config `[1,null,null,<level>]` |
+| `[3]` | generation config | 17 slots; idx 3 = maxOutputTokens, 4 = temperature, 5 = topP, 6 = topK, 12 = speechConfig (**must stay null** — scalars are rejected with `Invalid value at 'generation_config.speech_config.voice_config'`), 13 = candidateCount, 16 = thinking config `[1,null,null,<level>]` |
 | `[4]` | opaque session blob | Client-context token (~2 KB); synthetic value accepted so far |
 | `[5]` | system instruction | Same Content shape as turns: `[[[null,"<system>"]], "user"]`; `null` when absent |
 | `[10]` | constant `1` | Observed in every live capture |

@@ -137,6 +137,37 @@ def _extract_error_payload(body: Any) -> dict[str, Any] | None:
     return None
 
 
+def _extract_grpc_detail(text: str) -> str:
+    """Pull a human-readable message out of protobuf-as-json google.rpc.Status
+    bodies (e.g. [,[3,\"Invalid value at 'generation_config...'\",[...]]])."""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return text[:300]
+
+    strings: list[str] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, str):
+            strings.append(node)
+        elif isinstance(node, list):
+            for child in node:
+                _walk(child)
+
+    _walk(parsed)
+    meaningful = [
+        s
+        for s in strings
+        if "Invalid value" in s or "at '" in s or "failed" in s.lower()
+    ]
+    if meaningful:
+        return max(meaningful, key=len)[:300]
+    if strings:
+        # Skip short enum-ish fragments; prefer the longest descriptive string.
+        return max(strings, key=len)[:300]
+    return text[:300]
+
+
 class AIStudioWebAdapter(BaseAdapter):
     name = "aistudio_web"
 
@@ -493,7 +524,11 @@ class AIStudioWebAdapter(BaseAdapter):
         gc = generation_config or {}
 
         max_tokens = gc.get("maxOutputTokens") or MAX_OUTPUT_TOKENS_LIMIT
-        cfg: list[Any] = [None] * 16
+        # 17-slot layout per live capture; slot indexes map to proto fields:
+        #   3=maxOutputTokens, 4=temperature, 5=topP, 6=topK,
+        #   7=responseMimeType-ish (older captures), 12=speechConfig
+        #   (server rejects scalars here!), 13=candidateCount, 16=thinking.
+        cfg: list[Any] = [None] * 17
         cfg[3] = max(1, min(int(max_tokens), MAX_OUTPUT_TOKENS_LIMIT))
         if gc.get("temperature") is not None:
             cfg[4] = float(gc["temperature"])
@@ -502,7 +537,7 @@ class AIStudioWebAdapter(BaseAdapter):
         if gc.get("topK") is not None:
             cfg[6] = int(gc["topK"])
         candidates = int(gc.get("candidateCount") or 1)
-        cfg[12] = max(1, candidates)
+        cfg[13] = max(1, candidates)
 
         thinking = gc.get("thinkingConfig") or {}
         budget = thinking.get("thinkingBudget")
@@ -510,7 +545,7 @@ class AIStudioWebAdapter(BaseAdapter):
             # [includeThoughts=1, ..., level] per live captures; level 2 is the
             # standard extended-thinking mode, 1 maps to low effort.
             level = 1 if budget == 1 else 2
-            cfg[15] = [1, None, None, level]
+            cfg[16] = [1, None, None, level]
 
         unsupported = [
             k
@@ -602,7 +637,7 @@ class AIStudioWebAdapter(BaseAdapter):
         if decoded_error:
             detail = str(decoded_error.get("message") or decoded_error.get("status"))
         if not detail:
-            detail = resp.text[:300]
+            detail = _extract_grpc_detail(resp.text)
         retry_after = 60.0
         header = resp.headers.get("retry-after")
         if header:

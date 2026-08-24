@@ -14,6 +14,7 @@ from app.providers.aistudio_web import (
     ORIGIN,
     SAFETY_CONFIG,
     AIStudioWebAdapter,
+    _extract_grpc_detail,
     _find_finish_reason,
     _iter_text_parts,
 )
@@ -109,6 +110,15 @@ def test_iter_text_parts_and_finish_reason():
     assert _find_finish_reason([["STOP"]]) == "STOP"
 
 
+def test_extract_grpc_detail_from_status_array():
+    raw = '[,[3,"Invalid value at \'generation_config.speech_config\' (VoiceConfig), 1",[["type.googleapis.com/google.rpc.BadRequest",[[["generation_config.speech_config.voice_config","Invalid value"]]]]]]'
+    detail = _extract_grpc_detail(raw)
+    assert "Invalid value" in detail
+    assert "generation_config.speech_config" in detail
+    # Unparsable bodies fall back to the raw text
+    assert _extract_grpc_detail("<html>400</html>") == "<html>400</html>"
+
+
 @pytest.mark.asyncio
 async def test_build_request_payload_layout():
     adapter = make_adapter(session="sess_blob", enabled=True)
@@ -163,7 +173,7 @@ async def test_convert_contents_roles_and_thought_signature():
 def test_generation_config_thinking_and_caps():
     adapter = make_adapter()
 
-    # Thinking budget > 0 maps to extended mode config at slot 15
+    # Thinking budget > 0 maps to extended mode config at slot 16
     cfg = adapter._build_generation_config(
         {
             "maxOutputTokens": 99999999,
@@ -171,13 +181,17 @@ def test_generation_config_thinking_and_caps():
         }
     )
     assert cfg[3] == 65536  # capped to model limit
-    assert cfg[15] == [1, None, None, 2]
+    assert cfg[16] == [1, None, None, 2]
+    # Slot 12 is speech_config upstream - must stay null or the server
+    # rejects with 'Invalid value at generation_config.speech_config...'
+    assert cfg[12] is None
+    assert cfg[13] == 1  # candidateCount lives at slot 13
 
     # Disabled thinking (budget 0) omits the thinking slot entirely
     cfg_off = adapter._build_generation_config(
         {"thinkingConfig": {"includeThoughts": True, "thinkingBudget": 0}}
     )
-    assert cfg_off[15] is None
+    assert cfg_off[16] is None
 
 
 @pytest.mark.asyncio
