@@ -35,6 +35,11 @@ def make_adapter(**kwargs) -> AIStudioWebAdapter:
     return AIStudioWebAdapter(**defaults)
 
 
+@pytest.fixture(autouse=True)
+def _no_auth_env(monkeypatch):
+    monkeypatch.delenv("AISTUDIO_WEB_SEND_AUTH", raising=False)
+
+
 def mock_stream_adapter(respond) -> AIStudioWebAdapter:
     """Adapter whose HTTP client is backed by an httpx.MockTransport handler."""
     adapter = make_adapter(enabled=True)
@@ -89,14 +94,16 @@ def test_configuration_checks():
     assert adapter.api_key.startswith("AIzaSy")
 
 
-def test_headers_shape():
+def test_headers_shape(monkeypatch):
     adapter = make_adapter()
     headers = adapter._get_headers()
     assert headers["Content-Type"] == "application/json+protobuf"
     assert headers["Origin"] == ORIGIN
     assert headers["X-Goog-Api-Key"].startswith("AIzaSy")
     assert headers["X-Goog-Authuser"] == "0"
-    assert headers["Authorization"].startswith("SAPISIDHASH ")
+    # Browser sends pure cookie auth on these RPCs; SAPISIDHASH must be
+    # omitted by default (present-but-invalid hashes yield PERMISSION_DENIED)
+    assert "Authorization" not in headers
     assert "SAPISID=test_sapisid_123" in headers["Cookie"]
     assert headers["X-AiStudio-Visit-Id"].startswith("v1_")
     # Browser fingerprint headers required by Google frontends
@@ -104,6 +111,11 @@ def test_headers_shape():
     assert headers["Sec-Fetch-Mode"] == "cors"
     assert headers["Sec-Fetch-Dest"] == "empty"
     assert "Google Chrome" in headers["sec-ch-ua"]
+
+    # Opt-in debug mode restores the legacy hash header
+    monkeypatch.setenv("AISTUDIO_WEB_SEND_AUTH", "1")
+    authed = make_adapter()
+    assert authed._get_headers()["Authorization"].startswith("SAPISIDHASH ")
 
 
 def test_cookie_diagnostics():
@@ -244,7 +256,9 @@ async def test_stream_generate_content_parses_chunks():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "alkalimakersuite-pa.clients6.google.com"
         assert request.url.path.endswith("/GenerateContent")
-        assert request.headers["authorization"].startswith("SAPISIDHASH")
+        # Pure cookie auth, matching the browser exactly
+        assert "authorization" not in request.headers
+        assert "SAPISID=" in request.headers["cookie"]
         assert request.headers["x-goog-ext-519733851-bin"]
         sent = json.loads(request.content.decode())
         assert sent[0] == "models/gemini-2.0-flash"
@@ -420,20 +434,161 @@ def test_supports_model_gate():
 
 def test_normalize_model_strips_tier_suffixes():
     # Antigravity tier variants map onto AI Studio base model names
-    assert AIStudioWebAdapter.normalize_model("gemini-3.6-flash-medium") == (
-        "gemini-3.6-flash"
-    )
-    assert AIStudioWebAdapter.normalize_model("gemini-3.7-flash-high") == (
-        "gemini-3.7-flash"
-    )
-    assert AIStudioWebAdapter.normalize_model("gemini-3.1-pro-low") == "gemini-3.1-pro"
-    assert AIStudioWebAdapter.normalize_model("Models/Gemini-2.0-Flash") == (
-        "gemini-2.0-flash"
-    )
+    adapter = make_adapter()
+    assert adapter.normalize_model("gemini-3.6-flash-medium") == "gemini-3.6-flash"
+    assert adapter.normalize_model("gemini-3.7-flash-high") == "gemini-3.7-flash"
+    assert adapter.normalize_model("gemini-3.1-pro-low") == "gemini-3.1-pro"
+    assert adapter.normalize_model("Models/Gemini-2.0-Flash") == "gemini-2.0-flash"
     # Unknown gemini families degrade to the closest catalog entry
-    assert AIStudioWebAdapter.normalize_model("gemini-9.9-ultra") == (
-        "gemini-2.0-flash"
+    assert adapter.normalize_model("gemini-9.9-ultra") == "gemini-2.0-flash"
+
+
+# ---------------------------------------------------------------------------
+# PSIDTS auto-refresh + ListModels discovery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rotate_psidts_updates_cookies_and_persists():
+    rotations = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "accounts.google.com/RotateCookies" in str(request.url)
+        rotations.append(request.headers["cookie"])
+        return httpx.Response(
+            200,
+            headers=[
+                (
+                    "set-cookie",
+                    "__Secure-1PSIDTS=fresh1pts; Path=/; Secure; HttpOnly",
+                ),
+                (
+                    "set-cookie",
+                    "__Secure-3PSIDTS=fresh3pts; Path=/; Secure; HttpOnly",
+                ),
+            ],
+        )
+
+    cookies = (
+        "SID=abc; SAPISID=s1; __Secure-1PSID=p1; __Secure-3PSID=p3; "
+        "__Secure-1PSIDTS=old1; __Secure-3PSIDTS=old3;"
     )
+    adapter = make_adapter(cookies=cookies, enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    persisted = []
+    adapter.persist_cb = lambda: persisted.append(adapter.cookies)
+
+    assert await adapter.rotate_psidts() is True
+    assert "__Secure-1PSIDTS=fresh1pts" in adapter.cookies
+    assert "__Secure-3PSIDTS=fresh3pts" in adapter.cookies
+    assert "old1" not in adapter.cookies
+    assert len(persisted) == 1
+    assert len(rotations) == 1
+
+    # No PSIDTS present -> rotation is a no-op
+    bare = make_adapter(enabled=True)
+    assert await bare.rotate_psidts() is False
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_session_rate_limits_rotation(monkeypatch):
+    import app.providers.aistudio_web as aistudio_module
+
+    class FakeTime:
+        now = 1000.0
+
+        @staticmethod
+        def time():
+            return FakeTime.now
+
+    monkeypatch.setattr(aistudio_module, "time", FakeTime)
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, headers=[("set-cookie", "__Secure-1PSIDTS=r1;")])
+
+    cookies = "SAPISID=s; __Secure-1PSID=p; __Secure-1PSIDTS=t0;"
+    adapter = make_adapter(cookies=cookies, enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    await adapter.ensure_fresh_session()
+    assert len(calls) == 1
+    # Recently rotated -> skipped
+    await adapter.ensure_fresh_session()
+    assert len(calls) == 1
+    # After the cooldown window elapses it rotates again
+    FakeTime.now += 600
+    await adapter.ensure_fresh_session()
+    assert len(calls) == 2
+
+
+LIST_MODELS_BODY = json.dumps(
+    [
+        [
+            [
+                "models/gemini-3.7-flash",
+                None,
+                "0.1",
+                "Gemini 3.7 Flash",
+                "desc",
+                1048576,
+                65536,
+                ["generateContent", "countTokens"],
+            ],
+            [
+                "models/gemini-embed-001",
+                None,
+                "0.1",
+                "Embedder",
+                "desc",
+                2048,
+                0,
+                ["embedContent"],
+            ],
+            [
+                "models/gemini-live-x",
+                None,
+                "0.1",
+                "Live",
+                "desc",
+                16384,
+                32768,
+                ["bidiGenerateContent"],
+            ],
+        ]
+    ]
+)
+
+
+@pytest.mark.asyncio
+async def test_fetch_available_models_via_list_models():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/ListModels")
+        return httpx.Response(200, content=LIST_MODELS_BODY.encode())
+
+    adapter = make_adapter(enabled=True)
+    adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    res = await adapter.fetch_available_models(force_refresh=True)
+    models = res["models"]
+    assert "gemini-3.7-flash" in models
+    assert models["gemini-3.7-flash"]["maxTokens"] == 1048576
+    assert models["gemini-3.7-flash"]["maxOutputTokens"] == 65536
+    # Non-generation surfaces (embeddings / bidi live) are excluded
+    assert "gemini-embed-001" not in models
+    assert "gemini-live-x" not in models
+
+    # Discovered names now win during normalization
+    assert adapter.normalize_model("gemini-3.7-flash") == "gemini-3.7-flash"
+
+
+@pytest.mark.asyncio
+async def test_fetch_available_models_unconfigured_falls_back():
+    adapter = AIStudioWebAdapter(cookies="", enabled=True)
+    res = await adapter.fetch_available_models(force_refresh=True)
+    assert "gemini-3.7-flash" in res["models"]
 
 
 # ---------------------------------------------------------------------------

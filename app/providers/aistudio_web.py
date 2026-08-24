@@ -202,10 +202,22 @@ class AIStudioWebAdapter(BaseAdapter):
         # (payload slot 4). Optional; a synthetic value is used when absent.
         self.session_blob = session or os.getenv("AISTUDIO_WEB_SESSION") or ""
         self.proxy = os.getenv("AISTUDIO_WEB_PROXY") or None
+        # The AI Studio web client authenticates purely via cookies; sending a
+        # SAPISIDHASH that upstream cannot validate yields PERMISSION_DENIED.
+        # Opt in only for debugging via AISTUDIO_WEB_SEND_AUTH=1.
+        self.send_authorization = os.getenv("AISTUDIO_WEB_SEND_AUTH", "").lower() in (
+            "1",
+            "true",
+        )
 
         self._http_client: httpx.AsyncClient | None = None
         self._visit_id = self._generate_visit_id()
         self.is_valid_session: bool | None = None
+        # Timestamp of the last successful PSIDTS rotation (auto token refresh).
+        self._last_rotation: float = 0.0
+        # Optional callback (usually router.save_config) invoked after cookie
+        # mutations so rotated tokens survive restarts.
+        self.persist_cb = None
 
         # File-upload state (GetAppFolder / GenerateAccessToken / Drive).
         self._app_folder_id: str | None = None
@@ -213,6 +225,8 @@ class AIStudioWebAdapter(BaseAdapter):
         self._drive_token_fetched_at: float = 0.0
         # (sha256, mime) -> Drive file id cache for inline attachments.
         self._uploaded_files: dict[tuple[str, str], str] = {}
+        self._discovered_models: dict[str, Any] | None = None
+        self._models_fetched_at: float = 0.0
         # Head of the last request body (DEBUG diagnostics for upstream 400s).
         self._last_request_head: str = ""
 
@@ -301,7 +315,7 @@ class AIStudioWebAdapter(BaseAdapter):
             "X-AiStudio-Visit-Id": self._visit_id,
         }
         auth = self._authorization_header()
-        if auth:
+        if auth and self.send_authorization:
             headers["Authorization"] = auth
         cookie_header = self.cookies.strip()
         if cookie_header:
@@ -329,6 +343,78 @@ class AIStudioWebAdapter(BaseAdapter):
             for pair in self.cookies.split(";")
             if "=" in pair
         }
+
+    # ------------------------------------------------------------------
+    # PSIDTS auto-refresh (Google rotates these tokens aggressively)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _replace_cookie(cookie_header: str, name: str, value: str) -> str:
+        pattern = re.compile(
+            rf"(?P<pre>(?:^|;\s*){re.escape(name)}=)[^;]*", re.MULTILINE
+        )
+        replaced, count = pattern.subn(
+            lambda m: f"{m.group('pre')}{value}", cookie_header
+        )
+        if count:
+            return replaced
+        sep = "" if not cookie_header.strip() else "; "
+        return f"{cookie_header}{sep}{name}={value}"
+
+    async def rotate_psidts(self) -> bool:
+        """Refresh __Secure-1PSIDTS/__Secure-3PSIDTS via RotateCookies.
+
+        Google rotates these tokens frequently and silently degrades sessions
+        carrying stale values. Returns True when fresh tokens were applied.
+        """
+        if not self.is_configured() or "__Secure-1PSIDTS=" not in self.cookies:
+            return False
+
+        http = self.get_http_client()
+        try:
+            resp = await http.post(
+                "https://accounts.google.com/RotateCookies",
+                content='[000,"-0000000000000000000"]',
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": USER_AGENT,
+                    "Cookie": self.cookies.strip(),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"[AIStudioWeb] RotateCookies request failed: {e}")
+            return False
+
+        updated = False
+        for set_cookie in resp.headers.get_list("set-cookie"):
+            name, _, remainder = set_cookie.partition("=")
+            name = name.strip()
+            if name not in ("__Secure-1PSIDTS", "__Secure-3PSIDTS"):
+                continue
+            fresh = remainder.split(";", 1)[0].strip()
+            if fresh and fresh not in self.cookies:
+                self.cookies = self._replace_cookie(self.cookies, name, fresh)
+                updated = True
+                logger.info(f"[AIStudioWeb] Rotated {name}")
+
+        if updated:
+            self._last_rotation = time.time()
+            if self.persist_cb:
+                try:
+                    self.persist_cb()
+                except Exception as e:
+                    logger.warning(f"[AIStudioWeb] Failed to persist rotation: {e}")
+        else:
+            logger.debug("[AIStudioWeb] RotateCookies issued no new tokens")
+        return updated
+
+    async def ensure_fresh_session(self) -> None:
+        """Lazily rotate PSIDTS cookies when nearing staleness."""
+        if not (self.enabled and self.is_configured()):
+            return
+        now = time.time()
+        if self._last_rotation and now - self._last_rotation < 480.0:
+            return
+        await self.rotate_psidts()
 
     @staticmethod
     def _generate_visit_id() -> str:
@@ -609,8 +695,7 @@ class AIStudioWebAdapter(BaseAdapter):
             )
         return cfg
 
-    @staticmethod
-    def normalize_model(model: str) -> str:
+    def normalize_model(self, model: str) -> str:
         """Map gateway model ids to AI Studio web catalog names.
 
         Strips Antigravity reasoning-tier suffixes (gemini-3.6-flash-medium ->
@@ -627,9 +712,16 @@ class AIStudioWebAdapter(BaseAdapter):
                     changed = True
                     break
 
-        if clean in FALLBACK_MODELS:
-            return clean
-        matches = [k for k in FALLBACK_MODELS if clean.startswith(k)]
+        known = set(FALLBACK_MODELS)
+        if isinstance(self._discovered_models, dict):
+            known.update(k.lower() for k in self._discovered_models)
+
+        # Exact match (pre-strip names count too - ListModels exposes tiers
+        # under different ids than the Antigravity backend).
+        for candidate in (clean, model.lower().replace("models/", "").strip()):
+            if candidate in known:
+                return candidate
+        matches = [k for k in known if clean.startswith(k)]
         if matches:
             return max(matches, key=len)
         return "gemini-2.0-flash"
@@ -809,6 +901,7 @@ class AIStudioWebAdapter(BaseAdapter):
                 "AI Studio Web cookies are not configured (set AISTUDIO_WEB_COOKIES)."
             )
 
+        await self.ensure_fresh_session()
         payload = await self.build_request_payload(
             model, contents, system_instruction, generation_config
         )
@@ -927,5 +1020,96 @@ class AIStudioWebAdapter(BaseAdapter):
     async def fetch_available_models(
         self, force_refresh: bool = False
     ) -> dict[str, Any]:
-        """Return the static AI Studio Web catalog (no network probe)."""
-        return {"models": FALLBACK_MODELS}
+        """Discover models via the MakerSuite ListModels RPC.
+
+        Response entries carry name/displayName/limits/supported methods at
+        proto positions 0/3/5/6/7. Falls back to the static catalog when the
+        RPC fails or the backend is unconfigured.
+        """
+        now = time.time()
+        if (
+            self._discovered_models
+            and not force_refresh
+            and (now - getattr(self, "_models_fetched_at", 0.0) < self.model_cache_ttl)
+        ):
+            return {"models": self._discovered_models}
+
+        if not self.is_configured():
+            self._discovered_models = FALLBACK_MODELS
+            self._models_fetched_at = now
+            return {"models": self._discovered_models}
+
+        http = self.get_http_client()
+        try:
+            resp = await http.post(
+                f"{RPC_BASE}/ListModels", content="[]", headers=self._get_headers()
+            )
+            if resp.status_code == 200:
+                parsed = resp.json()
+                entries = (
+                    parsed[0]
+                    if isinstance(parsed, list)
+                    and parsed
+                    and isinstance(parsed[0], list)
+                    else []
+                )
+                discovered: dict[str, dict[str, Any]] = {}
+                for entry in entries:
+                    if not isinstance(entry, list) or not entry:
+                        continue
+                    raw_name = entry[0] if isinstance(entry[0], str) else ""
+                    clean_id = raw_name.replace("models/", "").strip()
+                    if not clean_id:
+                        continue
+                    methods = (
+                        [str(x) for x in entry[7]]
+                        if len(entry) > 7 and isinstance(entry[7], list)
+                        else []
+                    )
+                    # Only expose text-generation models through this gateway.
+                    if "generateContent" not in methods:
+                        continue
+
+                    display = str(entry[3]) if len(entry) > 3 and entry[3] else clean_id
+                    input_limit = (
+                        int(entry[5])
+                        if len(entry) > 5 and isinstance(entry[5], (int, float))
+                        else 1048576
+                    )
+                    output_limit = (
+                        int(entry[6])
+                        if len(entry) > 6 and isinstance(entry[6], (int, float))
+                        else 0
+                    )
+                    description = str(entry[4]) if len(entry) > 4 and entry[4] else ""
+                    is_embedding = any("embed" in m for m in methods)
+
+                    discovered[clean_id] = {
+                        "displayName": f"{display} (AI Studio Web)",
+                        "maxTokens": max(input_limit, output_limit, 1),
+                        "maxOutputTokens": output_limit or None,
+                        "supportsThinking": bool(
+                            "thinking" in description.lower()
+                            or "pro" in clean_id
+                            or clean_id.startswith(("gemini-3",))
+                        ),
+                        "supportsTools": False,
+                        "supportsVision": True,
+                        "isEmbedding": is_embedding,
+                        "supportedMethods": methods,
+                    }
+
+                if discovered:
+                    self._discovered_models = discovered
+                    self._models_fetched_at = now
+                    logger.info(
+                        f"[AIStudioWeb] Discovered {len(discovered)} models "
+                        f"via ListModels"
+                    )
+                    return {"models": self._discovered_models}
+        except Exception as e:
+            logger.debug(f"[AIStudioWeb] ListModels discovery failed: {e}")
+
+        self._discovered_models = FALLBACK_MODELS
+        self._models_fetched_at = now
+        return {"models": self._discovered_models}

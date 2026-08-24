@@ -141,7 +141,7 @@ Quirks you should know about:
 
 ### AI Studio Web (MakerSuite session cookies)
 
-Rides the same quota as the [aistudio.google.com](https://aistudio.google.com) web UI by calling its internal `MakerSuiteService/GenerateContent` RPCs — no API key required. Open AI Studio, send any message, copy the **full `Cookie` request header** from DevTools → Network → `alkalimakersuite-pa.clients6.google.com` request, and paste it into the dashboard card or set `AISTUDIO_WEB_COOKIES` (must contain `SAPISID`; the gateway computes the `SAPISIDHASH` authorization itself). Optional overrides: `AISTUDIO_WEB_API_KEY` (defaults to the public web client key), `AISTUDIO_WEB_SESSION`, `AISTUDIO_WEB_PROXY`.
+Rides the same quota as the [aistudio.google.com](https://aistudio.google.com) web UI by calling its internal `MakerSuiteService/GenerateContent` RPCs — no API key required. Open AI Studio, send any message, copy the **full `Cookie` request header** from DevTools → Network → `alkalimakersuite-pa.clients6.google.com` request, and paste it into the dashboard card or set `AISTUDIO_WEB_COOKIES`. The gateway authenticates exactly like the browser (cookies only) and auto-refreshes rotating session tokens via Google's `RotateCookies` endpoint, so a single fresh paste keeps working. Model discovery is live via the upstream `ListModels` RPC. Optional overrides: `AISTUDIO_WEB_API_KEY`, `AISTUDIO_WEB_SESSION`, `AISTUDIO_WEB_PROXY`, `AISTUDIO_WEB_SEND_AUTH` (debug-only legacy SAPISIDHASH header).
 
 Quirks you should know about:
 

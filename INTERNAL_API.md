@@ -480,9 +480,9 @@ frontend, which the gateway replays to offer a keyless AI Studio backend.
 - **Methods**: `GenerateContent` (unary), `StreamGenerateContent` (newline-delimited JSON chunks)
 - **Content-Type**: `application/json+protobuf` — protobuf messages encoded as positional JSON arrays (array index = proto field number − 1; absent fields are `null`)
 - **Authentication**:
-  - Session cookies copied from the browser (`SID`, `HSID`, `SSID`, `SAPISID`, `__Secure-1PAPISID`, `__Secure-*PSID`, ...)
-  - `Authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>` — origin is `https://aistudio.google.com`; the web client additionally appends `SAPISID1PHASH` / `SAPISID3PHASH` variants computed from the same values
+  - **Cookie-only** — the web client sends *no* `Authorization` header on any MakerSuite RPC; the full browser session (`SID`, `HSID`, `SSID`, `SAPISID`, `__Secure-1PAPISID`, `__Secure-*PSID/PSIDTS`, ...) is the sole credential. Injecting a SAPISIDHASH that upstream cannot validate yields `403 PERMISSION_DENIED` even with valid cookies, so the gateway omits it by default (`AISTUDIO_WEB_SEND_AUTH=1` re-enables for debugging).
   - `x-goog-api-key: AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs` — public web client key embedded in the AI Studio frontend (identical for all users)
+  - The page also runs a Web Anti-Abuse handshake (`waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create`) at load time; its token is not carried in GenerateContent bodies or headers and is not currently reproduced by the gateway.
 
 ### 7b.2 Request Payload Layout (GenerateContentRequest)
 
@@ -500,7 +500,19 @@ frontend, which the gateway replays to offer a keyless AI Studio backend.
 Thought signatures from multi-turn function calling ride as an extra assistant part:
 `[null,"",null×12,"<signature-blob>"]` (blob at DataItem index 14) — mirroring the live capture.
 
-### 7b.3 File Attachment Upload Flow
+### 7b.3 Model Discovery & Session Token Rotation
+
+- **`POST .../ListModels`** — body `[]`; response `[[<entries>]]` where each entry carries
+  name (`[0]`, `models/...`), displayName (`[3]`), description (`[4]`), input token limit
+  (`[5]`), max output tokens (`[6]`) and supported methods (`[7]`, e.g.
+  `generateContent`/`countTokens`/`embedContent`/`bidiGenerateContent`). The gateway
+  exposes only entries supporting `generateContent`.
+- **PSIDTS rotation** — `__Secure-1PSIDTS` / `__Secure-3PSIDTS` rotate frequently and
+  stale values degrade sessions. The gateway refreshes them lazily (≥ every 8 minutes)
+  via `POST https://accounts.google.com/RotateCookies` with the current cookie header,
+  rewriting the fresh values in place and persisting them through `save_config()`.
+
+### 7b.4 File Attachment Upload Flow
 
 Attachments (images, audio, documents) observed via `inlineData` parts are uploaded to the
 user's AI Studio Drive app folder before generation:
@@ -516,7 +528,7 @@ user's AI Studio Drive app folder before generation:
 The gateway caches uploads by `(sha256, mime)` so identical attachments are uploaded once
 per session.
 
-### 7b.4 Response Format
+### 7b.5 Response Format
 
 The web client does not use a separate streaming endpoint: **`GenerateContent` (unary)
 returns the full stream in one body** as a JSON array whose first element is the ordered
@@ -530,7 +542,7 @@ HTML error pages (400 usually means an unknown model or malformed payload — th
 head is logged at DEBUG). Finish reasons (`STOP`, `MAX_TOKENS`, `SAFETY`, ...) appear as
 bare enum strings.
 
-### 7b.5 Known Limitations
+### 7b.6 Known Limitations
 
 - **Tool definitions ignored**: function-call declaration/request wire slots are
   unverified; text and file attachments are fully supported.

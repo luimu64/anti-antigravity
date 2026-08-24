@@ -87,6 +87,7 @@ class MultiBackendRouter(BaseAdapter):
         self.aistudio_web = aistudio_web or AIStudioWebAdapter()
         # Persist rotated __Secure-1PSIDTS tokens so sessions survive restarts.
         self.gemini_web.persist_cb = self.save_config
+        self.aistudio_web.persist_cb = self.save_config
 
         self.adapters: dict[str, BaseAdapter] = {
             "antigravity": self.antigravity,
@@ -773,6 +774,14 @@ class MultiBackendRouter(BaseAdapter):
 
         # 4. AI Studio Web Adapter (MakerSuiteService RPC)
         if adapter.name == "aistudio_web":
+            probed = getattr(adapter, "_discovered_models", None)
+            if isinstance(probed, dict) and probed:
+                probed_models = {
+                    k.lower().replace("models/", ""): v for k, v in probed.items()
+                }
+                entry = probed_models.get(clean_model)
+                if entry is not None:
+                    return not entry.get("isEmbedding", False)
             from app.providers.aistudio_web import (
                 FALLBACK_MODELS as AISTUDIO_FALLBACK,
             )
