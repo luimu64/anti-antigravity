@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.config import MODEL_CACHE_TTL, PROVIDER_RATE_LIMITS
+from app.providers.aistudio_oracle import AistudioOracle, OracleError
 from app.providers.base import BaseAdapter, RateLimitError
 
 logger = logging.getLogger("google_gate.providers.aistudio_web")
@@ -237,6 +238,13 @@ class AIStudioWebAdapter(BaseAdapter):
         self._models_fetched_at: float = 0.0
         # Head of the last request body (DEBUG diagnostics for upstream 400s).
         self._last_request_head: str = ""
+        # UI-oracle transport (camofox-driven AI Studio tab). Preferred path:
+        # the app mints its own WAA attestation per request, which we cannot
+        # reproduce outside a real browser session.
+        self.oracle = AistudioOracle()
+        # AISTUDIO_WEB_MODE=oracle|http|auto (auto = oracle when camofox is
+        # configured, else http).
+        self.transport_mode = os.getenv("AISTUDIO_WEB_MODE", "auto").lower()
 
     # ------------------------------------------------------------------
     # Credentials & headers
@@ -669,6 +677,38 @@ class AIStudioWebAdapter(BaseAdapter):
 
         return wire_contents, system_wire
 
+    def _build_flat_prompt(
+        self,
+        contents: list[dict[str, Any]],
+        system_instruction: dict[str, Any] | None = None,
+    ) -> str:
+        """Flatten OpenAI-style contents into a single UI prompt string.
+
+        The oracle transport types one message per turn, so multi-turn
+        conversations are rendered as a labelled transcript.
+        """
+        lines: list[str] = []
+        if system_instruction:
+            for p in system_instruction.get("parts", []):
+                if isinstance(p, dict) and p.get("text"):
+                    lines.append(f"[System instructions]\n{p['text']}")
+        turns = [c for c in contents or [] if c.get("parts")]
+        for turn in turns:
+            role = turn.get("role", "user")
+            texts = [
+                p["text"]
+                for p in turn["parts"]
+                if isinstance(p, dict) and p.get("text")
+            ]
+            if not texts:
+                continue
+            if len(turns) == 1 and role == "user" and not system_instruction:
+                lines.append("\n".join(texts))
+            else:
+                label = "Assistant" if role in ("model", "assistant") else "User"
+                lines.append(f"{label}: " + "\n".join(texts))
+        return "\n\n".join(lines).strip() or "Hello"
+
     def _build_generation_config(
         self, generation_config: dict[str, Any] | None
     ) -> list[Any]:
@@ -918,13 +958,53 @@ class AIStudioWebAdapter(BaseAdapter):
         generation_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Generate content via the unary GenerateContent RPC.
+        """Generate content via the AI Studio web app.
 
-        The AI Studio web client streams by calling GenerateContent and
-        receiving a JSON array whose first element is the ordered list of
-        partial-response chunk objects; deltas are extracted per chunk and
-        yielded incrementally to preserve the streaming contract.
+        Primary transport is the UI oracle (camofox-driven tab): Google's own
+        frontend mints the WAA attestation, which cannot be reproduced over
+        plain HTTP (FINDINGS-2). The legacy direct-RPC path remains available
+        via AISTUDIO_WEB_MODE=http for debugging.
         """
+        mode = self.transport_mode
+        if mode == "auto":
+            mode = "oracle" if self.oracle.is_available() else "http"
+
+        if mode == "oracle":
+            prompt_text = self._build_flat_prompt(contents, system_instruction)
+            try:
+                reply = await self.oracle.generate(prompt_text)
+            except OracleError as e:
+                logger.warning(f"[AIStudioWeb] oracle failed: {e}")
+                raise ValueError(f"AI Studio Web oracle error: {e}") from e
+            self.is_valid_session = True
+            yield {
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": reply}], "role": "model"},
+                        "index": 0,
+                    }
+                ],
+                "modelVersion": model,
+            }
+            completion_tokens = len(reply.split())
+            yield {
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": ""}], "role": "model"},
+                        "finishReason": "STOP",
+                        "index": 0,
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": max(1, len(prompt_text.split())),
+                    "candidatesTokenCount": completion_tokens,
+                    "totalTokenCount": max(1, len(prompt_text.split()))
+                    + completion_tokens,
+                },
+                "modelVersion": model,
+            }
+            return
+
         if not self.is_configured():
             raise ValueError(
                 "AI Studio Web cookies are not configured (set AISTUDIO_WEB_COOKIES)."

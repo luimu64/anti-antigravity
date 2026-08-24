@@ -41,8 +41,13 @@ def _no_auth_env(monkeypatch):
 
 
 def mock_stream_adapter(respond) -> AIStudioWebAdapter:
-    """Adapter whose HTTP client is backed by an httpx.MockTransport handler."""
+    """Adapter whose HTTP client is backed by an httpx.MockTransport handler.
+
+    Forces the legacy direct-RPC transport so these tests exercise the HTTP
+    path even when camofox env vars would otherwise select the oracle.
+    """
     adapter = make_adapter(enabled=True)
+    adapter.transport_mode = "http"
     adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
     return adapter
 
@@ -805,6 +810,7 @@ async def test_drive_token_refresh_on_401():
 async def test_streaming_with_attachment_end_to_end():
     harness = UploadHarness()
     adapter = make_adapter(enabled=True)
+    adapter.transport_mode = "http"
     adapter._http_client = httpx.AsyncClient(transport=httpx.MockTransport(harness))
 
     data = base64.b64encode(b"E2EDATA").decode()
