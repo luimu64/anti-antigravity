@@ -29,6 +29,8 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/150.0.0.0 Safari/537.36"
 )
+# Static client-context header present in every live AI Studio capture.
+X_GOOG_EXT_CLIENT_BIN = "CAASA1JGSRgBMAE4BEAAUARYAWICRklwAHgB"
 MAX_OUTPUT_TOKENS_LIMIT = 65536
 
 # Harm categories 7-10 with threshold 5 (BLOCK_NONE) exactly as sent by the
@@ -65,6 +67,14 @@ FALLBACK_MODELS: dict[str, dict[str, Any]] = {
         "supportsVision": True,
         "isEmbedding": False,
     },
+    "gemini-3.6-flash": {
+        "displayName": "Gemini 3.6 Flash (AI Studio Web)",
+        "maxTokens": 1048576,
+        "supportsThinking": True,
+        "supportsTools": False,
+        "supportsVision": True,
+        "isEmbedding": False,
+    },
     "gemini-3.1-pro": {
         "displayName": "Gemini 3.1 Pro (AI Studio Web)",
         "maxTokens": 1048576,
@@ -90,6 +100,10 @@ FALLBACK_MODELS: dict[str, dict[str, Any]] = {
         "isEmbedding": False,
     },
 }
+
+# Antigravity-internal reasoning-tier suffixes stripped before lookup; the
+# AI Studio web UI only knows base model names.
+TIER_SUFFIXES = ("-high", "-medium", "-low")
 
 
 def _iter_text_parts(node: Any):
@@ -168,6 +182,8 @@ class AIStudioWebAdapter(BaseAdapter):
         self._drive_token_fetched_at: float = 0.0
         # (sha256, mime) -> Drive file id cache for inline attachments.
         self._uploaded_files: dict[tuple[str, str], str] = {}
+        # Head of the last request body (DEBUG diagnostics for upstream 400s).
+        self._last_request_head: str = ""
 
     # ------------------------------------------------------------------
     # Credentials & headers
@@ -227,6 +243,7 @@ class AIStudioWebAdapter(BaseAdapter):
             "User-Agent": USER_AGENT,
             "X-Goog-Api-Key": self.api_key,
             "X-Goog-Authuser": "0",
+            "X-Goog-Ext-519733851-Bin": X_GOOG_EXT_CLIENT_BIN,
             "X-User-Agent": "grpc-web-javascript/0.1",
             "X-AiStudio-G1-Tier": "TIER1",
             "X-AiStudio-Visit-Id": self._visit_id,
@@ -514,6 +531,31 @@ class AIStudioWebAdapter(BaseAdapter):
             )
         return cfg
 
+    @staticmethod
+    def normalize_model(model: str) -> str:
+        """Map gateway model ids to AI Studio web catalog names.
+
+        Strips Antigravity reasoning-tier suffixes (gemini-3.6-flash-medium ->
+        gemini-3.6-flash) and resolves to the closest known catalog entry;
+        upstream rejects unknown models with an opaque HTTP 400.
+        """
+        clean = model.lower().replace("models/", "").strip()
+        changed = True
+        while changed:
+            changed = False
+            for suffix in TIER_SUFFIXES:
+                if clean.endswith(suffix):
+                    clean = clean[: -len(suffix)]
+                    changed = True
+                    break
+
+        if clean in FALLBACK_MODELS:
+            return clean
+        matches = [k for k in FALLBACK_MODELS if clean.startswith(k)]
+        if matches:
+            return max(matches, key=len)
+        return "gemini-2.0-flash"
+
     async def build_request_payload(
         self,
         model: str,
@@ -524,10 +566,15 @@ class AIStudioWebAdapter(BaseAdapter):
         contents_wire, system_wire = await self._convert_contents(
             contents, system_instruction
         )
-        clean_model = model if model.startswith("models/") else f"models/{model}"
+        clean_model = self.normalize_model(model)
+        wire_model = (
+            clean_model
+            if clean_model.startswith("models/")
+            else f"models/{clean_model}"
+        )
         session_blob = self.session_blob or self._generate_session_blob()
         payload: list[Any] = [
-            clean_model,
+            wire_model,
             contents_wire,
             SAFETY_CONFIG,
             self._build_generation_config(generation_config),
@@ -574,6 +621,13 @@ class AIStudioWebAdapter(BaseAdapter):
             raise ValueError(
                 f"AI Studio Web authentication failed ({status}): {detail}. "
                 "Re-export fresh cookies from https://aistudio.google.com."
+            )
+        if status == 400:
+            # Opaque Google HTML error pages usually mean a malformed payload
+            # or unknown model; dump the request head at DEBUG for diagnosis.
+            logger.debug(
+                f"[AIStudioWeb] 400 rejected payload head: "
+                f"{getattr(self, '_last_request_head', '')[:500]}"
             )
         raise ValueError(f"AI Studio Web Error ({status}): {detail}")
 
@@ -647,7 +701,13 @@ class AIStudioWebAdapter(BaseAdapter):
         generation_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream from StreamGenerateContent ($rpc newline-delimited JSON chunks)."""
+        """Generate content via the unary GenerateContent RPC.
+
+        The AI Studio web client streams by calling GenerateContent and
+        receiving a JSON array whose first element is the ordered list of
+        partial-response chunk objects; deltas are extracted per chunk and
+        yielded incrementally to preserve the streaming contract.
+        """
         if not self.is_configured():
             raise ValueError(
                 "AI Studio Web cookies are not configured (set AISTUDIO_WEB_COOKIES)."
@@ -656,105 +716,89 @@ class AIStudioWebAdapter(BaseAdapter):
         payload = await self.build_request_payload(
             model, contents, system_instruction, generation_config
         )
-        url = f"{RPC_BASE}/StreamGenerateContent"
+        url = f"{RPC_BASE}/GenerateContent"
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        self._last_request_head = body[:800]
         headers = self._get_headers()
         http = self.get_http_client()
 
         emitted = ""
         finish_reason: str | None = None
+        stream_chunks: list[dict[str, Any]] = []
+
+        def _process_node(node: Any) -> None:
+            nonlocal emitted, finish_reason
+            err = _extract_error_payload(node)
+            if err:
+                code = int(err.get("code") or 500)
+                if code == 429:
+                    self.set_cooldown(60.0, reason=str(err.get("message"))[:200])
+                    raise RateLimitError(
+                        f"AI Studio Web rate limited: {err.get('message')}",
+                        status_code=429,
+                        retry_after=60.0,
+                    )
+                raise ValueError(f"AI Studio Web Error ({code}): {err.get('message')}")
+
+            delta_parts = [t for t in _iter_text_parts(node) if t and t.strip()]
+            delta = "".join(delta_parts)
+
+            reason = _find_finish_reason(node)
+            if reason and not finish_reason:
+                finish_reason = reason
+
+            if not delta:
+                return
+
+            # Tolerate cumulative snapshots as well as true deltas.
+            if delta.startswith(emitted):
+                delta = delta[len(emitted) :]
+            emitted += delta
+            stream_chunks.append(
+                {
+                    "candidates": [
+                        {
+                            "content": {"parts": [{"text": delta}], "role": "model"},
+                            "index": 0,
+                        }
+                    ],
+                    "modelVersion": model,
+                }
+            )
 
         try:
-            async with http.stream(
-                "POST", url, content=body.encode("utf-8"), headers=headers
-            ) as resp:
-                if resp.status_code >= 400:
-                    await resp.aread()
-                    await self._raise_for_response(resp)
-                self.is_valid_session = True
-
-                buffer = b""
-
-                def _process_line(text_line: str) -> None:
-                    nonlocal emitted, finish_reason
-                    text_line = text_line.strip()
-                    if not text_line:
-                        return
-                    try:
-                        parsed = json.loads(text_line)
-                    except ValueError:
-                        return
-                    err = _extract_error_payload(parsed)
-                    if err:
-                        code = int(err.get("code") or 500)
-                        if code == 429:
-                            self.set_cooldown(
-                                60.0, reason=str(err.get("message"))[:200]
-                            )
-                            raise RateLimitError(
-                                f"AI Studio Web rate limited: {err.get('message')}",
-                                status_code=429,
-                                retry_after=60.0,
-                            )
-                        raise ValueError(
-                            f"AI Studio Web Error ({code}): {err.get('message')}"
-                        )
-
-                    delta_parts = [
-                        t for t in _iter_text_parts(parsed) if t and t.strip()
-                    ]
-                    delta = "".join(delta_parts)
-                    if not delta:
-                        reason = _find_finish_reason(parsed)
-                        if reason and not finish_reason:
-                            finish_reason = reason
-                        return
-
-                    # Tolerate cumulative snapshots as well as true deltas.
-                    if delta.startswith(emitted):
-                        delta = delta[len(emitted) :]
-                    emitted += delta
-                    stream_chunks.append(
-                        {
-                            "candidates": [
-                                {
-                                    "content": {
-                                        "parts": [{"text": delta}],
-                                        "role": "model",
-                                    },
-                                    "index": 0,
-                                }
-                            ],
-                            "modelVersion": model,
-                        }
-                    )
-
-                    reason = _find_finish_reason(parsed)
-                    if reason and not finish_reason:
-                        finish_reason = reason
-
-                # Chunks are buffered inside _process_line because generators
-                # cannot yield from a nested function; they are flushed after
-                # each parsed line so downstream consumers still stream.
-                stream_chunks: list[dict[str, Any]] = []
-                async for raw_chunk in resp.aiter_bytes():
-                    buffer += raw_chunk
-                    while b"\n" in buffer:
-                        line, buffer = buffer.split(b"\n", 1)
-                        _process_line(line.decode("utf-8", errors="replace"))
-                        while stream_chunks:
-                            yield stream_chunks.pop(0)
-                # Flush any final unterminated line (e.g. error payloads).
-                if buffer.strip():
-                    _process_line(buffer.decode("utf-8", errors="replace"))
-                while stream_chunks:
-                    yield stream_chunks.pop(0)
-        except RateLimitError:
-            raise
+            resp = await http.post(url, content=body.encode("utf-8"), headers=headers)
         except httpx.HTTPError as e:
             logger.warning(f"AI Studio Web request network error: {e}")
             self.set_cooldown(30.0, reason="network error")
             raise RateLimitError(f"AI Studio Web network error: {e}") from e
+
+        try:
+            await self._raise_for_response(resp)
+            self.is_valid_session = True
+            parsed = resp.json()
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(
+                f"AI Studio Web returned an unparsable response: {e}"
+            ) from e
+
+        # Top-level dict => gRPC-style error payload; list => response whose
+        # first element is the ordered chunk list (per live captures).
+        if isinstance(parsed, dict):
+            _process_node(parsed)
+        else:
+            outer = parsed if isinstance(parsed, list) else []
+            nodes: list[Any] = (
+                outer[0] if (outer and isinstance(outer[0], list)) else outer
+            )
+            for node in nodes:
+                if node is None:
+                    continue
+                _process_node(node)
+        while stream_chunks:
+            yield stream_chunks.pop(0)
 
         if not emitted:
             raise ValueError(

@@ -195,7 +195,8 @@ async def test_models_catalog_static():
 
 
 def stream_response_body(chunks: list) -> bytes:
-    return ("\n".join(json.dumps(c) for c in chunks) + "\n").encode()
+    """Unary GenerateContent response: outer[0] is the ordered chunk list."""
+    return json.dumps([chunks]).encode()
 
 
 @pytest.mark.asyncio
@@ -209,8 +210,9 @@ async def test_stream_generate_content_parses_chunks():
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "alkalimakersuite-pa.clients6.google.com"
-        assert request.url.path.endswith("/StreamGenerateContent")
+        assert request.url.path.endswith("/GenerateContent")
         assert request.headers["authorization"].startswith("SAPISIDHASH")
+        assert request.headers["x-goog-ext-519733851-bin"]
         sent = json.loads(request.content.decode())
         assert sent[0] == "models/gemini-2.0-flash"
         return httpx.Response(200, content=body)
@@ -383,6 +385,24 @@ def test_supports_model_gate():
     assert router.supports_model(adapter, model="claude-sonnet-4-6") is False
 
 
+def test_normalize_model_strips_tier_suffixes():
+    # Antigravity tier variants map onto AI Studio base model names
+    assert AIStudioWebAdapter.normalize_model("gemini-3.6-flash-medium") == (
+        "gemini-3.6-flash"
+    )
+    assert AIStudioWebAdapter.normalize_model("gemini-3.7-flash-high") == (
+        "gemini-3.7-flash"
+    )
+    assert AIStudioWebAdapter.normalize_model("gemini-3.1-pro-low") == "gemini-3.1-pro"
+    assert AIStudioWebAdapter.normalize_model("Models/Gemini-2.0-Flash") == (
+        "gemini-2.0-flash"
+    )
+    # Unknown gemini families degrade to the closest catalog entry
+    assert AIStudioWebAdapter.normalize_model("gemini-9.9-ultra") == (
+        "gemini-2.0-flash"
+    )
+
+
 # ---------------------------------------------------------------------------
 # File attachment uploads (GetAppFolder -> token -> Drive multipart)
 # ---------------------------------------------------------------------------
@@ -425,7 +445,7 @@ class UploadHarness:
                 200,
                 content=json.dumps({"id": "DRIVEFILE123", "name": "x"}).encode(),
             )
-        if url.endswith("/StreamGenerateContent"):
+        if url.endswith("/GenerateContent"):
             return httpx.Response(
                 200, content=stream_response_body([[[[None, "ok"]], "model"]])
             )

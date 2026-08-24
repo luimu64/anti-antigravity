@@ -488,7 +488,7 @@ frontend, which the gateway replays to offer a keyless AI Studio backend.
 
 | Slot | Content | Notes |
 |---|---|---|
-| `[0]` | `"models/<model>"` | e.g. `models/gemini-3.7-flash` |
+| `[0]` | `"models/<model>"` | Base catalog names only — Antigravity reasoning-tier suffixes (`-high`/`-medium`/`-low`) must be stripped first (`normalize_model`); unknown models get an opaque HTML 400 |
 | `[1]` | contents array | Each turn: `[parts, role]`; a text part is a DataItem `[null, "<text>"]` |
 | `[2]` | tool/safety config | Live client sends 4 harm categories with threshold 5: `[[null,null,7,5],[null,null,8,5],[null,null,9,5],[null,null,10,5]]` |
 | `[3]` | generation config | idx 3 = maxOutputTokens, 4 = temperature, 5 = topP, 6 = topK, 12 = candidateCount, 15 = thinking config `[1,null,null,<level>]` |
@@ -518,12 +518,17 @@ per session.
 
 ### 7b.4 Response Format
 
-Responses (both unary and streamed chunks) are protobuf-as-json arrays containing Content
-nodes shaped like the request's. Text arrives as `[null, "<text>"]` DataItem pairs; the
-gateway extracts them via recursive tree walking (`_iter_text_parts`) and tolerates both
-true deltas and cumulative snapshots. gRPC errors surface as JSON objects
-`{"error": {"code": ..., "message": ..., "status": ...}}` and map to OpenAI-style 429/401
-handling. Finish reasons (`STOP`, `MAX_TOKENS`, `SAFETY`, ...) appear as bare enum strings.
+The web client does not use a separate streaming endpoint: **`GenerateContent` (unary)
+returns the full stream in one body** as a JSON array whose first element is the ordered
+list of partial-response chunk objects (`response[0][i]`). Each chunk is a protobuf-as-json
+array containing Content nodes shaped like the request's. Text arrives as `[null, "<text>"]`
+DataItem pairs; the gateway extracts them per chunk via recursive tree walking
+(`_iter_text_parts`) and tolerates both true deltas and cumulative snapshots.
+gRPC errors surface as JSON objects `{"error": {"code": ..., "message": ..., "status": ...}}`
+and map to OpenAI-style 429/401 handling; transport-level failures return generic Google
+HTML error pages (400 usually means an unknown model or malformed payload — the request
+head is logged at DEBUG). Finish reasons (`STOP`, `MAX_TOKENS`, `SAFETY`, ...) appear as
+bare enum strings.
 
 ### 7b.5 Known Limitations
 
