@@ -1133,10 +1133,10 @@ def test_base_adapter_get_rate_limit_quotas():
 
     rpm_q = next(q for q in quotas if "RPM" in q["display_name"])
     assert rpm_q["fraction_used"] == 0.0
-    assert rpm_q["remaining_fraction"] == 1.0
     assert rpm_q["fraction_remaining"] == 1.0
+    assert "remaining_fraction" not in rpm_q
+    assert "source" not in rpm_q
     assert rpm_q["backend"] == "gemini_api"
-    assert rpm_q["source"] == "gemini_api"
     assert rpm_q["model_id"] == "gemini_api"
     assert rpm_q["in_cooldown"] is False
 
@@ -1147,14 +1147,14 @@ def test_base_adapter_get_rate_limit_quotas():
     tpm_used = next(q for q in quotas_used if "TPM" in q["display_name"])
 
     assert rpm_used["fraction_used"] > 0.0
-    assert rpm_used["remaining_fraction"] < 1.0
+    assert rpm_used["fraction_remaining"] < 1.0
     assert rpm_used["reset_time_seconds"] > 0.0
     assert rpm_used["used"] == 1
     assert rpm_used["limit"] == 10
     assert rpm_used["unit"] == "requests"
 
     assert pytest.approx(tpm_used["fraction_used"], 0.001) == 0.25
-    assert pytest.approx(tpm_used["remaining_fraction"], 0.001) == 0.75
+    assert pytest.approx(tpm_used["fraction_remaining"], 0.001) == 0.75
     assert tpm_used["used"] == 62500
     assert tpm_used["limit"] == 250000
     assert tpm_used["unit"] == "tokens"
@@ -1165,7 +1165,7 @@ def test_base_adapter_get_rate_limit_quotas():
     quotas_cd = api_adapter.get_rate_limit_quotas()
     cd_item = next(q for q in quotas_cd if q["display_name"] == "Cooldown")
     assert cd_item["fraction_used"] == 1.0
-    assert cd_item["remaining_fraction"] == 0.0
+    assert cd_item["fraction_remaining"] == 0.0
     assert cd_item["in_cooldown"] is True
     assert pytest.approx(cd_item["reset_time_seconds"], 1.0) == 45.0
 
@@ -1188,7 +1188,6 @@ def test_base_adapter_get_rate_limit_quotas():
     assert "Tokens Per Minute (TPM)" in web_names
     for q in web_quotas:
         assert q["backend"] == "gemini_web"
-        assert q["source"] == "gemini_web"
 
 
 @pytest.mark.asyncio
@@ -1247,7 +1246,7 @@ async def test_dashboard_api_quotas_multi_backend_aggregation():
                 # Check antigravity item
                 agy_item = next(g for g in groups if g["backend"] == "antigravity")
                 assert agy_item["display_name"] == "Weekly Quota"
-                assert agy_item["remaining_fraction"] == 0.80
+                assert agy_item["fraction_remaining"] == 0.80
 
                 # Check gemini_api item
                 api_item = next(g for g in groups if g["backend"] == "gemini_api")

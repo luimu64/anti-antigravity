@@ -448,12 +448,11 @@ def transform_quota_summary(
     Transform and normalize upstream Antigravity quota responses into the
     structure expected by the dashboard UI:
       fraction_used (float, 0.0 - 1.0)
-      remaining_fraction (float, 0.0 - 1.0)
+      fraction_remaining (float, 0.0 - 1.0)
       reset_time_seconds (float | None)
       display_name (str)
       model_id (str)
       backend (str)
-      source (str)
     """
     if not isinstance(raw_data, (dict, list)):
         return {"groups": []}
@@ -535,12 +534,10 @@ def transform_quota_summary(
                     {
                         "display_name": display_name,
                         "fraction_used": fraction_used,
-                        "remaining_fraction": remaining_fraction,
                         "fraction_remaining": remaining_fraction,
                         "reset_time_seconds": reset_time_seconds,
                         "model_id": model_id,
                         "backend": item_backend,
-                        "source": item_backend,
                     }
                 )
         else:
@@ -565,12 +562,10 @@ def transform_quota_summary(
                 {
                     "display_name": display_name,
                     "fraction_used": fraction_used,
-                    "remaining_fraction": remaining_fraction,
                     "fraction_remaining": remaining_fraction,
                     "reset_time_seconds": reset_time_seconds,
                     "model_id": model_id,
                     "backend": item_backend,
-                    "source": item_backend,
                 }
             )
 

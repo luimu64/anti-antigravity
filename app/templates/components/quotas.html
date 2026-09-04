@@ -59,7 +59,7 @@
   // Stable identity of a quota bucket across updates (excludes volatile values)
   function quotaGroupKey(g) {
     return [
-      g.backend || g.source || 'antigravity',
+      g.backend || 'antigravity',
       g.display_name || '',
       g.model_id || '',
       g.unit || '',
@@ -82,11 +82,9 @@
   // The reconciler reuses existing DOM nodes and only patches fields, so
   // animations (e.g. the indeterminate cooldown bar) never restart.
   function buildQuotaCard(g) {
-    const remainingFrac = g.remaining_fraction != null
-      ? g.remaining_fraction
-      : (g.fraction_remaining != null
-        ? g.fraction_remaining
-        : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0));
+    const remainingFrac = g.fraction_remaining != null
+      ? g.fraction_remaining
+      : (g.fraction_used != null ? 1.0 - g.fraction_used : 1.0);
     const pctLabel = fmtPct(Math.max(0, Math.min(1, remainingFrac)));
     const isCooldown = !!g.in_cooldown || g.display_name === 'Cooldown';
     const hasReset = g.reset_time_seconds != null && g.reset_time_seconds >= 0;
@@ -140,7 +138,7 @@
       badgeColor = 'badge-warning';
     }
 
-    let backendKey = (g.backend || g.source || 'antigravity').toLowerCase();
+    let backendKey = (g.backend || 'antigravity').toLowerCase();
     let backendLabel = 'Antigravity';
     let sourceBadgeClass = 'badge-primary badge-outline';
 
@@ -154,7 +152,7 @@
       backendLabel = 'Antigravity';
       sourceBadgeClass = 'badge-primary badge-outline';
     } else {
-      backendLabel = g.backend || g.source || 'Antigravity';
+      backendLabel = g.backend || 'Antigravity';
       sourceBadgeClass = 'badge-ghost badge-outline';
     }
 

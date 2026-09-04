@@ -361,7 +361,6 @@ class BaseAdapter(ABC):
             return {
                 "display_name": display_name,
                 "fraction_used": frac_used,
-                "remaining_fraction": rem_frac,
                 "fraction_remaining": rem_frac,
                 "used": used,
                 "limit": limit,
@@ -370,7 +369,6 @@ class BaseAdapter(ABC):
                 "reset_time_seconds": reset_secs,
                 "model_id": self.name,
                 "backend": self.name,
-                "source": self.name,
             }
 
         if rl.rpm > 0:
@@ -415,7 +413,6 @@ class BaseAdapter(ABC):
                 {
                     "display_name": "Cooldown",
                     "fraction_used": 1.0,
-                    "remaining_fraction": 0.0,
                     "fraction_remaining": 0.0,
                     "used": None,
                     "limit": None,
@@ -424,7 +421,6 @@ class BaseAdapter(ABC):
                     "reset_time_seconds": round(cooldown, 1),
                     "model_id": self.name,
                     "backend": self.name,
-                    "source": self.name,
                 }
             )
 

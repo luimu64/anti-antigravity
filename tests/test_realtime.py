@@ -115,7 +115,7 @@ def test_quota_update_pushed_after_activity(fast_debounce, stub_quota_collector)
         {
             "display_name": "Gemini Flash",
             "backend": "antigravity",
-            "remaining_fraction": 0.75,
+            "fraction_remaining": 0.75,
         }
     ]
     with TestClient(app) as tc, tc.websocket_connect("/ws") as ws:
