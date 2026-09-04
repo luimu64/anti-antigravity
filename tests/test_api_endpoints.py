@@ -27,6 +27,41 @@ async def test_health_endpoint():
 
 
 @pytest.mark.asyncio
+async def test_v1_quotas_endpoint():
+    transport = httpx.ASGITransport(app=app)
+    key = api_key_manager.get_first_active_key() or "test-key"
+    mock_upstream = {
+        "userQuotaSummary": {
+            "buckets": [
+                {
+                    "modelId": "gemini-2.5-pro",
+                    "remainingFraction": 0.85,
+                    "resetTime": "2026-03-30T12:00:00Z",
+                }
+            ]
+        }
+    }
+    with patch.object(
+        client,
+        "retrieve_user_quota_summary",
+        new_callable=AsyncMock,
+        return_value=mock_upstream,
+    ):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            res_v1 = await ac.get(
+                "/v1/quotas", headers={"Authorization": f"Bearer {key}"}
+            )
+            assert res_v1.status_code == 200
+            assert "groups" in res_v1.json()
+
+            res_unpref = await ac.get(
+                "/quotas", headers={"Authorization": f"Bearer {key}"}
+            )
+            assert res_unpref.status_code == 200
+            assert "groups" in res_unpref.json()
+
+
+@pytest.mark.asyncio
 async def test_auth_status_endpoint():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:

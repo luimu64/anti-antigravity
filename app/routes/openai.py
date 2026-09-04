@@ -73,6 +73,25 @@ async def verify_api_key(authorization: str | None = Header(None)):
     return True
 
 
+@router.get("/v1/quotas", dependencies=[Depends(verify_api_key)])
+@router.get("/quotas", dependencies=[Depends(verify_api_key)])
+async def get_quotas():
+    """
+    Retrieve user quota usage and rate limits across configured backends.
+    """
+    from app.routes.dashboard import collect_quota_groups
+
+    groups, antigravity_err = await collect_quota_groups()
+
+    if not groups and antigravity_err:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(antigravity_err), "groups": []},
+        )
+
+    return JSONResponse(content={"groups": groups})
+
+
 @router.get("/v1/models", dependencies=[Depends(verify_api_key)])
 @router.get("/models", dependencies=[Depends(verify_api_key)])
 async def list_models():

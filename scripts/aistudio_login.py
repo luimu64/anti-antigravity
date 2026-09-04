@@ -36,8 +36,10 @@ def main() -> None:
         page.goto(NEW_CHAT_URL)
         print("Sign in to Google in the opened window.")
         input("When AI Studio has loaded, press Enter to finish... ")
-        print("signed in:", "aistudio.google.com" in page.url and
-              "accounts.google" not in page.url)
+        print(
+            "signed in:",
+            "aistudio.google.com" in page.url and "accounts.google" not in page.url,
+        )
         ctx.close()
     print("Profile saved. Headless generation can start.")
 

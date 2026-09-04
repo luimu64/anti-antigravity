@@ -5,7 +5,6 @@ returns scripted results. Browser E2E against live AI Studio is a manual step
 (scripts/aistudio_login.py + a gateway request).
 """
 
-
 import pytest
 
 import app.providers.aistudio_oracle as oracle_mod
@@ -56,9 +55,7 @@ def oracle(monkeypatch):
     o = AistudioOracle()
     fake_page = FakePage()
     fake_ctx = type("Ctx", (), {"pages": [fake_page]})()
-    monkeypatch.setattr(
-        o._browser, "page", lambda: fake_page, raising=False
-    )
+    monkeypatch.setattr(o._browser, "page", lambda: fake_page, raising=False)
     monkeypatch.setattr(o._browser, "_context", fake_ctx)
     return o, fake_page
 
@@ -101,10 +98,12 @@ def test_extract_reply_none_while_pending(oracle):
 
 def test_extract_reply_between_markers(oracle):
     o, page = oracle
-    page.scripted = [(
-        TURN_JS,
-        "Model 12:00\nthe reply text\nthumb_up thumb_down",
-    )]
+    page.scripted = [
+        (
+            TURN_JS,
+            "Model 12:00\nthe reply text\nthumb_up thumb_down",
+        )
+    ]
     reply, err = o._extract_reply(page)
     assert reply == "the reply text"
     assert err is None
@@ -112,10 +111,12 @@ def test_extract_reply_between_markers(oracle):
 
 def test_extract_reply_surfaces_internal_error(oracle):
     o, page = oracle
-    page.scripted = [(
-        TURN_JS,
-        "Model 12:00\nAn internal error has occurred. Retry.\nthumb_up",
-    )]
+    page.scripted = [
+        (
+            TURN_JS,
+            "Model 12:00\nAn internal error has occurred. Retry.\nthumb_up",
+        )
+    ]
     reply, err = o._extract_reply(page)
     assert reply is None
     assert "internal error" in err
@@ -125,7 +126,7 @@ def test_generate_once_happy_path(oracle, monkeypatch):
     o, page = oracle
     page.scripted = [
         (READY_JS[:20], ready_state()),
-        ("return true" , True),  # send_prompt returns True
+        ("return true", True),  # send_prompt returns True
         (TURN_JS, "Model 12:00\nfinal answer\nthumb_up"),
     ]
     monkeypatch.setattr(oracle_mod.time, "sleep", lambda s: None)
@@ -144,9 +145,7 @@ def test_generate_once_rebuilds_dead_renderer(oracle, monkeypatch):
             raise RuntimeError("Target closed")
 
     monkeypatch.setattr(o, "_wait_ready", flaky_wait_ready)
-    monkeypatch.setattr(
-        o._browser, "_ensure_page", lambda: rebuilt, raising=False
-    )
+    monkeypatch.setattr(o._browser, "_ensure_page", lambda: rebuilt, raising=False)
     monkeypatch.setattr(oracle_mod.time, "sleep", lambda s: None)
 
     sent = {}

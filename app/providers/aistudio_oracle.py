@@ -27,7 +27,8 @@ import time
 logger = logging.getLogger("google_gate.providers.aistudio_oracle")
 
 ORACLE_PROFILE_DIR = os.getenv(
-    "AISTUDIO_ORACLE_PROFILE_DIR", "/opt/data/user-files/anti-antigravity/data/aistudio-profile"
+    "AISTUDIO_ORACLE_PROFILE_DIR",
+    "/opt/data/user-files/anti-antigravity/data/aistudio-profile",
 )
 ORACLE_HEADLESS = os.getenv("AISTUDIO_ORACLE_HEADLESS", "1") != "0"
 # Path to a Chromium executable; empty = Playwright's own downloaded build.
@@ -83,8 +84,9 @@ class _Browser:
                 args=["--disable-blink-features=AutomationControlled"],
                 **launch_kwargs,
             )
-        pages = [p for p in self._context.pages if "aistudio" in p.url] or \
-            self._context.pages
+        pages = [
+            p for p in self._context.pages if "aistudio" in p.url
+        ] or self._context.pages
         self._page = pages[0] if pages else self._context.new_page()
         return self._page
 
@@ -120,8 +122,10 @@ class AistudioOracle:
     # ------------------------------------------------------------------
     def _ensure_page(self):
         page = self._browser.page()
-        if not page.url.startswith("https://aistudio.google.com") or \
-                "new_chat" not in page.url:
+        if (
+            not page.url.startswith("https://aistudio.google.com")
+            or "new_chat" not in page.url
+        ):
             page.goto(NEW_CHAT_URL, wait_until="domcontentloaded")
         return page
 
