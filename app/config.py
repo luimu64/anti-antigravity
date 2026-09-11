@@ -68,6 +68,11 @@ REDIRECT_URI = os.getenv(
 
 # Model aliases mapping standard OpenAI / Anthropic names to Antigravity internal models
 MODEL_ALIASES = {
+    # Gemini 3.8
+    "gemini-3.8-flash": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-high": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low": "gemini-3.8-flash-low",
     # Gemini 3.7
     "gemini-3.7-flash": "gemini-3.7-flash-high",
     "gemini-3.7-flash-high": "gemini-3.7-flash-high",
@@ -112,6 +117,12 @@ MODEL_ALIASES = {
 
 # Lookup table mapping base canonical models to Antigravity internal reasoning tiers
 ANTIGRAVITY_TIER_MAP = {
+    "gemini-3.8-flash": {
+        "low": "gemini-3.8-flash-low",
+        "medium": "gemini-3.8-flash-medium",
+        "high": "gemini-3.8-flash-high",
+        "default": "gemini-3.8-flash-high",
+    },
     "gemini-3.7-flash": {
         "low": "gemini-3.7-flash-low",
         "medium": "gemini-3.7-flash-medium",
@@ -159,6 +170,9 @@ DEFAULT_REASONING_EFFORT: str = (
 
 # Canonical model consolidation mapping (Antigravity quirk -> Public clean name)
 CANONICAL_MODEL_MAP = {
+    "gemini-3.8-flash-high": "gemini-3.8-flash",
+    "gemini-3.8-flash-medium": "gemini-3.8-flash",
+    "gemini-3.8-flash-low": "gemini-3.8-flash",
     "gemini-3.7-flash-high": "gemini-3.7-flash",
     "gemini-3.7-flash-medium": "gemini-3.7-flash",
     "gemini-3.7-flash-low": "gemini-3.7-flash",
