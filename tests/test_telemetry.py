@@ -332,7 +332,7 @@ async def test_model_not_found_logs_evaluation(routing_capture):
     )
     # No backend claims capability for this model
     with patch_supports(router, False), pytest.raises(ModelNotFoundError):
-        router.check_availability(model="nonexistent-model-xyz")
+        await router.check_availability(model="nonexistent-model-xyz")
 
     unsupported = routing_capture.events("routing.model_unsupported")
     assert len(unsupported) == 1

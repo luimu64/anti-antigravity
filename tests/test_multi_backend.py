@@ -246,7 +246,7 @@ async def test_round_robin_two_backends_with_labeling_calls():
     # must not rotate).
     calls = []
     for _ in range(6):
-        candidates = router.check_availability(model="gemini-2.0-flash")
+        candidates = await router.check_availability(model="gemini-2.0-flash")
         calls.append(candidates[0].name)
         router.get_ordered_adapters(rotate=False)
 

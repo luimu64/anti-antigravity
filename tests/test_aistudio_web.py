@@ -500,7 +500,7 @@ async def test_free_first_prefers_aistudio_web_when_alone():
         aistudio_web=studio,
         routing_strategy="free_first",
     )
-    candidates = router.check_availability(model="gemini-3.7-flash")
+    candidates = await router.check_availability(model="gemini-3.7-flash")
     assert [a.name for a in candidates] == ["aistudio_web"]
 
 

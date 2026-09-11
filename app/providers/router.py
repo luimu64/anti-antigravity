@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -855,7 +856,7 @@ class MultiBackendRouter(BaseAdapter):
         ]
         return [a for a in priority_order if a in available]
 
-    def check_availability(
+    async def check_availability(
         self,
         model: str,
         is_embedding: bool = False,
@@ -912,6 +913,37 @@ class MultiBackendRouter(BaseAdapter):
             is_embedding=is_embedding,
             estimated_tokens=estimated_tokens,
         )
+
+        if not candidates:
+            min_cooldown = min(
+                (
+                    a.get_cooldown_remaining()
+                    for a in capable
+                    if a.get_cooldown_remaining() > 0
+                ),
+                default=60.0,
+            )
+            # A short cooldown (transient 429) expires within seconds. Fail
+            # fast with a 60s "all_exhausted" (which sent clients into instant
+            # 429 loops all through a 2-3s window) is the wrong trade: wait
+            # out the remaining window BOUNDED, then re-evaluate. Long cool
+            # downs (genuine quota / Retry-After) still reject immediately.
+            wait_cap = float(os.getenv("ROUTING_SHORT_COOLDOWN_WAIT_CAP", "5.0"))
+            if min_cooldown <= wait_cap and not is_embedding:
+                log_event(
+                    telemetry_logger,
+                    logging.INFO,
+                    "routing.short_cooldown_wait",
+                    f"Short cooldown {min_cooldown:.1f}s on all backends for '{model}'; waiting bounded.",
+                    model=model,
+                    wait_s=round(min_cooldown, 1),
+                )
+                await asyncio.sleep(min_cooldown + 0.15)
+                candidates = self.get_ordered_adapters(
+                    model=model,
+                    is_embedding=is_embedding,
+                    estimated_tokens=estimated_tokens,
+                )
 
         if not candidates:
             min_cooldown = min(
@@ -983,7 +1015,7 @@ class MultiBackendRouter(BaseAdapter):
             for p in c.get("parts", [])
             if isinstance(p, dict)
         )
-        candidates = self.check_availability(
+        candidates = await self.check_availability(
             model=model, is_embedding=False, estimated_tokens=estimated_tokens
         )
         last_exception = None
@@ -1187,7 +1219,7 @@ class MultiBackendRouter(BaseAdapter):
             for p in c.get("parts", [])
             if isinstance(p, dict)
         )
-        candidates = self.check_availability(
+        candidates = await self.check_availability(
             model=model, is_embedding=False, estimated_tokens=estimated_tokens
         )
         last_exception = None
@@ -1422,7 +1454,7 @@ class MultiBackendRouter(BaseAdapter):
     ) -> dict[str, Any]:
         """Route embedding requests to available backend supporting embeddings."""
         estimated_tokens = sum(max(1, len(t) // 4) for t in texts)
-        candidates = self.check_availability(
+        candidates = await self.check_availability(
             model=model, is_embedding=True, estimated_tokens=estimated_tokens
         )
         last_exception = None
