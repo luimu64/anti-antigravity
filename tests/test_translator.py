@@ -651,13 +651,16 @@ def test_reasoning_effort_maps_to_tier_and_budget():
         assert internal == want_model, effort
         assert gen_cfg["thinkingConfig"]["thinkingBudget"] == want_budget, effort
 
-    # No effort -> derived provider default (medium) with dynamic budget
+    # No effort -> derived provider default (medium) tier, but NO thinking
+    # config attached: unbounded dynamic thinking (-1) was a quota multiplier
+    # (observed 61k thought tokens on trivial hindsight calls). Model default
+    # cadence applies instead.
     req = ChatCompletionRequest(
         model="gemini-3.7-flash", messages=[{"role": "user", "content": "hi"}]
     )
     internal, _, _, gen_cfg, _ = OpenAITranslator.openai_to_internal_request(req)
     assert internal == "gemini-3.7-flash-medium"
-    assert gen_cfg["thinkingConfig"]["thinkingBudget"] == -1
+    assert "thinkingConfig" not in gen_cfg
 
 
 def test_reasoning_effort_accepts_alternate_field_shapes():

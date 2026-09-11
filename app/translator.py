@@ -724,20 +724,16 @@ class OpenAITranslator:
                         )
 
         # Reasoning / Thinking config
-        if "gemini-3.7" in internal_model or "gemini-3" in internal_model:
-            budget = -1
-            if req.reasoning_effort == "low":
-                budget = 1000
-            elif req.reasoning_effort == "medium":
-                budget = 4000
-            elif req.reasoning_effort == "high":
-                budget = 16000
-
-            generation_config["thinkingConfig"] = {
-                "includeThoughts": True,
-                "thinkingBudget": budget,
-            }
-        elif "claude" in internal_model:
+        # Only attach thinkingConfig when the client explicitly asks for
+        # reasoning effort. Previously every gemini-3.x request got
+        # thinkingBudget: -1 (dynamic) + includeThoughts, which let trivial
+        # calls (memory extraction, classification) burn up to 60k+ thought
+        # tokens apiece — observed 61,439 thought tokens on a 3.4k-token
+        # prompt with a ~300-token answer, 135s generation on a LITE model.
+        # Thinking tokens count toward the upstream quota buckets just like
+        # completion tokens, so unbounded thinking IS an unbounded quota
+        # multiplier for clients that never set reasoning_effort.
+        if "claude" in internal_model:
             if "thinking" in internal_model or req.reasoning_effort:
                 budget = 1024
                 if req.reasoning_effort == "medium":
@@ -754,6 +750,19 @@ class OpenAITranslator:
                     "includeThoughts": True,
                     "thinkingBudget": 8192,
                 }
+        elif "gemini" in internal_model and req.reasoning_effort:
+            budget_map = {
+                "low": 1000,
+                "medium": 4000,
+                "high": 16000,
+            }
+            generation_config["thinkingConfig"] = {
+                "includeThoughts": True,
+                "thinkingBudget": budget_map.get(req.reasoning_effort, 4000),
+            }
+            # No effort requested: omit thinkingConfig entirely. The model
+            # falls back to its own default cadence, which for -lite/-flash
+            # variants is minimal; no dynamic (-1) budget is forced.
 
         # Build Tools & Tool Config
         tools = None
