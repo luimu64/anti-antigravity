@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -28,6 +29,39 @@ def _extract_retry_after(resp: httpx.Response, default: float = 60.0) -> float:
         except ValueError:
             pass
     return default
+
+
+def _extract_retry_after_header(
+    resp: httpx.Response,
+) -> float | None:
+    """Return the upstream Retry-After as seconds, or None when absent."""
+    header = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+    if header:
+        try:
+            return max(1.0, float(header.strip()))
+        except ValueError:
+            pass
+    return None
+
+
+# Cooldown applied to a 429 that carries NO Retry-After header. Upstream
+# Antigravity burst-rejections are typically transient (retried immediately
+# they succeed) — empirically 12 consecutive probes at 0.4s spacing all
+# passed right after a burst of upstream 429s — so a full default_cooldown
+# (60s) lockout punishes the account for one transient rejection: every
+# parallel request during the window fails instantly with "all backends
+# exhausted". A short cooldown keeps the next attempt nearby while still
+# spacing out the retry.
+TRANSIENT_429_COOLDOWN_S = float(os.getenv("ANTIGRAVITY_TRANSIENT_429_COOLDOWN", "3.0"))
+
+
+def _cooldown_for_429(resp: httpx.Response, default: float) -> float:
+    """Cooldown for an upstream 429: honor Retry-After when present, else a
+    short transient cooldown instead of the full default lockout."""
+    header_secs = _extract_retry_after_header(resp)
+    if header_secs is not None:
+        return header_secs
+    return TRANSIENT_429_COOLDOWN_S
 
 
 class AntigravityAdapter(BaseAdapter):
@@ -91,7 +125,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            retry_after = _cooldown_for_429(resp, self.default_cooldown)
             self.set_cooldown(retry_after)
             raise RateLimitError(
                 f"Antigravity rate limited (429): {resp.text}",
@@ -209,7 +243,7 @@ class AntigravityAdapter(BaseAdapter):
                 resp = await http.post(url, json={}, headers=headers)
 
             if resp.status_code == 429:
-                retry_after = _extract_retry_after(resp, self.default_cooldown)
+                retry_after = _cooldown_for_429(resp, self.default_cooldown)
                 self.set_cooldown(retry_after)
                 if self._cached_models:
                     return self._cached_models
@@ -257,7 +291,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json={}, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            retry_after = _cooldown_for_429(resp, self.default_cooldown)
             self.set_cooldown(retry_after)
             raise RateLimitError(
                 f"Antigravity rate limited (429): {resp.text}",
@@ -340,7 +374,7 @@ class AntigravityAdapter(BaseAdapter):
                     "POST", url, json=payload, headers=headers
                 ) as retry_resp:
                     if retry_resp.status_code == 429:
-                        retry_after = _extract_retry_after(
+                        retry_after = _cooldown_for_429(
                             retry_resp, self.default_cooldown
                         )
                         self.set_cooldown(retry_after)
@@ -374,7 +408,7 @@ class AntigravityAdapter(BaseAdapter):
                 return
 
             if resp.status_code == 429:
-                retry_after = _extract_retry_after(resp, self.default_cooldown)
+                retry_after = _cooldown_for_429(resp, self.default_cooldown)
                 self.set_cooldown(retry_after)
                 err_body = await resp.aread()
                 raise RateLimitError(
@@ -547,7 +581,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = _extract_retry_after(resp, self.default_cooldown)
+            retry_after = _cooldown_for_429(resp, self.default_cooldown)
             self.set_cooldown(retry_after)
             raise RateLimitError(
                 f"Antigravity embedding rate limited (429): {resp.text}",
