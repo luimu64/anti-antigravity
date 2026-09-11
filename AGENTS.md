@@ -210,7 +210,12 @@ docker stop gate-dev
 ### 3. Thought Signature in Tool Calling
 - Gemini models emit a `thoughtSignature` string with function calls. When the client executes the function and returns `role: tool`, the prior model assistant message must include that `thoughtSignature` in the payload sent to Google. `_thought_signature_cache` in `app/translator.py` handles this.
 
-### 4. Headless & Container Deployments
+### 4. Gemini Schema Sanitization (Tool Calling & Structured Output)
+- Client tool schemas and `response_format: {"type": "json_schema"}` may use OpenAPI 3.1 / JSON Schema keywords (`const`, `oneOf`, `$ref`, type unions like `["string","null"]`, `pattern`, `additionalProperties`, ...) that do not exist in the Gemini Schema protobuf. Antigravity/Gemini backends hard-400 with `Unknown name "const" at 'request.tools[...]...any_of[...]': Cannot find field.`
+- Every tool `parameters` and `responseSchema` MUST pass through `sanitize_schema_for_gemini()` in `app/translator.py` before dispatch (const -> enum, oneOf -> anyOf, type-union -> nullable, `$ref` -> inline resolution, allOf -> shallow merge, unknown keywords dropped).
+- Do not add new tool/response-schema code paths that bypass the sanitizer. Regression-check incident shapes with `scripts/check_schema_sanitize.py`.
+
+### 5. Headless & Container Deployments
 - When running in Docker without desktop keyring access, provide `REFRESH_TOKEN` and `GOOGLE_PROJECT_ID` as environment variables, mount `./data:/app/data` containing `credentials.json`, or log in once via the web dashboard at `/auth/login`.
 
 ---
