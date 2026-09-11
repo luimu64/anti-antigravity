@@ -55,12 +55,64 @@ def _extract_retry_after_header(
 TRANSIENT_429_COOLDOWN_S = float(os.getenv("ANTIGRAVITY_TRANSIENT_429_COOLDOWN", "3.0"))
 
 
+def _retry_delay_from_body(resp: httpx.Response) -> float | None:
+    """Parse the gRPC error body's retryDelay / quotaResetDelay.
+
+    Antigravity 429s carry no Retry-After header but DO embed the precise
+    remaining reset delay in the JSON body:
+      details[RetryInfo].retryDelay           e.g. "0.057395018s"
+      details[ErrorInfo].metadata.quotaResetDelay   e.g. "312.252235ms"
+    Returns seconds, or None when absent/unparseable.
+    """
+    try:
+        data = resp.json().get("error", {})
+    except Exception:
+        return None
+    details = data.get("details")
+    if not isinstance(details, list):
+        return None
+
+    def _parse_duration(value: Any) -> float | None:
+        try:
+            s = str(value).strip()
+            if s.endswith("ms"):
+                return max(0.0, float(s[:-2])) / 1000.0
+            if s.endswith("s"):
+                return max(0.0, float(s[:-1]))
+        except (ValueError, TypeError):
+            return None
+        return None
+
+    best: float | None = None
+    for d in details:
+        if not isinstance(d, dict):
+            continue
+        # RetryInfo: "@type": "type.googleapis.com/google.rpc.RetryInfo"
+        if str(d.get("@type", "")).endswith("RetryInfo"):
+            v = _parse_duration(d.get("retryDelay"))
+            if v is not None:
+                best = v if best is None else max(best, v)
+        # ErrorInfo metadata fallback: quotaResetDelay
+        elif str(d.get("@type", "")).endswith("ErrorInfo"):
+            meta = d.get("metadata")
+            if isinstance(meta, dict):
+                v = _parse_duration(meta.get("quotaResetDelay"))
+                if v is not None:
+                    best = v if best is None else max(best, v)
+    return best
+
+
 def _cooldown_for_429(resp: httpx.Response, default: float) -> float:
-    """Cooldown for an upstream 429: honor Retry-After when present, else a
-    short transient cooldown instead of the full default lockout."""
+    """Cooldown for an upstream 429, in precision order:
+    1. Retry-After header (authoritative when present),
+    2. retryDelay/quotaResetDelay parsed from the error body,
+    3. short transient cooldown instead of the full default lockout."""
     header_secs = _extract_retry_after_header(resp)
     if header_secs is not None:
         return header_secs
+    body_secs = _retry_delay_from_body(resp)
+    if body_secs is not None:
+        return max(0.5, body_secs)
     return TRANSIENT_429_COOLDOWN_S
 
 
