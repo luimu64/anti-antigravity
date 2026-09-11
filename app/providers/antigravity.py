@@ -167,18 +167,47 @@ class AntigravityAdapter(BaseAdapter):
         """Compute the cooldown for this 429 and enroll the backend.
 
         Consecutive upstream 429s escalate exponentially (2^n * base, capped
-        at default_cooldown). Any successful request resets the strike count
-        via _on_request_success(). Returns the cooldown seconds applied.
+        at default_cooldown) — but ONLY when the upstream 429 is a genuine
+        quota/tier exhaustion (upstream status RESOURCE_EXHAUSTED). Transient
+        gw-driver retry bursts must not escalate: they carry a body reset
+        delay and cost nothing upstream.
         """
         self._consecutive_429s += 1
         strikes = self._consecutive_429s
-        # The escalated floor applies to ALL branches: even when the body
-        # names a sub-second reset, back-to-back rejections mean hammering.
+        # Detect upstream quota exhaustion: Antigravity 429 bodies carry
+        # ErrorInfo with reason RATE_LIMIT_EXCEEDED on cloudcode-pa. A real
+        # quota exhaustion includes 'exhausted' in the message. Client bursts
+        # rejected elsewhere do not.
+        is_real_exhaustion = False
+        try:
+            data = resp.json()
+            msg = str(data.get("error", {}).get("message", "")).lower()
+            details = data.get("error", {}).get("details") or []
+            reasons = {
+                d.get("reason", "").upper() for d in details if isinstance(d, dict)
+            }
+            is_real_exhaustion = (
+                # Antigravity marks real quota states explicitly:
+                ("exhaust" in msg) or ("RATE_LIMIT_EXCEEDED" in reasons)
+            )
+        except Exception:
+            is_real_exhaustion = False
+
+        if not is_real_exhaustion:
+            # Non-quota burst noise: cooldown follows the inline reset delay
+            # (or a short transient) but does NOT advance the ladder.
+            cooldown = _cooldown_for_429(resp, self.default_cooldown)
+            if strikes > 0:
+                # bucket resets on non-quota 429, so next real one starts fresh
+                self._consecutive_429s = 0
+            self.set_cooldown(cooldown, reason="429 (transient)")
+            return cooldown
+
         cooldown = max(
             _cooldown_for_429(resp, self.default_cooldown),
             _escalate_consecutive_429(strikes - 1),
         )
-        self.set_cooldown(cooldown, reason=f"429 (strike {strikes})")
+        self.set_cooldown(cooldown, reason=f"429 quota (strike {strikes})")
         return cooldown
 
     def _on_request_success(self) -> None:
