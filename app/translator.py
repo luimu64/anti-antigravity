@@ -20,6 +20,223 @@ logger = logging.getLogger("google_gate.translator")
 # Cache to store thought signatures across turns for multi-turn function calling
 _thought_signature_cache: dict[str, str] = {}
 
+# ---------------------------------------------------------------------------
+# Gemini schema sanitization
+# ---------------------------------------------------------------------------
+# Gemini-family backends (Antigravity / Cloud Code, Gemini API, AI Studio web)
+# parse tool and JSON schemas into a protobuf that only understands a strict
+# OpenAPI-3.0 subset. Full JSON Schema / OpenAPI 3.1 constructs ("const",
+# "oneOf", "$ref", ...) cause hard 400s of the form:
+#   Unknown name "const" at 'request.tools[0].function_declarations[...]
+#   .parameters.properties[...].value.any_of[...]': Cannot find field.
+# Sanitize every schema before it leaves the gateway.
+
+# Keys with no equivalent in the Gemini Schema proto: dropped outright.
+_UNSUPPORTED_SCHEMA_KEYS = frozenset(
+    {
+        "$schema",
+        "$id",
+        "$anchor",
+        "$comment",
+        "$ref",
+        "$defs",
+        "definitions",
+        "const",
+        "oneOf",
+        "allOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "pattern",
+        "patternProperties",
+        "prefixItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "uniqueItems",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "additionalProperties",
+        "additionalItems",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+        "propertyNames",
+        "examples",
+        "default",
+        "contentEncoding",
+        "contentMediaType",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+        "title",
+    }
+)
+
+# "format" values the Gemini Schema proto accepts, per "type". Anything else
+# is dropped (upstream rejects e.g. format "uri" / "email" on strings).
+_FORMAT_WHITELIST: dict[str, set[str]] = {
+    "string": {"enum", "date-time"},
+    "number": {"double", "float"},
+    "integer": {"int32", "int64"},
+    "boolean": set(),
+}
+
+_MAX_SCHEMA_DEPTH = 64
+
+
+def _append_description_note(schema: dict[str, Any], note: str) -> None:
+    existing = schema.get("description")
+    schema["description"] = f"{existing} {note}".strip() if existing else note
+
+
+def _sanitize_schema_node(node: Any, defs: dict[str, Any], depth: int) -> Any:
+    if not isinstance(node, dict):
+        return node
+    if depth > _MAX_SCHEMA_DEPTH:
+        return {}
+    depth += 1
+
+    # $ref: resolve only #-rooted definitions pointers; drop unresolved refs.
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        parts = ref.lstrip("#/").split("/")
+        target = defs.get(parts[1]) if len(parts) == 2 else None
+        return _sanitize_schema_node(
+            target if isinstance(target, dict) else {}, defs, depth
+        )
+
+    # const -> enum (strings) or a description note (non-string values).
+    const_value = node.get("const")
+
+    # oneOf has no proto field: fold its branches into anyOf.
+    branches: list[Any] = []
+    for key in ("anyOf", "oneOf"):
+        raw_branches = node.get(key)
+        if isinstance(raw_branches, list):
+            branches.extend(b for b in raw_branches if isinstance(b, dict))
+
+    # allOf: shallow-merge sibling schemas into this one.
+    merged: dict[str, Any] = {}
+    raw_all_of = node.get("allOf")
+    if isinstance(raw_all_of, list):
+        for sub in raw_all_of:
+            if not isinstance(sub, dict):
+                continue
+            sanitized = _sanitize_schema_node(sub, defs, depth)
+            if not isinstance(sanitized, dict):
+                continue
+            for key, value in sanitized.items():
+                if key == "required":
+                    merged["required"] = sorted(
+                        set(merged.get("required", [])) | set(value)
+                    )
+                elif key == "properties" and isinstance(value, dict):
+                    merged.setdefault("properties", {}).update(value)
+                elif key not in merged:
+                    merged[key] = value
+
+    schema_type = node.get("type")
+    nullable = bool(node.get("nullable"))
+    if isinstance(schema_type, list):
+        # JSON Schema type unions: ["string", "null"] -> type + nullable.
+        types = [t for t in schema_type if isinstance(t, str) and t != "null"]
+        if "null" in schema_type:
+            nullable = True
+        if len(types) == 1:
+            schema_type = types[0]
+        elif len(types) > 1:
+            schema_type = None
+            branches = [{"type": t} for t in types] + branches
+
+    cleaned: dict[str, Any] = dict(merged)
+    for key, value in node.items():
+        if key in _UNSUPPORTED_SCHEMA_KEYS or value is None or key in merged:
+            continue
+        if key == "type":
+            cleaned["type"] = schema_type if isinstance(schema_type, str) else None
+            continue
+        if key == "nullable":
+            continue
+        if key == "format":
+            allowed = (
+                _FORMAT_WHITELIST.get(schema_type, set())
+                if isinstance(schema_type, str)
+                else set()
+            )
+            if value not in allowed:
+                continue
+        if key == "enum":
+            continue  # re-added below, filtered
+        if key == "items" and isinstance(value, list):
+            continue  # tuple-style items: not expressible in the proto
+        if key == "required" and not (
+            isinstance(value, list) and all(isinstance(v, str) for v in value)
+        ):
+            continue
+        if key == "properties" and not isinstance(value, dict):
+            continue
+        cleaned[key] = value
+
+    if schema_type:
+        cleaned["type"] = schema_type
+    elif "type" in cleaned and not cleaned["type"]:
+        del cleaned["type"]
+    if nullable:
+        cleaned["nullable"] = True
+
+    if branches:
+        cleaned["anyOf"] = [
+            _sanitize_schema_node(branch, defs, depth) for branch in branches
+        ]
+
+    if const_value is not None:
+        if isinstance(const_value, str):
+            cleaned["enum"] = [const_value]
+        else:
+            _append_description_note(
+                cleaned, f"Must be exactly: {json.dumps(const_value)}"
+            )
+    elif isinstance(node.get("enum"), list):
+        enum_values = node["enum"]
+        string_values = [v for v in enum_values if isinstance(v, str)]
+        if len(string_values) == len(enum_values) and enum_values:
+            cleaned["enum"] = string_values
+        elif enum_values:
+            _append_description_note(
+                cleaned, f"Allowed values: {json.dumps(enum_values)}"
+            )
+
+    if isinstance(cleaned.get("properties"), dict):
+        cleaned["properties"] = {
+            name: _sanitize_schema_node(prop, defs, depth)
+            for name, prop in cleaned["properties"].items()
+        }
+    if isinstance(cleaned.get("items"), dict):
+        cleaned["items"] = _sanitize_schema_node(cleaned["items"], defs, depth)
+
+    return cleaned
+
+
+def sanitize_schema_for_gemini(schema: Any) -> Any:
+    """
+    Convert an arbitrary JSON Schema / OpenAPI 3.1 tool-parameter or
+    response-schema into the strict subset the Gemini Schema proto accepts.
+
+    Mappings: const -> enum, oneOf -> anyOf, ["a","null"] type unions ->
+    nullable, $ref -> inline resolution, allOf -> shallow merge, unknown
+    keywords (pattern, additionalProperties, examples, ...) -> dropped.
+    """
+    if not isinstance(schema, dict):
+        return schema if schema is not None else {}
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    if not isinstance(defs, dict):
+        defs = {}
+    return _sanitize_schema_node(schema, defs, 0)
+
 
 def normalize_model_key(model: Any) -> str:
     """
@@ -487,17 +704,23 @@ class OpenAITranslator:
                     generation_config["responseMimeType"] = "application/json"
                     schema_def = resp_fmt.get("json_schema", {})
                     if "schema" in schema_def:
-                        generation_config["responseSchema"] = schema_def["schema"]
+                        generation_config["responseSchema"] = (
+                            sanitize_schema_for_gemini(schema_def["schema"])
+                        )
                     elif schema_def:
-                        generation_config["responseSchema"] = schema_def
+                        generation_config["responseSchema"] = (
+                            sanitize_schema_for_gemini(schema_def)
+                        )
             elif hasattr(resp_fmt, "type"):
                 if resp_fmt.type in ("json_object", "json"):
                     generation_config["responseMimeType"] = "application/json"
                 elif resp_fmt.type == "json_schema":
                     generation_config["responseMimeType"] = "application/json"
                     if resp_fmt.json_schema:
-                        generation_config["responseSchema"] = resp_fmt.json_schema.get(
-                            "schema", resp_fmt.json_schema
+                        generation_config["responseSchema"] = (
+                            sanitize_schema_for_gemini(
+                                resp_fmt.json_schema.get("schema", resp_fmt.json_schema)
+                            )
                         )
 
         # Reasoning / Thinking config
@@ -542,7 +765,9 @@ class OpenAITranslator:
                     fn_decl = {
                         "name": fn.get("name"),
                         "description": fn.get("description", ""),
-                        "parameters": fn.get("parameters", {}),
+                        "parameters": sanitize_schema_for_gemini(
+                            fn.get("parameters") or {}
+                        ),
                     }
                     function_declarations.append(fn_decl)
             if function_declarations:
