@@ -656,6 +656,23 @@ class AntigravityAdapter(BaseAdapter):
             )
 
         primary = formatted_candidates[0]
+        # Model-unavailable guard: Antigravity sunsets return HTTP 200 with
+        # only a canned notice (no usageMetadata at all). Surface that as a
+        # gateway error instead of a 0-token "success" that misleads clients
+        # (and made a dead model look like the caller's fault).
+        if not usage_metadata:
+            notice = (primary["text"] or "").strip()
+            if notice:
+                logger.error(
+                    "Upstream returned no usageMetadata with text (model %s): %s",
+                    model,
+                    notice[:120],
+                )
+                raise RuntimeError(
+                    f"Antigravity model '{model}' returned no usage metadata — "
+                    f"likely decommissioned upstream. Response text: {notice[:200]}"
+                )
+
         return {
             "responseId": response_id,
             "modelVersion": model_version,
