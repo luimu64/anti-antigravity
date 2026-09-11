@@ -116,6 +116,26 @@ def _cooldown_for_429(resp: httpx.Response, default: float) -> float:
     return TRANSIENT_429_COOLDOWN_S
 
 
+# Escalating backoff for CONSECUTIVE upstream 429s. A single 429 whose body
+# says "resets in 300ms" is real (bucket refresh imminent) — but a retry
+# loop hitting 429s back-to-back means the account is being hammered and
+# every rejected attempt still burns quota tally on Google's side. Without
+# escalation, a misbehaving client (observed: Hindsight memory worker via
+# Bifrost) retried at ~4 req/s and consumed an entire 5-hour quota bucket
+# in minutes with requests never accepted. Cooldown doubles per consecutive
+# 429 up to the default; a successful request resets the strike counter.
+MAX_CONSECUTIVE_429_ESCALATION = 5  # cap: stops at default_cooldown ≈ 60s
+
+
+def _escalate_consecutive_429(current_strikes: int) -> float:
+    """Cooldown for the Nth consecutive 429 (0-indexed): 2^n * base, capped."""
+    factor = min(current_strikes, MAX_CONSECUTIVE_429_ESCALATION)
+    return min(
+        TRANSIENT_429_COOLDOWN_S * (2**factor),
+        PROVIDER_RATE_LIMITS["antigravity"].get("default_cooldown", 60.0),
+    )
+
+
 class AntigravityAdapter(BaseAdapter):
     name = "antigravity"
 
@@ -141,6 +161,29 @@ class AntigravityAdapter(BaseAdapter):
         self._cached_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
         self._http_client: httpx.AsyncClient | None = None
+        self._consecutive_429s: int = 0
+
+    def _apply_429_cooldown(self, resp: httpx.Response) -> float:
+        """Compute the cooldown for this 429 and enroll the backend.
+
+        Consecutive upstream 429s escalate exponentially (2^n * base, capped
+        at default_cooldown). Any successful request resets the strike count
+        via _on_request_success(). Returns the cooldown seconds applied.
+        """
+        self._consecutive_429s += 1
+        strikes = self._consecutive_429s
+        # The escalated floor applies to ALL branches: even when the body
+        # names a sub-second reset, back-to-back rejections mean hammering.
+        cooldown = max(
+            _cooldown_for_429(resp, self.default_cooldown),
+            _escalate_consecutive_429(strikes - 1),
+        )
+        self.set_cooldown(cooldown, reason=f"429 (strike {strikes})")
+        return cooldown
+
+    def _on_request_success(self) -> None:
+        """Reset the consecutive-429 strike counter after a successful call."""
+        self._consecutive_429s = 0
 
     def is_configured(self) -> bool:
         return bool(self.auth.refresh_token or self.auth.access_token)
@@ -177,8 +220,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = _cooldown_for_429(resp, self.default_cooldown)
-            self.set_cooldown(retry_after)
+            retry_after = self._apply_429_cooldown(resp)
             raise RateLimitError(
                 f"Antigravity rate limited (429): {resp.text}",
                 status_code=429,
@@ -190,6 +232,7 @@ class AntigravityAdapter(BaseAdapter):
             raise ValueError(f"loadCodeAssist failed: {resp.status_code} {resp.text}")
 
         data = resp.json()
+        self._on_request_success()
         project_id = data.get("cloudaicompanionProject")
         if project_id and not self.auth.project_id:
             self.auth.project_id = project_id
@@ -295,8 +338,7 @@ class AntigravityAdapter(BaseAdapter):
                 resp = await http.post(url, json={}, headers=headers)
 
             if resp.status_code == 429:
-                retry_after = _cooldown_for_429(resp, self.default_cooldown)
-                self.set_cooldown(retry_after)
+                self._apply_429_cooldown(resp)
                 if self._cached_models:
                     return self._cached_models
                 return {"models": fallback_models}
@@ -321,6 +363,7 @@ class AntigravityAdapter(BaseAdapter):
             else:
                 self._cached_models = data
             self._models_fetched_at = now
+            self._on_request_success()
             return self._cached_models
         except Exception as e:
             logger.warning(f"Error fetching models from Antigravity: {e}")
@@ -343,8 +386,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json={}, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = _cooldown_for_429(resp, self.default_cooldown)
-            self.set_cooldown(retry_after)
+            retry_after = self._apply_429_cooldown(resp)
             raise RateLimitError(
                 f"Antigravity rate limited (429): {resp.text}",
                 status_code=429,
@@ -360,6 +402,7 @@ class AntigravityAdapter(BaseAdapter):
             )
 
         data = resp.json()
+        self._on_request_success()
         groups = data.get("groups", [])
         for grp in groups:
             for bucket in grp.get("buckets", []):
@@ -426,10 +469,7 @@ class AntigravityAdapter(BaseAdapter):
                     "POST", url, json=payload, headers=headers
                 ) as retry_resp:
                     if retry_resp.status_code == 429:
-                        retry_after = _cooldown_for_429(
-                            retry_resp, self.default_cooldown
-                        )
-                        self.set_cooldown(retry_after)
+                        retry_after = self._apply_429_cooldown(retry_resp)
                         raise RateLimitError(
                             f"Antigravity rate limited (429): {await retry_resp.aread()}",
                             status_code=429,
@@ -452,16 +492,17 @@ class AntigravityAdapter(BaseAdapter):
                             if data_str and data_str != "[DONE]":
                                 try:
                                     parsed = json.loads(data_str)
-                                    yield parsed
                                 except json.JSONDecodeError as e:
                                     logger.warning(
                                         f"Failed to parse SSE JSON: {data_str} ({e})"
                                     )
+                                    continue
+                                self._on_request_success()
+                                yield parsed
                 return
 
             if resp.status_code == 429:
-                retry_after = _cooldown_for_429(resp, self.default_cooldown)
-                self.set_cooldown(retry_after)
+                retry_after = self._apply_429_cooldown(resp)
                 err_body = await resp.aread()
                 raise RateLimitError(
                     f"Antigravity rate limited (429): {err_body.decode('utf-8', errors='replace')}",
@@ -486,11 +527,13 @@ class AntigravityAdapter(BaseAdapter):
                     if data_str and data_str != "[DONE]":
                         try:
                             parsed = json.loads(data_str)
-                            yield parsed
                         except json.JSONDecodeError as e:
                             logger.warning(
                                 f"Failed to parse SSE JSON: {data_str} ({e})"
                             )
+                            continue
+                        self._on_request_success()
+                        yield parsed
 
     async def generate_content(
         self,
@@ -633,8 +676,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = _cooldown_for_429(resp, self.default_cooldown)
-            self.set_cooldown(retry_after)
+            retry_after = self._apply_429_cooldown(resp)
             raise RateLimitError(
                 f"Antigravity embedding rate limited (429): {resp.text}",
                 status_code=429,
@@ -645,4 +687,5 @@ class AntigravityAdapter(BaseAdapter):
             logger.error(f"batchEmbedContents failed: {resp.status_code} {resp.text}")
             raise ValueError(f"Antigravity API Error ({resp.status_code}): {resp.text}")
 
+        self._on_request_success()
         return resp.json()
