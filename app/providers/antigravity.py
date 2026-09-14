@@ -55,6 +55,19 @@ def _extract_retry_after_header(
 TRANSIENT_429_COOLDOWN_S = float(os.getenv("ANTIGRAVITY_TRANSIENT_429_COOLDOWN", "3.0"))
 
 
+def _parse_duration(value: Any) -> float | None:
+    """Parse '312.252235ms' / '0.057395018s' style durations to seconds."""
+    try:
+        s = str(value).strip()
+        if s.endswith("ms"):
+            return max(0.0, float(s[:-2])) / 1000.0
+        if s.endswith("s"):
+            return max(0.0, float(s[:-1]))
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
 def _retry_delay_from_body(resp: httpx.Response) -> float | None:
     """Parse the gRPC error body's retryDelay / quotaResetDelay.
 
@@ -70,17 +83,6 @@ def _retry_delay_from_body(resp: httpx.Response) -> float | None:
         return None
     details = data.get("details")
     if not isinstance(details, list):
-        return None
-
-    def _parse_duration(value: Any) -> float | None:
-        try:
-            s = str(value).strip()
-            if s.endswith("ms"):
-                return max(0.0, float(s[:-2])) / 1000.0
-            if s.endswith("s"):
-                return max(0.0, float(s[:-1]))
-        except (ValueError, TypeError):
-            return None
         return None
 
     best: float | None = None
@@ -100,6 +102,28 @@ def _retry_delay_from_body(resp: httpx.Response) -> float | None:
                 if v is not None:
                     best = v if best is None else max(best, v)
     return best
+
+
+def _retry_delay_from_body_str(text: str) -> float | None:
+    """Parse retryDelay / quotaResetDelay from a raw JSON/gRPC body string."""
+    import json as _json
+
+    try:
+        data = _json.loads(text)
+    except Exception:
+        return None
+    details = (data.get("error", {}) or {}).get("details") or []
+    for d in details:
+        if isinstance(d, dict) and d.get("@type", "").endswith("ErrorInfo"):
+            meta = d.get("metadata", {}) or {}
+            for key in ("quotaResetDelay", "retryDelay"):
+                v = meta.get(key)
+                if not v:
+                    continue
+                parsed = _parse_duration(v)
+                if parsed is not None:
+                    return max(0.05, parsed)
+    return None
 
 
 def _cooldown_for_429(resp: httpx.Response, default: float) -> float:
@@ -161,58 +185,109 @@ class AntigravityAdapter(BaseAdapter):
         self._cached_models: dict[str, Any] | None = None
         self._models_fetched_at: float = 0.0
         self._http_client: httpx.AsyncClient | None = None
-        self._consecutive_429s: int = 0
+        # Quota-deny map: model family -> reset timestamp (epoch seconds).
+        # Set ONLY on evidence that a quota bucket is genuinely exhausted;
+        # while set, every request to that family is denied outright at the
+        # router level (no cooldown timer games — the deny lasts until the
+        # bucket's own reset time). Never populated by transient 429s.
+        self._quota_exhausted_until: dict[str, float] = {}
 
-    def _apply_429_cooldown(self, resp: httpx.Response) -> float:
-        """Compute the cooldown for this 429 and enroll the backend.
+    def _family_of(self, model: str) -> str:
+        """Bucket key for a model, e.g. 'gemini-3.8-flash-medium' ->
+        'gemini-3.8-flash' (tier suffixes share one bucket)."""
+        base = model
+        for suffix in ("-low", "-medium", "-high", "-tiered"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+                break
+        return base
 
-        Consecutive upstream 429s escalate exponentially (2^n * base, capped
-        at default_cooldown) — but ONLY when the upstream 429 is a genuine
-        quota/tier exhaustion (upstream status RESOURCE_EXHAUSTED). Transient
-        gw-driver retry bursts must not escalate: they carry a body reset
-        delay and cost nothing upstream.
+    def mark_quota_exhausted(self, model: str, reset_ts: float) -> None:
+        """Deny this model's family until the epoch second reset_ts."""
+        fam = self._family_of(model)
+        self._quota_exhausted_until[fam] = reset_ts
+
+    def quota_family_exhausted(self, model: str) -> bool:
+        now = time.time()
+
+        def _live(fam: str) -> bool:
+            exp = self._quota_exhausted_until.get(fam)
+            return bool(exp and now < exp)
+
+        # Direct family key (tier suffixes share one bucket).
+        if _live(self._family_of(model)):
+            return True
+        # Lane keys set from quota buckets: 'gemini-5h' covers every gemini-*
+        # model, 'claude-lane' covers every claude*/o* alias. A drained 5h
+        # bucket must not deny 3p models, and vice versa.
+        m = model.lower()
+        if m.startswith("gemini") and _live("gemini-5h"):
+            return True
+        if m.startswith(("claude", "o1", "o3", "gpt-oss")) and _live("claude-lane"):
+            return True
+        # gpt-oss resolves to gpt-oss-120b-medium via MODEL_ALIASES; the
+        # bucket marks the canonical 'gpt-oss-120b' family directly.
+        return m.startswith("gpt-oss") and _live("gpt-oss-120b")
+
+    def _apply_429(self, resp: httpx.Response, model: str | None) -> float:
+        """Handle an upstream 429. Returns seconds until a retry makes sense.
+
+        No cooldowns. If the body says the quota is exhausted, the model's
+        family is denied until the reset time parsed from the body (falling
+        back to default_cooldown). Otherwise it's a transient limit: return
+        the body's own retry delay and change nothing.
         """
-        self._consecutive_429s += 1
-        strikes = self._consecutive_429s
-        # Detect upstream quota exhaustion: Antigravity 429 bodies carry
-        # ErrorInfo with reason RATE_LIMIT_EXCEEDED on cloudcode-pa. A real
-        # quota exhaustion includes 'exhausted' in the message. Client bursts
-        # rejected elsewhere do not.
-        is_real_exhaustion = False
+        reset_ts = None
         try:
             data = resp.json()
-            msg = str(data.get("error", {}).get("message", "")).lower()
-            details = data.get("error", {}).get("details") or []
-            reasons = {
-                d.get("reason", "").upper() for d in details if isinstance(d, dict)
-            }
-            is_real_exhaustion = (
-                # Antigravity marks real quota states explicitly:
-                ("exhaust" in msg) or ("RATE_LIMIT_EXCEEDED" in reasons)
-            )
+            details = (data.get("error", {}) or {}).get("details") or []
+            for d in details:
+                if not isinstance(d, dict):
+                    continue
+                meta = d.get("metadata", {}) or {}
+                for key in ("quotaResetDelay", "retryDelay"):
+                    delay = _parse_duration(meta.get(key))
+                    if delay is not None:
+                        reset_ts = time.time() + delay
         except Exception:
-            is_real_exhaustion = False
+            pass
 
-        if not is_real_exhaustion:
-            # Non-quota burst noise: cooldown follows the inline reset delay
-            # (or a short transient) but does NOT advance the ladder.
-            cooldown = _cooldown_for_429(resp, self.default_cooldown)
-            if strikes > 0:
-                # bucket resets on non-quota 429, so next real one starts fresh
-                self._consecutive_429s = 0
-            self.set_cooldown(cooldown, reason="429 (transient)")
-            return cooldown
+        if reset_ts is None:
+            body_delay = _retry_delay_from_body(resp.text)
+            if body_delay is not None:
+                reset_ts = time.time() + body_delay
 
-        cooldown = max(
-            _cooldown_for_429(resp, self.default_cooldown),
-            _escalate_consecutive_429(strikes - 1),
-        )
-        self.set_cooldown(cooldown, reason=f"429 quota (strike {strikes})")
-        return cooldown
+        # Determine whether this 429 is model-scoped exhaustion (quota) or
+        # account-wide: bodies carrying a 'model' metadata entry are per-model.
+        model_scoped = False
+        try:
+            data = resp.json()
+            details = data.get("error", {}).get("details") or []
+            for d in details:
+                if isinstance(d, dict) and d.get("@type", "").endswith("ErrorInfo"):
+                    meta = d.get("metadata", {}) or {}
+                    if meta.get("model"):
+                        model_scoped = True
+        except Exception:
+            pass
 
-    def _on_request_success(self) -> None:
-        """Reset the consecutive-429 strike counter after a successful call."""
-        self._consecutive_429s = 0
+        if reset_ts is not None and model and model_scoped:
+            self.mark_quota_exhausted(model, reset_ts)
+            logger.warning(
+                "Antigravity quota exhausted for '%s' family; denying until %s",
+                model,
+                datetime.datetime.fromtimestamp(
+                    reset_ts, datetime.timezone.utc
+                ).isoformat(),
+            )
+            # Scoped deny is registered via _quota_exhausted_until; the caller
+            # must NOT also slap an adapter-wide cooldown — that would deny
+            # unrelated models (e.g. 3p claude when a gemini bucket drains).
+            return max(0.5, reset_ts - time.time())
+
+        if reset_ts is None:
+            reset_ts = time.time() + TRANSIENT_429_COOLDOWN_S
+        return max(0.5, reset_ts - time.time())
 
     def is_configured(self) -> bool:
         return bool(self.auth.refresh_token or self.auth.access_token)
@@ -249,7 +324,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = self._apply_429_cooldown(resp)
+            retry_after = self._apply_429(resp, None)
             raise RateLimitError(
                 f"Antigravity rate limited (429): {resp.text}",
                 status_code=429,
@@ -261,7 +336,6 @@ class AntigravityAdapter(BaseAdapter):
             raise ValueError(f"loadCodeAssist failed: {resp.status_code} {resp.text}")
 
         data = resp.json()
-        self._on_request_success()
         project_id = data.get("cloudaicompanionProject")
         if project_id and not self.auth.project_id:
             self.auth.project_id = project_id
@@ -367,7 +441,7 @@ class AntigravityAdapter(BaseAdapter):
                 resp = await http.post(url, json={}, headers=headers)
 
             if resp.status_code == 429:
-                self._apply_429_cooldown(resp)
+                self._apply_429(resp, None)
                 if self._cached_models:
                     return self._cached_models
                 return {"models": fallback_models}
@@ -392,7 +466,6 @@ class AntigravityAdapter(BaseAdapter):
             else:
                 self._cached_models = data
             self._models_fetched_at = now
-            self._on_request_success()
             return self._cached_models
         except Exception as e:
             logger.warning(f"Error fetching models from Antigravity: {e}")
@@ -415,7 +488,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json={}, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = self._apply_429_cooldown(resp)
+            retry_after = self._apply_429(resp, None)
             raise RateLimitError(
                 f"Antigravity rate limited (429): {resp.text}",
                 status_code=429,
@@ -431,35 +504,78 @@ class AntigravityAdapter(BaseAdapter):
             )
 
         data = resp.json()
-        self._on_request_success()
         groups = data.get("groups", [])
         for grp in groups:
             for bucket in grp.get("buckets", []):
                 rem = bucket.get("remainingFraction")
                 if rem is not None and rem <= self.min_quota_fraction:
-                    cooldown_secs = self.default_cooldown
+                    # Known-exhausted bucket: deny the models it serves until
+                    # reset. Bucket IDs look like 'gemini-5h' / '3p-5h' etc —
+                    # model-family mapping happens via models built from these.
+                    reset_ts = time.time() + self.default_cooldown
                     reset_time_str = bucket.get("resetTime")
                     if reset_time_str:
                         try:
                             dt = datetime.datetime.fromisoformat(
                                 reset_time_str.replace("Z", "+00:00")
                             )
-                            delta = (
-                                dt.timestamp()
-                                - datetime.datetime.now(
-                                    datetime.timezone.utc
-                                ).timestamp()
-                            )
-                            if delta > 0:
-                                cooldown_secs = min(delta, 86400.0)
+                            reset_ts = dt.timestamp()
                         except Exception:
                             pass
-                    self.set_cooldown(cooldown_secs)
-                    logger.warning(
-                        f"Antigravity quota bucket '{bucket.get('displayName', bucket.get('bucketId'))}' exhausted "
-                        f"({rem * 100:.1f}% remaining). Placed in cooldown for {cooldown_secs:.1f}s."
+                    bucket_id = str(
+                        bucket.get("modelId")
+                        or bucket.get("model_id")
+                        or bucket.get("bucketId")
+                        or bucket.get("displayName", "")
                     )
+                    for fam in self._bucket_families(bucket):
+                        self.mark_quota_exhausted(fam, reset_ts)
+                    logger.warning(
+                        f"Antigravity quota bucket '{bucket_id}' exhausted "
+                        f"({rem * 100:.1f}% remaining). Denying its models until reset."
+                    )
+
+        # Quota summary tells us which aggregates are drained — but buckets
+        # are account aggregates, not per-model. Mark every cached model
+        # family: when the shared bucket is empty ALL models draw it.
+        # (Per-model 429s add finer-grained denies via _apply_429.)
+        # NOTE: intentionally NOT marking here — bucket->model mapping is
+        # unknown (a 'gemini-5h' bucket serves everything). Aggregate
+        # exhaustion without a per-model failure is informational only;
+        # per-model denies from real 429s are the enforcement point.
         return data
+
+    def _bucket_families(self, bucket: dict) -> list[str]:
+        """Map a quota bucket (raw upstream dict) to the model families it
+        serves. Identification priority: modelId/model_id/bucketId
+        ('gemini-5h', '3p-5h', 'gemini-weekly'...) — displayName
+        ('Five Hour Limit Remaining') does NOT carry the discriminator.
+
+        Verified bucket ids from retrieveUserQuotaSummary:
+        - 'gemini-weekly' / 'gemini-5h'      -> gemini-* models only
+        - '3p-weekly' / '3p-5h'              -> third-party models only
+          (claude-*, gpt-oss-*)
+        Aggregate markers are stored with a 'marker:' prefix so they can
+        never accidentally match a real model family key.
+        """
+        b = str(
+            bucket.get("modelId")
+            or bucket.get("model_id")
+            or bucket.get("bucketId")
+            or bucket.get("displayName")
+            or ""
+        ).lower()
+        if "3p-" in b:
+            return [
+                "marker:3p-weekly" if "weekly" in b else "marker:3p-5h",
+                "claude-lane",
+                "gpt-oss-120b",
+            ]
+        if "5h" in b:
+            return ["gemini-5h"]
+        if "weekly" in b:
+            return ["marker:gemini-weekly"]  # aggregate marker, not a family
+        return []
 
     async def stream_generate_content(
         self,
@@ -498,7 +614,7 @@ class AntigravityAdapter(BaseAdapter):
                     "POST", url, json=payload, headers=headers
                 ) as retry_resp:
                     if retry_resp.status_code == 429:
-                        retry_after = self._apply_429_cooldown(retry_resp)
+                        retry_after = self._apply_429(retry_resp, model)
                         raise RateLimitError(
                             f"Antigravity rate limited (429): {await retry_resp.aread()}",
                             status_code=429,
@@ -526,12 +642,11 @@ class AntigravityAdapter(BaseAdapter):
                                         f"Failed to parse SSE JSON: {data_str} ({e})"
                                     )
                                     continue
-                                self._on_request_success()
-                                yield parsed
+                                    yield parsed
                 return
 
             if resp.status_code == 429:
-                retry_after = self._apply_429_cooldown(resp)
+                retry_after = self._apply_429(resp, model)
                 err_body = await resp.aread()
                 raise RateLimitError(
                     f"Antigravity rate limited (429): {err_body.decode('utf-8', errors='replace')}",
@@ -561,7 +676,6 @@ class AntigravityAdapter(BaseAdapter):
                                 f"Failed to parse SSE JSON: {data_str} ({e})"
                             )
                             continue
-                        self._on_request_success()
                         yield parsed
 
     async def generate_content(
@@ -722,7 +836,7 @@ class AntigravityAdapter(BaseAdapter):
             resp = await http.post(url, json=payload, headers=headers)
 
         if resp.status_code == 429:
-            retry_after = self._apply_429_cooldown(resp)
+            retry_after = self._apply_429(resp, None)
             raise RateLimitError(
                 f"Antigravity embedding rate limited (429): {resp.text}",
                 status_code=429,
@@ -733,5 +847,4 @@ class AntigravityAdapter(BaseAdapter):
             logger.error(f"batchEmbedContents failed: {resp.status_code} {resp.text}")
             raise ValueError(f"Antigravity API Error ({resp.status_code}): {resp.text}")
 
-        self._on_request_success()
         return resp.json()

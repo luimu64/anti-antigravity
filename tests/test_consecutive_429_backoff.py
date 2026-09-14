@@ -1,74 +1,75 @@
-"""Tests for consecutive-429 escalation (quota-exhaustion bodies only)."""
+"""Antigravity 429 policy: no cooldowns.
 
-import httpx  # noqa: E402
+Transient 429s change nothing. Model-scoped quota-exhaustion 429s populate
+the per-family deny map until the reset time parsed from the body.
+"""
 
-from app.providers.antigravity import (  # noqa: E402
-    TRANSIENT_429_COOLDOWN_S,
-    AntigravityAdapter,
-    _escalate_consecutive_429,
-)
+import time
 
+from app.providers.antigravity import AntigravityAdapter
 
-def _resp429(body: str) -> httpx.Response:
-    return httpx.Response(
-        429,
-        headers={"Content-Type": "application/json"},
-        request=httpx.Request("POST", "https://x"),
-        content=body.encode(),
-    )
+TRANSIENT_BODY = """
+{
+  "error": {"code": 429, "message": "Resource has been exhausted.",
+  "status": "RESOURCE_EXHAUSTED",
+  "details": [
+    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.05s"}
+  ]}
+}
+"""
 
-
-TRANSIENT_BODY = '{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.05s"}]}}'
-QUOTA_BODY = (
-    '{"error":{"message":"You have exhausted your capacity on this model. Resets in 0s.",'
-    '"status":"RESOURCE_EXHAUSTED",'
-    '"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED",'
-    '"metadata":{"quotaResetDelay":"312ms"}},'
-    '{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.05s"}]}}'
-)
-
-
-def test_escalation_sequence():
-    base = TRANSIENT_429_COOLDOWN_S
-    assert _escalate_consecutive_429(0) == base
-    assert _escalate_consecutive_429(1) == base * 2
-    assert _escalate_consecutive_429(2) == base * 4
-    assert _escalate_consecutive_429(5) == 60.0
-    assert _escalate_consecutive_429(50) == 60.0
+QUOTA_BODY = """
+{
+  "error": {"code": 429,
+  "message": "You have exhausted your capacity on this model. Resets in 0s.",
+  "status": "RESOURCE_EXHAUSTED",
+  "details": [
+    {"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+     "reason": "RATE_LIMIT_EXCEEDED",
+     "domain": "cloudcode-pa.googleapis.com",
+     "metadata": {"model": "gemini-3.8-flash-medium",
+                  "quotaResetDelay": "312.252235ms"}}
+  ]}
+}
+"""
 
 
-def test_transient_429_resets_strikes_never_escalates():
+def _resp429(body):
+    import httpx
+
+    return httpx.Response(429, text=body)
+
+
+def test_transient_429_marks_nothing():
     adapter = AntigravityAdapter()
-    c1 = adapter._apply_429_cooldown(_resp429(TRANSIENT_BODY))
-    assert c1 <= TRANSIENT_429_COOLDOWN_S
-    assert adapter._consecutive_429s == 0  # transient resets ladder
-    for _ in range(5):
-        c = adapter._apply_429_cooldown(_resp429(TRANSIENT_BODY))
-        assert c <= TRANSIENT_429_COOLDOWN_S  # never climbs
+    adapter._apply_429(_resp429(TRANSIENT_BODY), "gemini-3.8-flash")
+    assert adapter.get_cooldown_remaining() == 0.0
+    assert not adapter._quota_exhausted_until
 
 
-def test_quota_429s_escalate():
+def test_quota_429_denies_family_only():
     adapter = AntigravityAdapter()
-    resp = _resp429(QUOTA_BODY)
-    cooldowns = [adapter._apply_429_cooldown(resp) for _ in range(4)]
-    assert cooldowns[1] > cooldowns[0]
-    assert cooldowns[3] > cooldowns[2]
-    assert cooldowns[-1] >= 24.0
-    assert adapter._consecutive_429s == 4
+    now = time.time()
+    adapter._apply_429(_resp429(QUOTA_BODY), "gemini-3.8-flash-medium")
+    # Model family denied until the body's reset delay (~0.3s)
+    assert adapter.quota_family_exhausted("gemini-3.8-flash-medium")
+    assert adapter.quota_family_exhausted("gemini-3.8-flash")
+    # Different family unaffected
+    assert not adapter.quota_family_exhausted("gemini-3.6-flash")
+    # Cooldown state untouched — other models route.
+    assert adapter.get_cooldown_remaining() == 0.0
+    assert 0.2 <= adapter._quota_exhausted_until["gemini-3.8-flash"] - now <= 1.0
 
 
-def test_success_resets_strikes():
+def test_expiry_clears_deny():
     adapter = AntigravityAdapter()
-    for _ in range(4):
-        adapter._apply_429_cooldown(_resp429(QUOTA_BODY))
-    assert adapter._consecutive_429s == 4
-    adapter._on_request_success()
-    assert adapter._consecutive_429s == 0
-    c = adapter._apply_429_cooldown(_resp429(QUOTA_BODY))
-    assert c <= TRANSIENT_429_COOLDOWN_S
+    adapter.mark_quota_exhausted("gemini-3.8-flash", time.time() - 1)
+    assert not adapter.quota_family_exhausted("gemini-3.8-flash")
 
 
 def test_body_delay_floor_still_applies():
     adapter = AntigravityAdapter()
-    c1 = adapter._apply_429_cooldown(_resp429(TRANSIENT_BODY))
-    assert c1 >= 0.5
+    now = time.time()
+    adapter._apply_429(_resp429(QUOTA_BODY), "gemini-3.8-flash-medium")
+    exp = adapter._quota_exhausted_until["gemini-3.8-flash"]
+    assert exp - now >= 0.3

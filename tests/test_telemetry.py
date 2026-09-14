@@ -74,6 +74,9 @@ def make_adapter(
     adapter.is_available.return_value = True
     adapter.cooldown_until = 0.0
     adapter.get_cooldown_remaining.return_value = 0.0
+    # spec'd MagicMock exposes quota_family_exhausted as a truthy auto-mock,
+    # which flips scoped quota-deny logic silently — pin it to False.
+    adapter.quota_family_exhausted = MagicMock(return_value=False)
     if generate_error is not None:
         adapter.generate_content = AsyncMock(side_effect=generate_error)
     else:

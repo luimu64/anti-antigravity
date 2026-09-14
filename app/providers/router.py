@@ -813,7 +813,19 @@ class MultiBackendRouter(BaseAdapter):
     ) -> list[BaseAdapter]:
         """Return capable adapters with proactive capacity and not in reactive cooldown."""
         capable = self.get_capable_adapters(model=model, is_embedding=is_embedding)
-        return [a for a in capable if a.is_available(estimated_tokens=estimated_tokens)]
+        result = []
+        for a in capable:
+            # Quota-deny: adapter explicitly knows a model family's quota is
+            # exhausted until a reset time — deny that model outright, no
+            # cooldown involved. Other models on the same adapter pass.
+            # Spec'd MagicMock raises on absent attrs; only treat real
+            # callables as quota-deny sources.
+            deny = getattr(a, "quota_family_exhausted", None)
+            if callable(deny) and model and deny(model):
+                continue
+            if a.is_available(estimated_tokens=estimated_tokens):
+                result.append(a)
+        return result
 
     def get_ordered_adapters(
         self,
@@ -1118,7 +1130,16 @@ class MultiBackendRouter(BaseAdapter):
                 }
                 if self._is_rate_limit_exception(e):
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
-                    adapter.set_cooldown(retry_after, reason=str(e)[:200])
+                    _scoped = (
+                        model
+                        and callable(getattr(adapter, "quota_family_exhausted", None))
+                        and adapter.quota_family_exhausted(model)
+                    )
+                    if not _scoped:
+                        # Scoped quota-deny is already registered on the
+                        # adapter for this model family; do not also cool the
+                        # whole adapter (that blanketed unrelated models).
+                        adapter.set_cooldown(retry_after, reason=str(e)[:200])
                     attempts.append(
                         {
                             "backend": adapter.name,
@@ -1360,7 +1381,13 @@ class MultiBackendRouter(BaseAdapter):
                 }
                 if is_rate_limit:
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
-                    adapter.set_cooldown(retry_after, reason=str(e)[:200])
+                    _scoped = (
+                        model
+                        and callable(getattr(adapter, "quota_family_exhausted", None))
+                        and adapter.quota_family_exhausted(model)
+                    )
+                    if not _scoped:
+                        adapter.set_cooldown(retry_after, reason=str(e)[:200])
 
                 if not success:
                     status_label = "rate_limited" if is_rate_limit else "connect_failed"
@@ -1532,7 +1559,13 @@ class MultiBackendRouter(BaseAdapter):
                 }
                 if self._is_rate_limit_exception(e):
                     retry_after = getattr(e, "retry_after", 60.0) or 60.0
-                    adapter.set_cooldown(retry_after, reason=str(e)[:200])
+                    _scoped = (
+                        model
+                        and callable(getattr(adapter, "quota_family_exhausted", None))
+                        and adapter.quota_family_exhausted(model)
+                    )
+                    if not _scoped:
+                        adapter.set_cooldown(retry_after, reason=str(e)[:200])
                     attempts.append({"backend": adapter.name, "status": "rate_limited"})
                     log_event(
                         telemetry_logger,

@@ -97,7 +97,9 @@ def test_adapter_configuration_checks():
 async def test_free_first_routing_and_429_fallback():
     """Verify free_first routing strategy: Gemini Web -> Gemini API -> Antigravity on 429."""
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.is_configured.return_value = True
     mock_agy.is_available.return_value = True
@@ -161,7 +163,9 @@ async def test_free_first_routing_and_429_fallback():
 async def test_round_robin_routing():
     """Verify round_robin distributes requests evenly across available backends."""
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.is_configured.return_value = True
     mock_agy.is_available.return_value = True
@@ -216,7 +220,9 @@ async def test_round_robin_two_backends_with_labeling_calls():
     round-robin with exactly 2 available backends always pick the first one.
     """
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.is_configured.return_value = True
     mock_agy.is_available.return_value = True
@@ -275,7 +281,9 @@ async def test_streaming_fallback_on_429():
     mock_api.stream_generate_content = failing_stream
 
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.is_configured.return_value = True
     mock_agy.is_available.return_value = True
@@ -311,7 +319,9 @@ async def test_streaming_fallback_on_429():
 async def test_models_aggregation_and_ranking():
     """Verify model aggregation ranks models supported across more enabled providers first."""
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.fetch_available_models = AsyncMock(
         return_value={
@@ -376,7 +386,9 @@ async def test_models_aggregation_and_ranking():
 async def test_models_redundancy_and_newness_sorting():
     """Verify secondary sorting by model version / newness when redundancy count is tied."""
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.fetch_available_models = AsyncMock(
         return_value={
@@ -418,7 +430,9 @@ async def test_models_redundancy_and_newness_sorting():
 async def test_models_disabled_backend_exclusion():
     """Verify disabled backends do not contribute to aggregated model listings."""
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.fetch_available_models = AsyncMock(
         return_value={
@@ -494,7 +508,9 @@ async def test_models_hidden_and_reasoning_tier_mapping():
 
     # 2. Verify hidden model detection
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.enabled = True
     mock_agy.fetch_available_models = AsyncMock(
         return_value={
@@ -1021,6 +1037,7 @@ async def test_hybrid_routing_proactive_exhaustion_fallback():
     mock_api.generate_content = AsyncMock(return_value={"backend": "gemini_api"})
 
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
     mock_agy.enabled = False
 
@@ -1066,6 +1083,7 @@ async def test_all_backends_exhausted_immediate_429():
     mock_api.get_cooldown_remaining.return_value = 30.0
 
     mock_agy = MagicMock(spec=AntigravityAdapter)
+    mock_agy.quota_family_exhausted.return_value = False
     mock_agy.name = "antigravity"
     mock_agy.enabled = False
 
@@ -1120,8 +1138,73 @@ async def test_antigravity_quota_summary_exhaustion_trigger():
 
     await adapter.retrieve_user_quota_summary()
 
-    # Cooldown should now be active
-    assert adapter.get_cooldown_remaining() > 0.0
+    # Quota-deny replaces cooldown: a weekly aggregate exhaustion must NOT
+    # create a cooldown (bucket->model mapping unknown) — deny map keyed by
+    # aggregate marker only; per-model denies come from real 429s.
+    assert adapter.get_cooldown_remaining() == 0.0
+    # Weekly aggregate bucket -> aggregate marker, no model family denied.
+    assert "marker:gemini-weekly" in adapter._quota_exhausted_until
+    assert not adapter.quota_family_exhausted("gemini-3.6-flash")
+
+
+async def _run_quota_summary_with_buckets(adapter, buckets, display_names):
+    """Helper: drive retrieve_user_quota_summary against canned bucket data."""
+    groups = [
+        {
+            "buckets": [
+                {
+                    "bucketId": b,
+                    "displayName": d,
+                    "remainingFraction": 0.0,
+                    "resetTime": "2030-01-01T00:00:00Z",
+                }
+            ]
+        }
+        for b, d in zip(buckets, display_names, strict=True)
+    ]
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json = MagicMock(return_value={"groups": groups})
+    adapter._get_headers = AsyncMock(return_value={})
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.is_closed = False
+    adapter._http_client = mock_client
+    adapter.get_http_client = MagicMock(return_value=mock_client)
+    await adapter.retrieve_user_quota_summary()
+    return adapter
+
+
+async def test_antigravity_gemini_5h_bucket_denies_gemini_but_not_3p():
+    """The 2026-09-14 incident: gemini-5h drained; claude/gpt-oss share the
+    adapter but draw the untouched 3p buckets — they must stay available.
+    Previously the scoped reset delay escaped as an adapter-wide cooldown and
+    blanketed every model."""
+    adapter = AntigravityAdapter()
+    adapter = await _run_quota_summary_with_buckets(
+        adapter, ["gemini-5h"], ["Five Hour Limit"]
+    )
+    # No adapter-wide cooldown: only the bucket-scoped deny map is set.
+    assert adapter.get_cooldown_remaining() == 0.0
+    assert "gemini-5h" in adapter._quota_exhausted_until
+    # Gemini lane denied, 3p lanes alive.
+    assert adapter.quota_family_exhausted("gemini-3.6-flash")
+    assert adapter.quota_family_exhausted("gemini-3.1-flash-lite")
+    assert not adapter.quota_family_exhausted("claude-3.7-sonnet")
+    assert not adapter.quota_family_exhausted("claude-3-opus")
+    assert not adapter.quota_family_exhausted("gpt-oss-120b")
+
+
+async def test_antigravity_3p_bucket_denies_3p_but_not_gemini():
+    """Mirror case: drained 3p-5h must not deny gemini models."""
+    adapter = AntigravityAdapter()
+    adapter = await _run_quota_summary_with_buckets(
+        adapter, ["3p-5h"], ["Third Party Five Hour Limit"]
+    )
+    assert "claude-lane" in adapter._quota_exhausted_until
+    assert adapter.quota_family_exhausted("claude-sonnet-4-6")
+    assert adapter.quota_family_exhausted("gpt-oss-120b")
+    assert not adapter.quota_family_exhausted("gemini-3.6-flash")
 
 
 def test_base_adapter_get_rate_limit_quotas():

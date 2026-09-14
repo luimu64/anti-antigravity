@@ -57,6 +57,7 @@ def _make_router(fail_first_backend: bool):
         mock.enabled = enabled
         mock.is_configured = MagicMock(return_value=True)
         mock.is_available = MagicMock(return_value=True)
+        mock.quota_family_exhausted = MagicMock(return_value=False)
 
     api = MagicMock(spec=GeminiApiAdapter)
     api.name = "gemini_api"
