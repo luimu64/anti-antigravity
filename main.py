@@ -21,6 +21,7 @@ from app.realtime import hub as realtime_hub
 from app.realtime import router as realtime_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.live import router as live_router
 from app.routes.openai import router as openai_router
 from app.telemetry import log_event, setup_logging
 
@@ -107,6 +108,7 @@ app.include_router(dashboard_router)
 app.include_router(openai_router)
 app.include_router(auth_router)
 app.include_router(realtime_router)
+app.include_router(live_router)
 
 
 # Global OpenAI-compatible Exception Handlers

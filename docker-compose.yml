@@ -21,6 +21,13 @@ services:
       - AISTUDIO_ORACLE_CHROMIUM=/usr/bin/chromium
       # oracle|http|auto — auto uses the oracle when the profile dir is set.
       - AISTUDIO_WEB_MODE=auto
+      # --- Gemini Web live voice (/v1/live, bidiGenerateContent) ---
+      # Persistent signed-in profile for the live lane; same requirement as above.
+      # Seed it once with scripts/gemini_web_live_login.py (Xvfb + noVNC).
+      - GEMINI_WEB_LIVE_PROFILE_DIR=/app/data/gemini-live-profile
+      - GEMINI_WEB_LIVE_CHROMIUM=/usr/bin/chromium
+      - GEMINI_WEB_LIVE_HEADLESS=1
+      - LIVE_ENABLED=true
       # Optional: set pre-existing credentials if running headless
       # - REFRESH_TOKEN=
       # - ACCESS_TOKEN=

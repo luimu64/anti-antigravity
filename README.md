@@ -24,6 +24,10 @@ Supports all **Google and partner models** (Gemini 3.7 Flash with reasoning, Cla
 - **Modern Message Roles & Modalities**:
   - Full support for `"developer"` role (o1/o3 style system prompts)
   - Multimodal image (`image_url`) and audio (`input_audio`) input payloads
+- **Live Voice Sessions (bidiGenerateContent)**:
+  - WebSocket `/v1/live` speaking Google's Live API message schema (setup, realtimeInput, serverContent, interrupted, usage)
+  - Voice in (PCM16 mic frames), voice out (model audio), barge-in without a dangling `turnComplete`
+  - Served by the Gemini Web cookie lane through a persistent signed-in browser profile
 - **Tool & Function Calling**:
   - Standard `tools` function declarations with `thoughtSignature` preservation across turns
   - Flexible `tool_choice` modes (`auto`, `none`, `required`, or forced specific function)
@@ -187,6 +191,92 @@ If an invalid or missing key is provided, the bridge returns standard OpenAI HTT
 
 ---
 
+## Live Voice Sessions
+
+`/v1/live` is a WebSocket that speaks Google's **Live API** (`BidiGenerateContent`)
+message schema, so a Live-capable client can point at the gateway instead of Google.
+The upstream lane is the Gemini Web cookie lane: voice in is an audio attachment to the
+web conversation, voice out is the app's own TTS stream. Raw RPC replay is not possible
+on this lane — see [`INTERNAL_API.md` §7c](INTERNAL_API.md) for the verified RPC
+inventory and the bridge design.
+
+```python
+import asyncio, base64, json
+import websockets
+
+
+async def main():
+    async with websockets.connect("ws://localhost:8000/v1/live?key=sk-gate-...") as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "setup": {
+                        "model": "gemini-3.7-flash",
+                        "systemInstruction": {
+                            "parts": [{"text": "Answer briefly and out loud."}]
+                        },
+                        "generationConfig": {"responseModalities": ["AUDIO"]},
+                    }
+                }
+            )
+        )
+        print(await ws.recv())  # {"setupComplete": {}}
+
+        await ws.send(json.dumps({"realtimeInput": {"activityStart": {}}}))
+        await ws.send(
+            json.dumps(
+                {
+                    "realtimeInput": {
+                        "mediaChunks": [
+                            {
+                                "mimeType": "audio/pcm;rate=16000",
+                                "data": base64.b64encode(pcm).decode(),
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        await ws.send(json.dumps({"realtimeInput": {"activityEnd": {}}}))
+        while True:
+            frame = json.loads(await ws.recv())
+            if frame.get("serverContent", {}).get("turnComplete"):
+                break
+            # frame["serverContent"]["modelTurn"]["parts"][i]["inlineData"] -> model audio
+
+
+asyncio.run(main())
+```
+
+Setup (one time, in the container):
+
+```bash
+# The Google login must happen in a real browser window (the lane's profile dir
+# must be on a persistent volume). The image ships Xvfb + x11vnc + novnc for this.
+Xvfb :99 -screen 0 1920x1080x24 &
+DISPLAY=:99 x11vnc -display :99 -forever -nopw -listen 0.0.0.0 -rfbport 5900 &
+websockify --web /usr/share/novnc 6080 localhost:5900 &
+DISPLAY=:99 GEMINI_WEB_LIVE_HEADLESS=0 python scripts/gemini_web_live_login.py
+# open http://<host>:6080/vnc.html, sign in to Google, confirm gemini.google.com/app loads
+```
+
+Readiness is reported by `GET /v1/live/status` (`available`, `profile_dir`, `last_error`,
+capabilities). Function calling is **not** available on this lane and is refused
+explicitly.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LIVE_ENABLED` | `true` | Expose the live lane |
+| `LIVE_DEFAULT_MODEL` | `gemini-3.7-flash` | Advisory model when a client omits one |
+| `LIVE_SILENCE_FLUSH_S` | `1.5` | Quiet time that closes a turn for clients streaming bare `mediaChunks` |
+| `GEMINI_WEB_LIVE_PROFILE_DIR` | `data/gemini-live-profile` | Persistent browser profile holding the Google login |
+| `GEMINI_WEB_LIVE_HEADLESS` | `1` | `0` for the one-time headed login only |
+| `GEMINI_WEB_LIVE_CHROMIUM` | *(empty)* | Chromium binary; set to `/usr/bin/chromium` in the container |
+| `GEMINI_WEB_LIVE_TURN_TIMEOUT` | `150` | Seconds to wait for a web reply |
+| `GEMINI_WEB_LIVE_TTS_TIMEOUT` | `30` | Seconds to wait for captured voice-out audio |
+
+---
+
 ## API Endpoints Reference
 
 | Endpoint | Method | Description |
@@ -201,6 +291,8 @@ If an invalid or missing key is provided, the bridge returns standard OpenAI HTT
 | `/v1/chat/completions` | `POST` | OpenAI chat completions (supports `stream: true/false`, reasoning, tools) |
 | `/v1/completions` | `POST` | Legacy text completion endpoint adapter |
 | `/v1/embeddings` | `POST` | Embeddings endpoint |
+| `/v1/live` | `WS` | Gemini Live (`bidiGenerateContent`) voice session: audio in, audio out, barge-in |
+| `/v1/live/status` | `GET` | Live voice lane readiness (profile, capabilities, last error) |
 | `/auth/login` | `GET` | Google OAuth 2.0 PKCE login initiation |
 | `/auth/callback` | `GET` | OAuth callback handler |
 | `/auth/status` | `GET` | Authentication status & token expiration |

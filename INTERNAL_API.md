@@ -553,6 +553,87 @@ bare enum strings.
 
 ---
 
+## 7c. Gemini Web Live Voice (bidiGenerateContent bridge)
+
+Implemented in `app/live/` (WS endpoint `/v1/live`, see `app/routes/live.py`). The
+gateway speaks **Google's Live API schema** (`BidiGenerateContent`) at the edge and
+implements it on top of the cookie lane at the back. Clients that would otherwise
+connect to `generativelanguage.googleapis.com` (Live API over WebSocket) can point at
+`ws://<gateway>/v1/live`.
+
+### 7c.1 RPC inventory of the Gemini web frontend (verified from the served bundle)
+
+Enumerated directly from the served `BardChatUi` JavaScript bundles
+(`gemini.gstatic.com/_/mss/boq-bard-web/_/js/...`, build label
+`boq_assistant-bard-web-server_20260922.11_p0`) by extracting every
+`new _.oC("<rpcid>", ..., "/BardFrontendService.<Method>")` and `tC("/...", "<rpcid>")`
+registration. The voice-relevant subset:
+
+| RPC | rpcid | Role for a live session |
+|---|---|---|
+| `GetTtsStream` | `JLpPJe` | **Voice out** — the web app's "Listen" playback stream |
+| `ProcessFile` | `LbusCb` | **Voice in** — bidirectional file/attachment processing stream (audio upload) |
+| `StreamGenerate` | `RxAFq` | Text generation (reply to the turn) |
+| `AbortGeneration` | `NkpXw` | Stop the in-flight generation (barge-in) |
+
+**There is no bidirectional audio RPC on this lane.** The frontend registers no
+`bidiGenerateContent`, no live-session RPC and no voice-session websocket — the only
+`websocket` strings in the bundle are `canvas/websocket_*` telemetry for the Canvas
+feature. The web client's own voice UX is therefore client-side: the browser captures
+the mic and the app plays `GetTtsStream` back. Combined with the generation gate
+(§8: `StreamGenerate` returns a reCAPTCHA Enterprise challenge to non-browser
+clients), this means raw RPC replay cannot deliver voice on this lane at all.
+
+### 7c.2 Bridge architecture (what `/v1/live` actually does)
+
+The lane is driven the way the AI Studio oracle is driven — through the app's own UI in
+a persistent, signed-in browser profile — and translated to the Live schema:
+
+- **Voice in** — the assembled utterance (PCM16 mono) is wrapped as WAV and attached to
+  the conversation via the app's file input (`set_input_files` on the hidden uploader,
+  the UI equivalent of `ProcessFile`), then the turn text/persona is submitted.
+- **Voice out** — after the reply completes, the app's own listen control is clicked and
+  the TTS audio is harvested by intercepting the `GetTtsStream` response body from the
+  page's network layer. The payload layout is undocumented, so extraction walks the
+  JSPB/batchexecute tree for the largest base64 blob with real audio magic bytes rather
+  than hard-coding an index, and the container type is sniffed (mpeg/wav/ogg/flac/mp4,
+  else raw PCM16 @24 kHz).
+- **Barge-in** — a new utterance cancels the in-flight turn, the client receives
+  `serverContent.interrupted` (and never a `turnComplete` for the cut turn), and the
+  app's stop control aborts upstream generation.
+- **Tools** — not available: the cookie lane exposes no function-calling wire, so a
+  `toolResponse` frame is answered with an `unimplemented` error instead of silence.
+
+Frames follow the vendor schema exactly: `setup` (model, `systemInstruction`,
+`generationConfig.responseModalities`/`speechConfig`), `realtimeInput`
+(`activityStart`/`activityEnd`/`mediaChunks`), `clientContent`, and server-side
+`setupComplete`, `serverContent.modelTurn` (`inlineData` audio or text),
+`outputTranscription`, `turnComplete`, `interrupted`, `usageMetadata`.
+
+### 7c.3 Login & profile
+
+The Google login lives in `GEMINI_WEB_LIVE_PROFILE_DIR` (default
+`data/gemini-live-profile`), which **must be a persistent volume** or the login
+evaporates on container recreate. Sign in once with
+`scripts/gemini_web_live_login.py` under the Xvfb/x11vnc/novnc tooling baked into the
+image, then the lane runs headless. Imported cookie jars are NOT used: Google
+invalidates imported `SIDCC`/`PSIDTS` generations server-side within the hour
+(verified 2026-08-24), so only a live browser holds a durable session.
+
+### 7c.4 Verification status
+
+- Wire schema, turn assembly, barge-in ordering, audio extraction and the WS endpoint
+  are covered by `tests/test_live_protocol.py`, `tests/test_live_session.py`,
+  `tests/test_live_route.py` (full suite green) and exercised against a running server
+  (`/v1/live/status`, unauthorized close, invalid-frame handling).
+- **Unconfirmed until a signed-in profile exists**: the four selector sets for the web
+  app's composer / send / listen / stop controls, and the exact `GetTtsStream` payload
+  position (tolerant by design — one-line fixes in
+  `app/live/gemini_web_transport.py`). Confirm with a single capture pass against the
+  live app; no other part of the bridge depends on them.
+
+---
+
 ## 8. Upstream Rate Limits & Quotas (Reference)
 
 Rate limits enforced by each backend, their sources, and how `google-gate` models them.

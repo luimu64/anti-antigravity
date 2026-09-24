@@ -64,8 +64,14 @@ google-gate/
 │   │   ├── gemini_api.py     # GeminiApiAdapter (Google AI Studio API)
 │   │   ├── gemini_web.py     # GeminiWebAdapter (Gemini Web cookies & RPC)
 │   │   └── aistudio_web.py   # AIStudioWebAdapter (AI Studio MakerSuiteService web RPCs)
+│   ├── live/                 # Live voice sessions (bidiGenerateContent)
+│   │   ├── protocol.py       # Live API wire schema + audio helpers (PCM/WAV, RPC audio extraction)
+│   │   ├── transport.py      # LiveTransport contract (open/run_turn/abort/close)
+│   │   ├── session.py        # Turn assembly, barge-in, usage accounting (transport-agnostic)
+│   │   └── gemini_web_transport.py  # Gemini Web cookie lane: signed-in browser profile drives the app UI
 │   ├── routes/
 │   │   ├── openai.py         # /v1/chat/completions, /v1/models, /v1/completions, /v1/embeddings
+│   │   ├── live.py           # WS /v1/live (Live API schema), /v1/live/status
 │   │   ├── auth_routes.py    # /auth/login, /auth/callback, /auth/status, /auth/refresh, /auth/logout
 │   │   └── dashboard.py      # Web dashboard, /api/keys, /api/quotas, /health
 │   └── templates/
@@ -125,6 +131,30 @@ google-gate/
 - **Quota Monitoring & Key Management**: Visual gauges for quota usage and full UI for generating, inspecting, revoking bridge API keys, and toggling enforcement.
 - **Toast Feedback System**: Non-blocking animated pill toasts for clipboard copying, token refresh events, and status updates.
 - **Consistent Styling**: All UI elements (cards, buttons, inputs, tables, badges, toast notifications, code snippets, dialogs) strictly use daisyUI components and Tailwind CSS utility classes without custom CSS overrides.
+
+---
+
+### 3.6 Live Voice Sessions (`app/live/`, `app/routes/live.py`)
+
+- **Edge schema**: `/v1/live` (WebSocket) speaks Google's Live API (`BidiGenerateContent`) —
+  `setup` → `setupComplete`, `realtimeInput` (`activityStart`/`activityEnd`/`mediaChunks`) and
+  `clientContent` in, `serverContent` (`modelTurn` audio/text, `outputTranscription`,
+  `turnComplete`, `interrupted`) and `usageMetadata` out. Defined in `app/live/protocol.py`.
+- **Session layer** (`app/live/session.py`) is transport-agnostic: turn assembly (including a
+  silence flush for clients that stream bare `mediaChunks`), barge-in (emits `interrupted`,
+  suppresses the cut turn's `turnComplete`/usage, aborts upstream), usage accounting.
+- **Lane** (`app/live/gemini_web_transport.py`) drives the real Gemini web app in a persistent
+  signed-in browser profile: voice in = utterance attached as WAV via the composer's file input,
+  voice out = the app's own listen control clicked and its `GetTtsStream` response body harvested.
+  One tab per process → turns are serialised by an asyncio lock.
+- **No function calling on this lane** — the cookie lane has no function-calling wire, so
+  `toolResponse` frames are refused with `unimplemented` (never silently dropped).
+- **Raw RPC replay is impossible here**: `gemini.google.com` fronts `StreamGenerate` with a
+  reCAPTCHA Enterprise challenge and has no bidi audio RPC at all (see
+  `INTERNAL_API.md` §7c for the verified rpcid inventory). Use the browser lane.
+- **Selector sets** for the composer/send/listen/stop controls are the only unverified surface
+  (module constants at the top of `gemini_web_transport.py`); confirm them with one capture pass
+  against a signed-in profile rather than re-deriving them from scratch.
 
 ---
 

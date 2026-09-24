@@ -208,6 +208,17 @@ HIDDEN_MODELS = {
     "gemini-3.1-pro-low",
 }
 
+# ---------------------------------------------------------------------------
+# Live voice sessions (bidiGenerateContent over /v1/live)
+# ---------------------------------------------------------------------------
+# The live lane reuses the browser-backed web backends: voice in is an audio
+# attachment, voice out is the app's own TTS stream. See INTERNAL_API.md §7c.
+LIVE_ENABLED = os.getenv("LIVE_ENABLED", "true").lower() in ("true", "1", "yes")
+# Advisory default when a client opens a session without naming a model.
+LIVE_DEFAULT_MODEL = os.getenv("LIVE_DEFAULT_MODEL", "gemini-3.7-flash")
+# Seconds of quiet that close a turn for clients streaming bare mediaChunks.
+LIVE_SILENCE_FLUSH_S = float(os.getenv("LIVE_SILENCE_FLUSH_S", "1.5"))
+
 # Cache TTL for dynamic model probing (seconds)
 MODEL_CACHE_TTL = float(os.getenv("MODEL_CACHE_TTL", "300.0"))
 
