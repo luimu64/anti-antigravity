@@ -632,6 +632,57 @@ invalidates imported `SIDCC`/`PSIDTS` generations server-side within the hour
   `app/live/gemini_web_transport.py`). Confirm with a single capture pass against the
   live app; no other part of the bridge depends on them.
 
+### 7c.5 Native Live API lane (true full duplex — the mobile app's path)
+
+The mobile app has full-duplex voice because it does not use this cookie lane at all: it
+drives Google's Live API directly. Probing `generativelanguage.googleapis.com` over a raw
+WebSocket (2026-09-24, from the container) establishes the auth modes:
+
+| Request | Upstream response |
+|---|---|
+| `v1beta.GenerativeService.BidiGenerateContent`, no credentials | `1008` *"Method doesn't allow unregistered callers (callers without established identity). Please use API Key or other form of API credential"* |
+| same, `?key=<invalid>` | `1007` *"API key not valid. Please pass a valid API key."* |
+| same, `Authorization: Bearer <invalid>` | `1008` *"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential"* |
+| `…BidiGenerateContentConstrained` | `1007` *"Missing or malformed auth token in request. Obtain one from CreateAuthToken and pass it in an `access_token` query parameter"* |
+
+So the endpoint accepts **an API key or an OAuth 2 access token** — the latter is what a
+signed-in Google account (i.e. the phone app) presents, and the gateway already holds such
+a token for the Antigravity lane. `app/live/gemini_live_api.py` implements this lane:
+
+- **Auth selection** — `GEMINI_LIVE_API_KEY` (`?key=`) else the account's
+  `get_valid_access_token()` as `Authorization: Bearer`; one refresh-and-retry on an auth
+  failure, where the refreshed token is used **directly** for the retry (a credential
+  store keeps returning the stale token until it expires).
+- **Setup translation** — gateway chat aliases are *mapped* to a native-audio model
+  (`map_model`), `responseModalities: ["AUDIO"]`, voice/language into `speechConfig`,
+  `input/outputAudioTranscription` enabled, and `tools` passed through untouched (this lane
+  supports function calling, unlike the cookie lane).
+- **Streaming semantics** — client frames (`realtimeInput` with bare `mediaChunks`, or
+  `activityStart/End`, `clientContent`, `toolResponse`) are forwarded **verbatim** and
+  upstream frames are emitted **verbatim**; the session does no buffering, no local turn
+  assembly and no fabricated `interrupted`. `abort()` is a no-op by design: interruption is
+  server-side, and the client stops playing its buffer when it sees
+  `serverContent.interrupted`.
+
+Lane selection lives in `app/routes/live.py:build_transport()` — native lane when a key or
+account token exists, else the cookie lane (`LIVE_LANE=web` forces the latter). The
+transport is built lazily on first use so a credential added later (dashboard key, account
+login) is picked up.
+
+Verified end-to-end against the running app (2026-09-24): with `GEMINI_LIVE_API_KEY` set to
+an invalid value and a valid gateway key, the client received `{"error": {"code":
+"unavailable", "message": "transport unavailable: upstream: API key not valid (check
+GEMINI_LIVE_API_KEY)"}}` — i.e. the gateway really opened the upstream socket and
+translated Google's rejection. `/v1/live/status` reports `{"transport": "gemini_live_api",
+"auth": "api_key", …}`; with no credentials it reports `gemini_web` instead. Frame
+contract, auth retry and pass-through semantics are covered by
+`tests/test_live_api_transport.py`.
+
+**Not yet verified**: an actual audio round trip (needs a valid key or a signed-in
+account), and the exact native-audio model id for this account tier —
+`GEMINI_LIVE_MODEL` is the one-line override, and chat aliases never reach upstream
+unmapped.
+
 ---
 
 ## 8. Upstream Rate Limits & Quotas (Reference)

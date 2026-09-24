@@ -66,6 +66,8 @@ class LiveSession:
         self._last_reply = ""
         self._transcript: list[str] = []
         self._suppress_events = False
+        self._reader_task: asyncio.Task | None = None
+        self._generating = False
 
     # ------------------------------------------------------------------
     # Introspection
@@ -78,7 +80,8 @@ class LiveSession:
             "prompt_tokens": self._prompt_tokens,
             "response_tokens": self._response_tokens,
             "buffered_audio_bytes": len(self._audio),
-            "generating": self._turn_task is not None and not self._turn_task.done(),
+            "generating": self._generating,
+            "streaming": self._is_streaming,
             "last_error": self._last_error,
             "transport": self.transport.name,
         }
@@ -104,6 +107,12 @@ class LiveSession:
             await self._send(
                 p.error("setup frame required first", "failed_precondition")
             )
+            return
+
+        if self._is_streaming:
+            # Streaming lane: client frames go upstream unmodified (this lane
+            # supports toolResponse and server-side VAD too).
+            await self._forward_streaming_frame(frame)
             return
 
         if "realtimeInput" in frame or "realtime_input" in frame:
@@ -148,7 +157,10 @@ class LiveSession:
             return
 
         try:
-            await self.transport.open(setup)
+            if self._is_streaming:
+                await self.transport.open(setup, raw if isinstance(raw, dict) else None)
+            else:
+                await self.transport.open(setup)
         except Exception as exc:
             self._last_error = str(exc)
             logger.warning(f"[live] transport open failed: {exc}")
@@ -156,13 +168,15 @@ class LiveSession:
             return
 
         self.setup = setup
-        if setup.tools_requested:
+        if setup.tools_requested and not self._is_streaming:
             logger.info(
                 "[live] tools requested but unsupported on the %s lane; "
                 "continuing without function calling",
                 self.transport.name,
             )
         await self._send(p.setup_complete())
+        if self._is_streaming:
+            self._reader_task = asyncio.create_task(self._pump_upstream())
 
     # -- realtime input -------------------------------------------------
     async def _handle_realtime(self, block: Any) -> None:
@@ -362,11 +376,98 @@ class LiveSession:
                     )
 
     # ------------------------------------------------------------------
+    # Streaming lanes (pass-through)
+    #
+    # A streaming transport owns VAD, turn boundaries and interruption: audio
+    # goes upstream as it arrives and server frames go out as they arrive. The
+    # session only forwards frames and keeps bookkeeping for telemetry.
+    # ------------------------------------------------------------------
+    @property
+    def _is_streaming(self) -> bool:
+        return bool(getattr(self.transport, "streaming", False))
+
+    async def _forward_streaming_frame(self, frame: dict[str, Any]) -> None:
+        block = frame.get("realtimeInput") or frame.get("realtime_input") or {}
+        chunks = []
+        if isinstance(block, dict):
+            chunks = (
+                block.get("mediaChunks")
+                or block.get("media_chunks")
+                or block.get("audio")
+                or []
+            )
+        for chunk in chunks if isinstance(chunks, list) else []:
+            data = (
+                p.decode_base64(chunk.get("data")) if isinstance(chunk, dict) else b""
+            )
+            if len(data) > MAX_MEDIA_CHUNK_BYTES:
+                await self._send(
+                    p.error(
+                        f"media chunk too large ({len(data)} bytes > "
+                        f"{MAX_MEDIA_CHUNK_BYTES}); stream ~20-100 ms frames",
+                        "invalid_argument",
+                    )
+                )
+                return
+        try:
+            await self.transport.send_frame(frame)
+        except Exception as exc:
+            self._last_error = str(exc)
+            logger.warning(f"[live] upstream send failed: {exc}")
+            await self._send(p.error(str(exc), "unavailable"))
+
+    async def _pump_upstream(self) -> None:
+        try:
+            async for event in self.transport.events():
+                if self._closed:
+                    return
+                if event.kind == "error":
+                    self._last_error = event.message
+                    await self._send(p.error(event.message, "unavailable"))
+                    continue
+                if event.kind != "frame" or not event.raw:
+                    continue
+                self._account_server_frame(event.raw)
+                await self._send(event.raw)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._last_error = str(exc)
+            logger.warning(f"[live] upstream stream failed: {exc}")
+            await self._send(p.error(f"upstream stream failed: {exc}", "internal"))
+
+    def _account_server_frame(self, frame: dict[str, Any]) -> None:
+        """Bookkeeping only — the frame itself is forwarded unmodified."""
+        content = frame.get("serverContent") or {}
+        if content.get("interrupted"):
+            self._interruptions += 1
+        if content.get("modelTurn"):
+            self._generating = True
+        if content.get("turnComplete"):
+            self._generating = False
+            self._turns += 1
+        for key in ("outputTranscription", "inputTranscription"):
+            text = (content.get(key) or {}).get("text")
+            if key == "outputTranscription" and text:
+                self._last_reply = text
+                self._transcript.append(text)
+        meta = frame.get("usageMetadata") or {}
+        if meta:
+            # The Live API reports session totals, not per-turn deltas.
+            self._prompt_tokens = int(meta.get("promptTokenCount") or 0)
+            self._response_tokens = int(meta.get("responseTokenCount") or 0)
+
+    # ------------------------------------------------------------------
     # Teardown
     # ------------------------------------------------------------------
     async def close(self) -> None:
         self._closed = True
         self._cancel_flush_timer()
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._reader_task
+        self._reader_task = None
         if self._turn_task and not self._turn_task.done():
             self._turn_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

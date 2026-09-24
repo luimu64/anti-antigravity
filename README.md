@@ -195,10 +195,20 @@ If an invalid or missing key is provided, the bridge returns standard OpenAI HTT
 
 `/v1/live` is a WebSocket that speaks Google's **Live API** (`BidiGenerateContent`)
 message schema, so a Live-capable client can point at the gateway instead of Google.
-The upstream lane is the Gemini Web cookie lane: voice in is an audio attachment to the
-web conversation, voice out is the app's own TTS stream. Raw RPC replay is not possible
-on this lane — see [`INTERNAL_API.md` §7c](INTERNAL_API.md) for the verified RPC
-inventory and the bridge design.
+Two upstream lanes serve it, chosen automatically (`GET /v1/live/status` reports which):
+
+| Lane | Transport | Audio | Interruption | Credential |
+|---|---|---|---|---|
+| **native Live API** (preferred) | `wss://…GenerativeService.BidiGenerateContent`, true duplex | streamed continuously, 16 kHz in / 24 kHz out, no local buffering | server-side VAD; the server emits `interrupted` | Google account OAuth access token, or `GEMINI_LIVE_API_KEY` |
+| **Gemini Web cookie lane** (fallback) | the signed-in web app driven in a persistent browser | turn-based: WAV attachment in, `GetTtsStream` capture out | client-side cancel + the app's Stop control | a Google login held by the browser profile |
+
+The native lane is the path the **mobile app** uses: same endpoint, authenticated with the
+account's OAuth 2 access token instead of an API key. Audio streams both ways as it is
+captured, so what you say reaches the model while you are still speaking, and the server
+owns turn boundaries. The cookie lane exists because the *web* app exposes no bidi audio
+RPC and imported cookies are invalidated server-side — see
+[`INTERNAL_API.md` §7c](INTERNAL_API.md) for both designs, the endpoint probe and the
+bridge's honest limits.
 
 ```python
 import asyncio, base64, json
@@ -267,6 +277,11 @@ explicitly.
 | Variable | Default | Meaning |
 |---|---|---|
 | `LIVE_ENABLED` | `true` | Expose the live lane |
+| `LIVE_LANE` | *(auto)* | `web` forces the cookie lane; otherwise the native lane wins whenever credentials exist |
+| `GEMINI_LIVE_API_KEY` | *(empty)* | AI Studio API key for the native lane (sent as `?key=`) |
+| `GEMINI_LIVE_MODEL` | `models/gemini-2.5-flash-native-audio-preview-09-2025` | Upstream live model; gateway chat aliases are mapped onto it |
+| `GEMINI_LIVE_WS_URL` | `…/v1beta.GenerativeService.BidiGenerateContent` | Override the upstream socket |
+| `GEMINI_LIVE_SETUP_TIMEOUT_S` | `30` | Seconds to wait for upstream `setupComplete` |
 | `LIVE_DEFAULT_MODEL` | `gemini-3.7-flash` | Advisory model when a client omits one |
 | `LIVE_SILENCE_FLUSH_S` | `1.5` | Quiet time that closes a turn for clients streaming bare `mediaChunks` |
 | `GEMINI_WEB_LIVE_PROFILE_DIR` | `data/gemini-live-profile` | Persistent browser profile holding the Google login |

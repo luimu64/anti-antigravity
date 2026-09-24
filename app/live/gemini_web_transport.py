@@ -439,7 +439,10 @@ class GeminiWebLiveTransport(LiveTransport):
         }
 
     # -- session lifecycle ----------------------------------------------
-    async def open(self, setup: LiveSetup) -> None:
+    async def open(
+        self, setup: LiveSetup, raw_setup: dict[str, Any] | None = None
+    ) -> None:
+        # Turn-based lane: the raw setup frame carries nothing extra we can use.
         self._setup = setup
         self._interrupt.clear()
         await asyncio.to_thread(self._ensure_page)

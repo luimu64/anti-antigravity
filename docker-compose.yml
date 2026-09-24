@@ -28,6 +28,14 @@ services:
       - GEMINI_WEB_LIVE_CHROMIUM=/usr/bin/chromium
       - GEMINI_WEB_LIVE_HEADLESS=1
       - LIVE_ENABLED=true
+      # --- Native Live API lane (true full duplex; preferred when configured) ---
+      # Set GEMINI_LIVE_API_KEY for key auth, otherwise the signed-in account's
+      # OAuth access token is used (the mode the mobile app uses). LIVE_LANE=web
+      # forces the cookie lane instead. Empty => falls back to the cookie lane.
+      - GEMINI_LIVE_API_KEY=${GEMINI_LIVE_API_KEY:-}
+      - GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-}
+      - GEMINI_LIVE_WS_URL=${GEMINI_LIVE_WS_URL:-}
+      - LIVE_LANE=${LIVE_LANE:-}
       # Optional: set pre-existing credentials if running headless
       # - REFRESH_TOKEN=
       # - ACCESS_TOKEN=

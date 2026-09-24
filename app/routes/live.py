@@ -19,14 +19,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.history import history_manager
 from app.keys import api_key_manager
+from app.live.gemini_live_api import GeminiLiveApiTransport
 from app.live.gemini_web_transport import GeminiWebLiveTransport
 from app.live.session import LiveSession
+from app.live.transport import LiveTransport
 from app.telemetry import log_event
 
 logger = logging.getLogger("google_gate.live")
@@ -34,17 +37,65 @@ telemetry_logger = logging.getLogger("google_gate.requests")
 
 router = APIRouter(tags=["Live"])
 
-# One transport instance per process: the lane owns a single browser tab, and
-# turn execution is serialised inside the transport.
-_transport = GeminiWebLiveTransport()
+# One transport instance per process, built on first use so a credential that
+# appears later (account login, API key added in the dashboard) is picked up:
+# the native Live socket when credentials exist, else the cookie lane.
+_transport: LiveTransport | None = None
 
 # Close codes: 4401 = unauthorized, 4408 = setup timeout, 4400 = bad request.
 CLOSE_UNAUTHORIZED = 4401
 CLOSE_SETUP_TIMEOUT = 4408
 
 
-def get_transport() -> GeminiWebLiveTransport:
+def _account_auth():
+    """OAuth hooks for the signed-in Google account, if there is one.
+
+    The mobile app's live pipeline authenticates with the account's OAuth 2
+    access token rather than an API key, and the gateway already holds such a
+    token for the Antigravity lane.
+    """
+    try:
+        from app.providers.router import router_client
+
+        auth = getattr(getattr(router_client, "antigravity", None), "auth", None)
+        if auth is None:
+            return None, None
+        if not (
+            getattr(auth, "access_token", None) or getattr(auth, "refresh_token", None)
+        ):
+            return None, None
+        return auth.get_valid_access_token, auth.refresh_access_token
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug(f"[live] no account credentials available: {exc}")
+        return None, None
+
+
+def build_transport() -> LiveTransport:
+    """Pick the upstream lane: native Live socket first, cookie lane as fallback.
+
+    ``LIVE_LANE=web`` forces the browser lane; ``GEMINI_LIVE_API_KEY`` selects
+    API-key auth on the native lane, otherwise the account's OAuth token is used.
+    """
+    forced = os.getenv("LIVE_LANE", "").strip().lower()
+    if forced == "web":
+        return GeminiWebLiveTransport()
+    api_key = os.getenv("GEMINI_LIVE_API_KEY", "").strip()
+    provider, refresher = (None, None) if api_key else _account_auth()
+    if api_key or provider:
+        lane = GeminiLiveApiTransport(
+            api_key=api_key, token_provider=provider, token_refresher=refresher
+        )
+        logger.info(f"[live] upstream lane: {lane.name} ({lane._auth_mode()})")
+        return lane
+    logger.info("[live] upstream lane: cookie lane (no Live API credentials)")
+    return GeminiWebLiveTransport()
+
+
+def get_transport() -> LiveTransport:
     """Return the process-wide live transport (overridable in tests)."""
+    global _transport
+    if _transport is None:
+        _transport = build_transport()
     return _transport
 
 

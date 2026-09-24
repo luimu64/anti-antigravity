@@ -136,6 +136,17 @@ google-gate/
 
 ### 3.6 Live Voice Sessions (`app/live/`, `app/routes/live.py`)
 
+- **Two upstream lanes**, picked by `build_transport()` on first use: the native Live API
+  socket (`app/live/gemini_live_api.py` — `streaming = True`, true duplex, auth via the
+  account's OAuth access token or `GEMINI_LIVE_API_KEY`) whenever credentials exist, else
+  the cookie lane (`app/live/gemini_web_transport.py` — turn-based, browser-driven).
+  `LIVE_LANE=web` forces the cookie lane; `GET /v1/live/status` reports the live one.
+  Endpoint probe evidence and both designs: `INTERNAL_API.md` §7c and §7c.5.
+- **Streaming vs turn-based**: `LiveTransport.streaming` decides the session path. Streaming
+  lanes (`app/live/transport.py:StreamingLiveTransport`) forward client frames upstream
+  verbatim and emit server frames verbatim — no audio buffering, no local turn assembly, no
+  fabricated `interrupted`, and tool calls work. Turn-based lanes get the local state machine
+  (silence flush, barge-in, `interrupted` synthesis).
 - **Edge schema**: `/v1/live` (WebSocket) speaks Google's Live API (`BidiGenerateContent`) —
   `setup` → `setupComplete`, `realtimeInput` (`activityStart`/`activityEnd`/`mediaChunks`) and
   `clientContent` in, `serverContent` (`modelTurn` audio/text, `outputTranscription`,
